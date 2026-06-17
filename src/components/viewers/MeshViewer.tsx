@@ -15,10 +15,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { Document, WebIO, type Accessor } from '@gltf-transform/core';
-import { Boxes, Download, Grid3x3, AlertTriangle, Image as ImageIcon, Palette } from 'lucide-react';
+import { Boxes, Download, Grid3x3, AlertTriangle, Image as ImageIcon, Palette, Eye, EyeOff } from 'lucide-react';
 import * as THREE from 'three';
 
-import type { ParsedModel, ModelMesh } from '@/lib/core/model';
+import type { ParsedModel, ModelMesh, ModelBounds } from '@/lib/core/model';
 import type { ResourceHandler } from '@/lib/core/registry/handler';
 import { buildMaterials, type BuiltMaterials, type SubmeshMaterial } from '@/lib/core/material';
 import type { DecodedTexture } from '@/lib/core/textures';
@@ -153,6 +153,211 @@ function toRenderMesh(mesh: ModelMesh, submeshIndex: number): RenderMesh | null 
 }
 
 /**
+ * An axis-aligned "core body" box, in the decoded-vertex coordinate frame, used to
+ * cull out-of-body-space stray triangles before rendering / auto-fitting.
+ */
+export type CoreBox = { min: [number, number, number]; max: [number, number, number] };
+
+/** Inclusive point-in-box test (a triangle survives only if ALL its verts pass). */
+function inBox(box: CoreBox, x: number, y: number, z: number): boolean {
+	return (
+		x >= box.min[0] &&
+		x <= box.max[0] &&
+		y >= box.min[1] &&
+		y <= box.max[1] &&
+		z >= box.min[2] &&
+		z <= box.max[2]
+	);
+}
+
+/** The p-th percentile of an already-sorted ascending array (clamped index). */
+function percentileSorted(sorted: number[], p: number): number {
+	if (sorted.length === 0) return 0;
+	const i = Math.min(sorted.length - 1, Math.max(0, Math.floor((p / 100) * sorted.length)));
+	return sorted[i];
+}
+
+/** True when a header AABB is usable as a box (finite, non-degenerate on all axes). */
+function isPlausibleBox(b: ModelBounds): b is NonNullable<ModelBounds> {
+	if (!b) return false;
+	const ok = [...b.min, ...b.max].every((v) => Number.isFinite(v));
+	if (!ok) return false;
+	return (
+		b.max[0] - b.min[0] > 1e-4 &&
+		b.max[1] - b.min[1] > 1e-4 &&
+		b.max[2] - b.min[2] > 1e-4
+	);
+}
+
+/**
+ * Compute a robust "core body" box for a set of TRIANGLE meshes, in the decoded
+ * vertex frame, used both to cull out-of-body-space stray triangles and to drive
+ * AutoFit. This is the brief's fix for the Musclecar_01 "dagger + spike" artifact:
+ * a small minority of faithfully-decoded auxiliary flat-fan triangles live in a
+ * different local frame and reach far out (x≈4.73, y≈-4.11 vs the real body ±~2.5
+ * m), mixed WITHIN submeshes. AutoFit over the full extent then frames empty space.
+ *
+ * Strategy (in priority order), all per-axis:
+ *   1. The model header AABB (`headerBounds`) IF it is plausible (finite,
+ *      non-degenerate) AND it is genuinely TIGHTER than the full vertex extent on
+ *      at least one axis (so it would actually constrain). In Split/Second the
+ *      decoded `model.bounds` is the full vertex extent (it bakes in the strays),
+ *      so this branch is for models whose header box is a real, tighter culling
+ *      box in the same frame.
+ *   2. Otherwise a percentile box: per axis the [p1, p99] inter-percentile range,
+ *      re-centred and widened by `margin` (~1.3). The 1%-tail trim drops the rare
+ *      far outliers (the fans) while the margin keeps the whole real body. For a
+ *      clean mesh with no outliers p1/p99 ≈ min/max, so the box ≈ the full extent
+ *      and NOTHING is culled — props and point clouds are unaffected.
+ *
+ * Returns `null` when there are no triangle vertices to bound.
+ */
+export function computeCoreBox(
+	meshes: RenderMesh[],
+	headerBounds: ModelBounds = null,
+	margin = 1.3,
+): CoreBox | null {
+	// Gather per-axis vertex coordinates that participate in triangles.
+	const xs: number[] = [];
+	const ys: number[] = [];
+	const zs: number[] = [];
+	for (const m of meshes) {
+		if (m.points) continue; // point clouds carry no triangles to cull
+		const p = m.positions;
+		for (let i = 0; i + 2 < p.length; i += 3) {
+			const x = p[i];
+			const y = p[i + 1];
+			const z = p[i + 2];
+			if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) continue;
+			xs.push(x);
+			ys.push(y);
+			zs.push(z);
+		}
+	}
+	if (xs.length === 0) return null;
+	xs.sort((a, b) => a - b);
+	ys.sort((a, b) => a - b);
+	zs.sort((a, b) => a - b);
+	const fullMin: [number, number, number] = [xs[0], ys[0], zs[0]];
+	const fullMax: [number, number, number] = [
+		xs[xs.length - 1],
+		ys[ys.length - 1],
+		zs[zs.length - 1],
+	];
+
+	// 1. A plausible header AABB that is tighter than the full extent on some axis
+	//    (a real, in-frame culling box) is preferred — clamped to the full extent so
+	//    a too-large header can never EXPAND the box (which would cull nothing).
+	if (isPlausibleBox(headerBounds)) {
+		const tighter =
+			headerBounds.min[0] > fullMin[0] + 1e-4 ||
+			headerBounds.min[1] > fullMin[1] + 1e-4 ||
+			headerBounds.min[2] > fullMin[2] + 1e-4 ||
+			headerBounds.max[0] < fullMax[0] - 1e-4 ||
+			headerBounds.max[1] < fullMax[1] - 1e-4 ||
+			headerBounds.max[2] < fullMax[2] - 1e-4;
+		if (tighter) {
+			return {
+				min: [
+					Math.max(headerBounds.min[0], fullMin[0]),
+					Math.max(headerBounds.min[1], fullMin[1]),
+					Math.max(headerBounds.min[2], fullMin[2]),
+				],
+				max: [
+					Math.min(headerBounds.max[0], fullMax[0]),
+					Math.min(headerBounds.max[1], fullMax[1]),
+					Math.min(headerBounds.max[2], fullMax[2]),
+				],
+			};
+		}
+	}
+
+	// 2. Percentile box: [p1, p99] re-centred and widened by `margin`, then clamped
+	//    to the full extent (the box never reaches beyond real geometry). For a
+	//    clean mesh p1/p99 ≈ min/max → box ≈ full extent → no culling.
+	const axisBox = (sorted: number[], fMin: number, fMax: number): [number, number] => {
+		const lo = percentileSorted(sorted, 1);
+		const hi = percentileSorted(sorted, 99);
+		const c = (lo + hi) / 2;
+		const half = ((hi - lo) / 2) * margin;
+		return [Math.max(c - half, fMin), Math.min(c + half, fMax)];
+	};
+	const bx = axisBox(xs, fullMin[0], fullMax[0]);
+	const by = axisBox(ys, fullMin[1], fullMax[1]);
+	const bz = axisBox(zs, fullMin[2], fullMax[2]);
+	return { min: [bx[0], by[0], bz[0]], max: [bx[1], by[1], bz[1]] };
+}
+
+/**
+ * Per-triangle cull a list of triangle meshes to a core box: a triangle survives
+ * only if ALL THREE of its vertices fall inside the box. Returns NEW RenderMesh
+ * objects (positions reused; indices filtered) plus the count of culled triangles.
+ * Point meshes are passed through untouched. Because the fans are mixed WITHIN
+ * submeshes (specific index ranges), this is a per-triangle filter, not a
+ * per-submesh drop.
+ *
+ * SAFETY: if the box would remove a LARGE fraction of triangles (>= `maxCullFrac`,
+ * default 25%) the mesh almost certainly has no isolated outliers — it is just
+ * legitimately spread — so we cull NOTHING and report 0. This keeps the fix honest:
+ * it only ever trims a small stray minority, never mutilates real geometry.
+ */
+export function cullTrianglesToCore(
+	meshes: RenderMesh[],
+	box: CoreBox | null,
+	maxCullFrac = 0.25,
+): { meshes: RenderMesh[]; culled: number } {
+	if (!box) return { meshes, culled: 0 };
+	// First pass: count what the box would remove (so the safety gate sees the total).
+	let totalTris = 0;
+	let wouldCull = 0;
+	for (const m of meshes) {
+		if (m.points) continue;
+		const p = m.positions;
+		const idx = m.indices;
+		for (let t = 0; t + 2 < idx.length; t += 3) {
+			totalTris++;
+			const a = idx[t];
+			const b = idx[t + 1];
+			const c = idx[t + 2];
+			const keep =
+				inBox(box, p[a * 3], p[a * 3 + 1], p[a * 3 + 2]) &&
+				inBox(box, p[b * 3], p[b * 3 + 1], p[b * 3 + 2]) &&
+				inBox(box, p[c * 3], p[c * 3 + 1], p[c * 3 + 2]);
+			if (!keep) wouldCull++;
+		}
+	}
+	// No outliers, or too many would go — leave the geometry untouched.
+	if (wouldCull === 0 || (totalTris > 0 && wouldCull / totalTris >= maxCullFrac)) {
+		return { meshes, culled: 0 };
+	}
+	// Second pass: rebuild the filtered index lists.
+	const out: RenderMesh[] = [];
+	let culled = 0;
+	for (const m of meshes) {
+		if (m.points) {
+			out.push(m);
+			continue;
+		}
+		const p = m.positions;
+		const idx = m.indices;
+		const kept: number[] = [];
+		for (let t = 0; t + 2 < idx.length; t += 3) {
+			const a = idx[t];
+			const b = idx[t + 1];
+			const c = idx[t + 2];
+			const keep =
+				inBox(box, p[a * 3], p[a * 3 + 1], p[a * 3 + 2]) &&
+				inBox(box, p[b * 3], p[b * 3 + 1], p[b * 3 + 2]) &&
+				inBox(box, p[c * 3], p[c * 3 + 1], p[c * 3 + 2]);
+			if (keep) kept.push(a, b, c);
+			else culled++;
+		}
+		out.push({ ...m, indices: Uint32Array.from(kept) });
+	}
+	return { meshes: out, culled };
+}
+
+/**
  * Build a single un-indexed THREE point-cloud geometry from the positions of all
  * supplied meshes. Used both to DRAW point-only meshes (skinned .model variant,
  * topology stripped) and to provide a bounding sphere for AutoFit. Never builds a
@@ -201,9 +406,73 @@ function buildGeometry(meshes: RenderMesh[]): THREE.BufferGeometry | null {
 	geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 	geom.setIndex(new THREE.BufferAttribute(indices, 1));
 	geom.computeVertexNormals();
-	geom.computeBoundingSphere();
-	geom.computeBoundingBox();
+	// Bound only the vertices actually REFERENCED by the (possibly culled) index
+	// buffer, not every position. THREE's computeBoundingSphere/Box ignore the
+	// index and span all positions — which would re-include the stray verts we just
+	// culled from the triangle list, re-inflating AutoFit (the whole point of the
+	// cull is to frame the car). When no triangles were culled this equals the full
+	// extent, so clean models are unaffected.
+	setIndexedBounds(geom, positions, indices);
 	return geom;
+}
+
+/**
+ * Set a geometry's boundingBox + boundingSphere from ONLY the vertices referenced
+ * by `indices` (a triangle list). Used so AutoFit frames the drawn surface, not
+ * orphaned positions left behind by the core-box cull. Falls back to all positions
+ * when the index list is empty.
+ */
+function setIndexedBounds(
+	geom: THREE.BufferGeometry,
+	positions: Float32Array,
+	indices: Uint32Array,
+): void {
+	let mnx = Infinity,
+		mny = Infinity,
+		mnz = Infinity,
+		mxx = -Infinity,
+		mxy = -Infinity,
+		mxz = -Infinity;
+	let any = false;
+	const consider = (vi: number) => {
+		const x = positions[vi * 3];
+		const y = positions[vi * 3 + 1];
+		const z = positions[vi * 3 + 2];
+		if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return;
+		any = true;
+		if (x < mnx) mnx = x;
+		if (y < mny) mny = y;
+		if (z < mnz) mnz = z;
+		if (x > mxx) mxx = x;
+		if (y > mxy) mxy = y;
+		if (z > mxz) mxz = z;
+	};
+	if (indices.length > 0) for (let i = 0; i < indices.length; i++) consider(indices[i]);
+	else for (let vi = 0; vi < positions.length / 3; vi++) consider(vi);
+	if (!any) {
+		geom.computeBoundingSphere();
+		geom.computeBoundingBox();
+		return;
+	}
+	const box = new THREE.Box3(
+		new THREE.Vector3(mnx, mny, mnz),
+		new THREE.Vector3(mxx, mxy, mxz),
+	);
+	geom.boundingBox = box;
+	const center = box.getCenter(new THREE.Vector3());
+	// Radius = max distance from the box centre to any referenced vertex.
+	let r2 = 0;
+	const acc = (vi: number) => {
+		const dx = positions[vi * 3] - center.x;
+		const dy = positions[vi * 3 + 1] - center.y;
+		const dz = positions[vi * 3 + 2] - center.z;
+		if (!Number.isFinite(dx) || !Number.isFinite(dy) || !Number.isFinite(dz)) return;
+		const d2 = dx * dx + dy * dy + dz * dz;
+		if (d2 > r2) r2 = d2;
+	};
+	if (indices.length > 0) for (let i = 0; i < indices.length; i++) acc(indices[i]);
+	else for (let vi = 0; vi < positions.length / 3; vi++) acc(vi);
+	geom.boundingSphere = new THREE.Sphere(center, Math.sqrt(r2));
 }
 
 /** Build one THREE geometry per submesh (so each keeps its own UVs + material). */
@@ -555,6 +824,10 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 	const [viewMode, setViewMode] = useState<ViewMode>('textured');
 	const [exporting, setExporting] = useState(false);
 	const [exportError, setExportError] = useState<string | null>(null);
+	// "Show stray parts" — when OFF (default) we render the culled CORE geometry so
+	// the camera frames the car; when ON we render the full faithful geometry. Only
+	// surfaced when culling actually removed triangles (see strayTriCount below).
+	const [showStray, setShowStray] = useState(false);
 	const objectUrlRef = useRef<string | null>(null);
 
 	const parsed = useMemo(() => asParsedModel(model), [model]);
@@ -584,8 +857,29 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 	// Split surfaces (real triangle topology) from point clouds (positions only —
 	// the skinned .model variant, whose index buffer is stripped). Point meshes
 	// are drawn as <points>, NEVER fabricated into triangles (the spike-soup bug).
-	const triangleMeshes = useMemo(() => renderMeshes.filter((m) => !m.points), [renderMeshes]);
+	const allTriangleMeshes = useMemo(() => renderMeshes.filter((m) => !m.points), [renderMeshes]);
 	const pointMeshes = useMemo(() => renderMeshes.filter((m) => m.points), [renderMeshes]);
+
+	// CORE-BOX CULL: a small minority of faithfully-decoded triangles (Musclecar_01
+	// auxiliary flat fans) live in a different local frame and reach far past the
+	// real body, mixed WITHIN submeshes. They blow up AutoFit (the "dagger + spike"
+	// artifact) even though ~99% of the body is a correct shell. We compute a robust
+	// CORE box and per-triangle cull anything outside it (positions are the faithful
+	// decode — we only HIDE the strays, never mutate the parser). For clean models
+	// (props, point clouds) the box ≈ full extent so nothing is culled.
+	const coreBox = useMemo(
+		() => computeCoreBox(allTriangleMeshes, parsed?.bounds ?? null),
+		[allTriangleMeshes, parsed],
+	);
+	const culled = useMemo(
+		() => cullTrianglesToCore(allTriangleMeshes, coreBox),
+		[allTriangleMeshes, coreBox],
+	);
+	const strayTriCount = culled.culled;
+	const hasStray = strayTriCount > 0;
+	// Render the CORE meshes by default; the full faithful set when "Show stray
+	// parts" is ON. When nothing was culled both are the same array.
+	const triangleMeshes = showStray ? allTriangleMeshes : culled.meshes;
 
 	// Resolve per-submesh materials from the sibling .textures/.shaderinst/etc.
 	const materials = useSiblingMaterials(parsed?.meshes.length ?? 0);
@@ -716,6 +1010,15 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 	// is labelled as a point cloud so the "0 tris" reads as intentional, not broken.
 	const pointsOnly = !geometry && pointVerts > 0;
 
+	// Honest disclosure of the core-box cull: how many faithfully-decoded triangles
+	// are hidden (default) or shown. Rendered only when culling actually removed any.
+	const strayInfo = hasStray ? (
+		<span title="Out-of-body-space auxiliary triangles, hidden by default so the car frames correctly. The decoded data is not lost — toggle Show stray parts to reveal them.">
+			{' · '}
+			{strayTriCount.toLocaleString()} stray tris {showStray ? 'shown' : 'hidden'}
+		</span>
+	) : null;
+
 	return (
 		<div className="flex h-full flex-col">
 			{/* Toolbar */}
@@ -735,6 +1038,7 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 					{pointsOnly
 						? ' · points only (no topology)'
 						: ` · ${Math.round(tris).toLocaleString()} tris`}
+						{strayInfo}
 					{materials && materials.submeshes.length > 0 && (
 						<>
 							{' · '}
@@ -743,7 +1047,25 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 					)}
 				</span>
 				<div className="ml-auto flex items-center gap-2">
-					{/* Render-mode toggle: textured / flat / wireframe. */}
+					{/* Show-stray toggle — only when culling actually removed triangles.
+						    OFF (default) renders the framed core body; ON reveals the faithful
+						    full geometry including the out-of-frame auxiliary strips. */}
+						{hasStray && (
+							<Button
+								variant={showStray ? 'default' : 'outline'}
+								size="sm"
+								onClick={() => setShowStray((v) => !v)}
+								title={
+									showStray
+										? 'Hide stray parts (frame the car body)'
+										: 'Show stray parts (reveal hidden out-of-body geometry)'
+								}
+							>
+								{showStray ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+								Show stray parts
+							</Button>
+						)}
+						{/* Render-mode toggle: textured / flat / wireframe. */}
 					<div className="flex items-center overflow-hidden rounded-md border border-border">
 						<Button
 							variant={effectiveMode === 'textured' ? 'default' : 'ghost'}
