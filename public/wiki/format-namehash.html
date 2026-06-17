@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Archive nameHash (CRC) &amp; RAM-Dump Attempt — Split/Second RE Wiki</title>
+<meta name="description" content="The .ark TOC nameHash: a reflected table-CRC fully reverse-engineered from the EBOOT, why offline name resolution is blocked, and the RPCS3 RAM-dump attempt that went nowhere.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Archive nameHash (CRC) &amp; RAM-Dump Attempt" data-category="Formats · Archive &amp; Misc">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT ===== -->
+<h1>Archive <code>nameHash</code> — CRC &amp; RAM-Dump Attempt</h1>
+<p>
+Every entry in an <a href="format-ark.html"><code>.ark</code></a> table of contents is keyed by a 32-bit
+<strong><code>nameHash</code></strong> of the resource's id string. Cracking it would let the
+<a href="https://github.com/derneuere/split-second-viewer">viewer</a> resolve every packed level member to its
+<em>real filename</em> instead of <code>&lt;hash8&gt;.&lt;ext&gt;</code>. This page records the full investigation:
+the hash function is <strong>fully reverse-engineered</strong>, but turning it into an <em>offline</em>
+name&nbsp;&rarr;&nbsp;hash oracle is <strong>blocked by a runtime-only data dependency</strong>, and the
+RPCS3 RAM-dump attempt to lift that data <strong>went nowhere</strong>.
+</p>
+
+<div class="infobox"><div class="ib-title">nameHash status</div><table>
+  <tr><th>Where</th><td><code>.ark</code> TOC entry, 2nd u32 (big-endian)</td></tr>
+  <tr><th>Kind</th><td>Reflected table CRC (GF(2)-affine)</td></tr>
+  <tr><th>Poly</th><td><code>0x DB71 0641</code> (rev <code>0x8260 8EDB</code>)</td></tr>
+  <tr><th>Seeds</th><td><code>0xDEAFD00D</code> · <code>0xFFFFFFFF</code></td></tr>
+  <tr><th>Algorithm</th><td><span class="badge ok">Confirmed</span></td></tr>
+  <tr><th>Offline oracle</th><td><span class="badge theory">Blocked</span></td></tr>
+  <tr><th>RAM dump</th><td><span class="badge raw">Inconclusive</span></td></tr>
+  <tr><th>App naming</th><td>Rosetta map (309 pairs)</td></tr>
+</table></div>
+
+<h2>The algorithm (cracked from the EBOOT)</h2>
+<p>
+Disassembling <code>EBOOT.BIN</code> (inner ELF at file <code>0x90</code>; the resource-id hasher at VA
+<code>0x19900</code>, inlined at dozens of call sites) recovered the routine exactly — a classic
+byte-at-a-time <strong>reflected table CRC</strong> with <strong>no final XOR</strong>:
+</p>
+<pre>H = seed
+for each byte c of the NUL-terminated resource-id string:
+    H = (H &gt;&gt; 8) ^ T[(H ^ c) &amp; 0xFF]
+return H                       # no final xor</pre>
+<p>PPC evidence at the hash body: <code>xor r9,H,c</code> / <code>srwi r10,H,8</code> /
+<code>rlwinm r9,r9,2,0x16,0x1d</code> (= <code>(H^c)&amp;0xFF</code> ·4) / <code>lwzx r0,T,r9</code> /
+<code>xor H,r10,r0</code>.</p>
+
+<h3>Constants</h3>
+<table class="struct">
+<tr><th>Name</th><th>Value</th><th>Notes</th></tr>
+<tr><td>seed (resource-id)</td><td><code>0xDEAFD00D</code></td><td>hasher @ VA 0x19900 (<code>lis r31,-0x2151; ori 0xd00d</code>); used for <code>CityStatic|…</code> etc.</td></tr>
+<tr><td>seed (bare string)</td><td><code>0xFFFFFFFF</code></td><td>hasher @ VA 0x6c840 (<code>li rX,-1</code>)</td></tr>
+<tr><td>within-byte poly</td><td><code>0xDB710641</code></td><td>left-shift LFSR; reverse <code>0x82608EDB</code></td></tr>
+<tr><td>table T</td><td>256 × u32</td><td>XOR-linear; basis <code>T[2^k] = STEP^k(0xEFC26B3E)</code>, <code>STEP(v)=((v&lt;&lt;1)^0xDB710641) if v&amp;0x80000000 else v&lt;&lt;1</code></td></tr>
+</table>
+
+<h3>Resource-id string form</h3>
+<p>The hashed string is <code>&lt;tag&gt;|&lt;relpath&gt;</code>, where the tag is assembled at runtime via
+<code>sprintf</code> from a format-string global. Observed tags: <code>CityStatic|&lt;sector&gt;_rig&lt;n&gt;</code>,
+<code>CityStream|…</code>, <code>Resident|UI/HUD/Textures/&lt;name&gt;</code>, <code>environment|Backdrop/&lt;x&gt;_backdrop.model</code>.
+Some resources also carry a 1-byte trailing suffix.</p>
+
+<h2>Why offline resolution is blocked</h2>
+<div class="warn">The function is solved; the <strong>data it reads at runtime is not in the file</strong>. Two hard blockers:</div>
+<ol>
+<li><strong>The literal 256-entry table T is built at runtime into BSS.</strong> The TOC slots that load it
+(<code>-0x7bbc(r2)</code>, <code>-0x62f8(r2)</code>, <code>-0x71c8(r2)</code>) point to data-segment addresses that
+are <em>zero-filled in the file image</em>. None of the 18 static CRC tables in <code>.rodata</code>
+(VAs <code>0xf3a360…0xf45bf4</code>) is the right one (verified: no TOC pointer targets them; none reproduce the
+corpus deltas).</li>
+<li><strong>The table is not recoverable from the on-disk corpus.</strong> The table is XOR-linear, so it is
+fully determined by 8 basis vectors <code>T[2^k]</code>. The <em>low-nibble</em> basis <code>B0..B3</code> was pinned
+exactly (15/15 clean low-nibble single-char deltas), but the <em>high-nibble</em> basis <code>B4..B7</code>
+(<code>T[0x10..0xFF]</code>) is <strong>rank-deficient</strong>: the 309 ground-truth pairs contain
+<em>no high-nibble character variation</em>. The one high-bit constraint that does exist (the L&harr;R
+substitution, index <code>0x1E</code>, measured delta <code>0x3967B15B</code>) <em>contradicts</em> the
+polynomial-predicted table — proving the runtime table is not the naive CRC table of the poly.</li>
+</ol>
+<p>
+Solving T from the corpus by linear algebra is <strong>provably infeasible</strong>: the lookup index
+<code>(H^c)&amp;0xFF</code> depends on the running hash, i.e. on the unknown table — the system is non-linear in
+the unknowns. <strong>Independent verification: 0&nbsp;/&nbsp;309</strong> absolute matches across a sweep of
+66 (table&nbsp;×&nbsp;seed&nbsp;×&nbsp;string-form) configurations, and 0/pack across all five TEXS packs (no
+overfitting). Closing it requires the literal <code>T[256]</code> from <strong>runtime memory</strong> (or a
+decrypted EBOOT in which the table is materialized).
+</p>
+
+<h2>What was proven (the salvage)</h2>
+<ul>
+<li>The algorithm shape, the within-byte poly <code>0xDB710641</code>, and both seeds.</li>
+<li>The low-nibble table basis <code>B0..B3</code> (so same-length, low-nibble deltas are computable).</li>
+<li>A <strong>Rosetta corpus of 309 ground-truth <code>name → hash</code> pairs</strong>, harvested from paired
+<a href="format-textures.html"><code>.textures</code></a> (TEXS) tables + sibling <a href="format-names.html"><code>.filenames</code></a>.
+The <a href="https://github.com/derneuere/split-second-viewer">viewer</a> uses this map to give UI/texture
+members their real names today.</li>
+<li>The level <code>.ark</code> TOCs hold thousands of unique hashes (≈3.8k–5.5k across the dumps); they are a
+<em>disjoint</em> set from the UI Rosetta pairs (different archives), so the corpus alone never names them.</li>
+</ul>
+
+<h2>The RPCS3 RAM-dump attempt — went nowhere</h2>
+<p>
+Because the table is present in memory as soon as the engine's archive system initialises — i.e. even at the
+<strong>title screen</strong>, no loaded level required — a RAM dump is the obvious way to lift it. The attempt:
+</p>
+<table>
+<tr><th>Step</th><th>Plan</th><th>Outcome</th></tr>
+<tr><td>Boot</td><td>Launch the game under RPCS3 (CLI <code>--no-gui</code>, or GUI via computer-use) to reach engine init.</td><td>Reached emulated execution.</td></tr>
+<tr><td>Capture</td><td>Read <code>rpcs3.exe</code> process memory (it maps the 256&nbsp;MB PS3 main RAM) <em>or</em> create an RPCS3 savestate (zstd-compressed memory).</td><td>Got into emulated memory; <strong>no usable savestate existed</strong>.</td></tr>
+<tr><td>Locate T</td><td>Signature-scan for a 1&nbsp;KB region that reproduces the 309 pairs, <em>or</em> resolve the TOC pointer slots to the table vaddr.</td><td>Began the basis (<code>T1</code>) search but <strong>was stopped before validating any table</strong>.</td></tr>
+</table>
+<div class="note"><strong>Net result: no validated table recovered.</strong> Offline name resolution stays
+blocked; the viewer continues to use the 309-pair Rosetta map and falls back to <code>&lt;hash8&gt;.&lt;ext&gt;</code>
+(with a magic-sniffed type) for everything else. <code>computeNameHash()</code> in the app remains a documented
+stub carrying the verified algorithm shape, ready to be completed the moment <code>T[256]</code> is in hand.</div>
+
+<h2>What would actually close it</h2>
+<ol>
+<li><strong>A clean runtime dump of <code>T[256]</code>.</strong> Resolve the TOC base <code>r2</code> in a running
+instance, read the three table-pointer slots, dump the 1&nbsp;KB table, and validate it reproduces the 309
+Rosetta pairs.</li>
+<li><strong>Signature scan</strong> of a process-memory / savestate snapshot for the table (the first 1&nbsp;KB
+region that, plugged into the routine above, reproduces a large majority of the 309 pairs).</li>
+<li>Then: hash <code>CityStatic|&lt;sector&gt;_rig&lt;n&gt;</code>, <code>CityStream|…</code> (sector ids from the
+<a href="format-sectors.html"><code>.sectorInfo</code></a> build paths) and match them to the dumped level TOC
+hashes &rarr; <strong>real filenames for every level member</strong> in the viewer.</li>
+</ol>
+
+<hr>
+<h3>Related pages</h3>
+<ul>
+<li><a href="format-ark.html">Archives (.ark)</a> — the container, TOC layout, and Static/Stream split</li>
+<li><a href="tooling.html">Extraction Tooling &amp; Status</a> — the build-or-buy matrix</li>
+<li><a href="format-textures.html">Textures (.textures)</a> — source of the TEXS/Rosetta name→hash pairs</li>
+<li><a href="format-index.html">All File Formats (Index)</a></li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

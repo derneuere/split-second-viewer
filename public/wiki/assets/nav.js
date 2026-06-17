@@ -68,6 +68,7 @@ window.WIKI_NAV = [
   ]},
   { cat: "Formats · Archive & Misc", pages: [
     { title: "Archives (.ark)", file: "format-ark.html", summary: "Packed asset archive format" },
+    { title: "nameHash (CRC) & RAM Dump", file: "format-namehash.html", summary: "TOC hash cracked; offline blocked; RPCS3 RAM-dump attempt" },
     { title: "Scaleform UI (.gfx)", file: "format-gfx.html", summary: "Flash/GFx UI assets" },
     { title: "Misc & Raw", file: "format-misc.html", summary: ".data/.rdata/.bin/.ker/.bed/.dct/.controllerTemplate" }
   ]},
