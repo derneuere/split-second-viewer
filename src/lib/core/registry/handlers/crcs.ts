@@ -16,8 +16,10 @@ export const crcsHandler: ResourceHandler<ParsedCrcs> = {
 		'Headerless flat big-endian uint32[] of texture-name CRC dependencies (N = filesize / 4).',
 	category: 'Data',
 	caps: { read: true, write: true },
+	// .tex.crcs / .texture.crcs both resolve to the '.crcs' extension via the
+	// loader's last-segment rule, so a single entry covers all three names.
 	extensions: ['.crcs'],
-	wikiUrl: 'https://burnout.wiki/',
+	wikiUrl: 'https://split-second.wiki/format-crcs.html',
 
 	parseRaw: (raw) => parseCrcs(raw),
 	writeRaw: (model) => writeCrcs(model),

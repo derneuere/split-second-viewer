@@ -1,21 +1,31 @@
-// The Workspace editor: wires the unified tree + viewport + inspector. The
-// viewport dispatches on the selected resource's handler; the MVP falls back to
-// the generic HexView for everything (bespoke viewports arrive in WP-4/5/6).
+// The Workspace editor: wires the unified tree + viewport + inspector.
+//
+// Tree selection -> getResourceRaw -> getHandler -> ViewportRouter, which parses
+// via the handler and renders the matching bespoke viewer (texture / mesh /
+// world / config), falling back to the generic HexView when there is no handler
+// or the parse fails. The Inspector shows handler.describe(model) for the same
+// selection. Loose files load via drag/drop + file input on the Home page and
+// route to a handler by extension (see WorkspaceContext.ingestLoose).
 
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { ResourceTree } from '@/components/ResourceTree';
 import { Inspector } from '@/components/Inspector';
-import { HexView } from '@/components/hexviewer/HexView';
+import { ViewportRouter } from '@/components/viewers/ViewportRouter';
 import { WorkspaceLayout } from '@/components/layout/WorkspaceLayout';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { Button } from '@/components/ui/button';
 
 function Viewport() {
-	const { selection, getResourceRaw } = useWorkspace();
+	const { selection, getResourceRaw, getHandler } = useWorkspace();
+
 	const raw = useMemo(
 		() => (selection ? getResourceRaw(selection.ref) : null),
 		[selection, getResourceRaw],
+	);
+	const handler = useMemo(
+		() => (selection ? getHandler(selection.ref) : undefined),
+		[selection, getHandler],
 	);
 
 	if (!selection) {
@@ -34,9 +44,9 @@ function Viewport() {
 					.padStart(8, '0')}`
 			: selection.ref.looseId;
 
-	// MVP: every resource renders in the Hex fallback. WP-4/5/6 will dispatch on
-	// the resolved handler.key to bespoke 2D / mesh / world viewports here.
-	return <HexView data={raw} title={title} />;
+	// The router parses via the handler and dispatches to the bespoke viewport,
+	// always falling back to Hex on no-handler / parse failure.
+	return <ViewportRouter handler={handler} raw={raw} title={title} />;
 }
 
 export function WorkspaceEditor() {
