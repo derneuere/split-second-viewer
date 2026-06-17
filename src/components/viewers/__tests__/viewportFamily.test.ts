@@ -7,7 +7,7 @@ import { getHandlerByKey, registry } from '@/lib/core/registry';
 // their intended bespoke viewer, and no-handler / unknown maps to the Hex
 // fallback ('binary'). The mapping is pure (no React), so it runs headlessly.
 
-const FAMILIES: ViewportFamily[] = ['texture', 'mesh', 'world', 'config', 'binary'];
+const FAMILIES: ViewportFamily[] = ['texture', 'mesh', 'world', 'config', 'video', 'binary'];
 
 describe('viewportFor dispatch', () => {
 	it('maps a missing handler to the Hex fallback', () => {

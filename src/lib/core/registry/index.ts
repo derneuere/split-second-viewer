@@ -46,6 +46,9 @@ import { fxcHandler } from './handlers/fxc';
 // --- Physics ---------------------------------------------------------------
 import { havokHandler } from './handlers/havok';
 
+// --- Audio / Video ---------------------------------------------------------
+import { bikHandler } from './handlers/bik';
+
 export const registry: ResourceHandler[] = [
 	crcsHandler,
 	// World / Telemetry
@@ -82,6 +85,8 @@ export const registry: ResourceHandler[] = [
 	fxcHandler,
 	// Physics
 	havokHandler,
+	// Audio / Video
+	bikHandler,
 ];
 
 const byKey = new Map<string, ResourceHandler>();

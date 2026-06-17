@@ -68,6 +68,9 @@ const KEY_TO_PAGE: Record<string, string> = {
 
 	// Physics
 	havok: 'format-havok.html',
+
+	// Audio / Video
+	bik: 'format-bik.html',
 };
 
 /**
@@ -105,6 +108,7 @@ const EXT_TO_PAGE: Record<string, string> = {
 	'.hkcoll': 'format-hkcoll.html',
 	'.hkpps': 'format-hkpps.html',
 	'.hkrbs': 'format-hkrbs.html',
+	'.bik': 'format-bik.html',
 };
 
 /** ResourceCategory -> a sensible overview page when nothing more specific hits. */

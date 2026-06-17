@@ -9,8 +9,10 @@
 import type { ResourceHandler } from '@/lib/core/registry';
 
 /** The bespoke viewport families the router dispatches to. */
-export type ViewportFamily = 'texture' | 'mesh' | 'world' | 'config' | 'binary';
+export type ViewportFamily = 'texture' | 'mesh' | 'world' | 'config' | 'video' | 'binary';
 
+/** Keys whose decoded model is played by BikViewer (in-browser Bink decoder). */
+export const VIDEO_KEYS = new Set(['bik']);
 /** Keys whose decoded model is rendered by TextureViewer. */
 export const TEXTURE_KEYS = new Set(['textures', 'streamtex']);
 /**
@@ -37,6 +39,7 @@ export function viewportFor(
 	if (!handler) return 'binary';
 	const key = handler.key;
 
+	if (VIDEO_KEYS.has(key)) return 'video';
 	if (TEXTURE_KEYS.has(key)) return 'texture';
 	if (MESH_KEYS.has(key)) return 'mesh';
 	if (SHADER_KEYS.has(key)) return 'config'; // shader sets -> Config inspector
@@ -47,7 +50,8 @@ export function viewportFor(
 		case 'Physics':
 			return 'config'; // havok packfiles -> Config inspector (generic table)
 		case 'Graphics':
-			// Graphics that isn't a texture/mesh/shader (none today) -> Hex.
+			// Graphics that isn't a texture/mesh/shader/video -> Hex. (The 'bik'
+			// video handler is Graphics-category but matched by key above.)
 			return 'binary';
 		case 'Data':
 		case 'Script':

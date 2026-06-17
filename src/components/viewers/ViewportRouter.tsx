@@ -13,6 +13,7 @@
 //
 // Viewport families (derived from handler.category + handler.key — the handler
 // model only carries the ResourceCategory enum, so the mapping lives here):
+//   video     -> BikViewer       (bik — pure-TS Bink decoder + player)
 //   texture   -> TextureViewer   (textures, streamtex)
 //   mesh      -> MeshViewer      (model, skel, deform, mcl)
 //   world     -> WorldViewer     (category World: track, entities, links, ...)
@@ -24,6 +25,7 @@ import { AlertTriangle } from 'lucide-react';
 
 import { HexView } from '@/components/hexviewer/HexView';
 import { TextureViewer } from '@/components/viewers/TextureViewer';
+import { BikViewer } from '@/components/viewers/BikViewer';
 import { MeshViewer } from '@/components/viewers/MeshViewer';
 import { WorldViewer } from '@/components/viewers/WorldViewer';
 import { ConfigViewer } from '@/components/viewers/ConfigViewer';
@@ -106,6 +108,8 @@ export function ViewportRouter({ handler, raw, title, levelGeometry }: ViewportR
 	const model = parsed.model;
 
 	switch (family) {
+		case 'video':
+			return <BikViewer model={model as never} raw={raw} handler={handler} />;
 		case 'texture':
 			return <TextureViewer model={model as never} raw={raw} handler={handler} />;
 		case 'mesh':

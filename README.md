@@ -69,7 +69,7 @@ leaf opens the archive in place (pairing its Static/Stream sibling) under an
 
 `Caps` = `R` (read/parse), `W` (byte-exact write-back). A `W` handler satisfies
 `writeRaw(parseRaw(bytes)) === bytes` for every real devkit file (a registry
-contract test enforces it). **32 handlers registered; 23 round-trip `R W`.** For
+contract test enforces it). **33 handlers registered; 23 round-trip `R W`.** For
 the byte-level layout of any format, follow the linked wiki page.
 
 | Format | Category | Ext(s) | Caps | Wiki |
@@ -85,6 +85,7 @@ the byte-level layout of any format, follow the linked wiki page.
 | Shader Instance (SDRI/INSS) | Graphics | `.shaderinst` | R | [format-shaders](public/wiki/format-shaders.html) |
 | FX Compiled (RSX microcode) | Graphics | `.fxc` | R | [format-fxc](public/wiki/format-fxc.html) |
 | Havok Packfile | Physics | `.phys` `.maincoll` `.hkcoll` `.hkpps` `.hkrbs` | R | [format-havok](public/wiki/format-havok.html) |
+| Bink Video (FMV) | Graphics | `.bik` | R | [format-bik](public/wiki/format-bik.html) |
 | Texture CRC List | Data | `.crcs` | R W | [format-crcs](public/wiki/format-crcs.html) |
 | Tuning Params · XML · Powerplays · Triggers | Data | `.params` `.xml` `.powerplays` `.triggers` | R W | [data-params](public/wiki/data-params.html) |
 | Name / File / Part / Dict / Global-reg tables | Data | `.names` `.filenames` `.parts` `.dct` `.global_regs` | R W | [format-names](public/wiki/format-names.html) |
@@ -93,6 +94,26 @@ the byte-level layout of any format, follow the linked wiki page.
 The Workspace routes each selected file/member to a bespoke viewer by sniffed
 type (or the Hex fallback), and offers per-member **Download** and per-archive
 **Extract all**.
+
+### Bink video + audio decode (highlights)
+
+- **`.bik` movies play in-browser with sound** via a from-scratch **pure-TypeScript
+  Bink 1 decoder** (`src/lib/core/bink/`) — no ffmpeg, no transcoding, no WASM. It is
+  a faithful port of the FFmpeg-derived xoreos decoder.
+- **Video** — a 32-bit-LE LSB-first bit reader, the 16 Huffman codebooks, all nine
+  data-source bundles, every block type (skip/motion/run/residue/intra/fill/inter/
+  pattern/raw + the 16×16 scaled variants), the Bink integer IDCT, and BT.601
+  YUV→RGBA. Output is **byte-for-byte identical to ffmpeg's reference decoder** (a
+  guarded vitest regression decodes real devkit clips and diffs the YUV planes).
+  ~49 fps decode for 1280×720, ~150 fps for 256×256.
+- **Audio** — `binkaudio_dct` / `binkaudio_rdft` with a ported split-radix
+  **FFT/RDFT/DCT** (`dsp.ts`, twiddle tables generated at runtime), band
+  quantisation, and float overlap-add. Decoded up front to an `AudioBuffer` and
+  played through the Web Audio API in sync with the video. Because Bink audio is
+  float-FFT based (and ffmpeg uses a SIMD float FFT), the PCM is **sample-accurate
+  to within 1 LSB and ≥99.8% bit-exact** against ffmpeg — an inaudible (−90 dB)
+  difference; a guarded vitest regression pins `maxDiff ≤ 1`.
+- The `BikViewer` drives a `requestAnimationFrame` play/seek/loop/mute transport.
 
 ### Texture & model decode (highlights)
 
@@ -163,7 +184,7 @@ is a thin shell over the same registry. This mirrors `paradise-bundle-steward`'s
   module + one handler file + one line in `registry/index.ts`.
 - **Viewport** (`src/components/viewers/`) — `ViewportRouter` dispatches to one
   bespoke viewer per family (`TextureViewer`, `MeshViewer`, `WorldViewer`,
-  `ConfigViewer`) via the pure `viewportFor(handler)`; a missing handler or parse
+  `ConfigViewer`, `BikViewer`) via the pure `viewportFor(handler)`; a missing handler or parse
   failure always falls back to the never-throwing `HexView`.
 
 ```
