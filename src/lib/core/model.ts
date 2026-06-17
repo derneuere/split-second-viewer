@@ -537,9 +537,24 @@ function readVertexBufferTable(
 /**
  * Heuristically find where the bulk vertex region begins (right after the VB
  * table, modulo alignment padding). Returns the candidate offset whose buffer-0
- * decode looks valid. For the float path we additionally require the decoded
- * buffer-0 AABB to fall inside the header AABB — this disambiguates the 4-byte
- * alignment slip where a u32 table value decodes as a finite denormal float.
+ * decode looks valid.
+ *
+ * HALF buffers: the w≈1.0 fingerprint is decisive, so the first candidate whose
+ * stride carries a 4-half group with w≈1.0 is accepted (slide absorbs padding).
+ *
+ * FLOAT buffers: the bulk data begins EXACTLY at the VB-table end (verified on
+ * the barrel/prop samples — no alignment slip). The position float3 sits at a
+ * fixed byte OFFSET WITHIN the stride (byte 4 on every float sample checked:
+ * PointLight stride-20, NemTruckBarrels stride-52 — a leading weight/UV float
+ * precedes the position). That per-vertex offset — not the data start — is what
+ * `detectVertexFormat` resolves against the header AABB. The old code instead
+ * slid the *data start* in 4-byte steps with posOffset fixed at 0 and greedily
+ * took the first start whose first-128-vertex AABB merely *fit inside* the
+ * header box. That broke the High LOD: its first 128 verts cover only a small
+ * sub-box, so a wrong start (decoding a normal column as the position) also
+ * "fit inside" and won — yielding sheared geometry. We now anchor the float
+ * data start at the table end and let the in-stride offset search (over the full
+ * vertex span, matching the header EXTENT) recover the true position column.
  */
 function probeVertexDataStart(
 	recs: { size: number; stride: number; vcount: number }[],
@@ -548,72 +563,23 @@ function probeVertexDataStart(
 	headerBounds: ModelBounds,
 ): { vertexDataStart: number } | null {
 	const rec0 = recs[0];
-	let best: { off: number; score: number } | null = null;
+	// HALF: keep the data-start slide (the half stream may sit a few bytes past
+	// the table; the w≈1.0 group pins the true start unambiguously).
 	for (let cand = tableEnd; cand <= tableEnd + 0x80 && cand + rec0.stride * 4 <= n; cand += 4) {
-		const fmt = detectVertexFormat(cand, rec0, n);
-		if (!fmt) continue;
-		if (fmt.format === 'half') {
-			// w≈1.0 is already a strong signal — accept the first match.
-			return { vertexDataStart: cand };
-		}
-		// float: score by how well the decoded AABB sits inside the header AABB.
-		const score = scoreFloatCandidate(cand, rec0, n, headerBounds);
-		if (score !== null && (best === null || score < best.score)) best = { off: cand, score };
+		const fmt = detectHalfFormat(cand, rec0, n);
+		if (fmt) return { vertexDataStart: cand };
 	}
-	return best ? { vertexDataStart: best.off } : null;
-}
-
-/**
- * Score a float-format candidate start: decode buffer-0 positions and measure
- * how far the resulting AABB extends beyond the header AABB (lower = better).
- * Returns null when positions are implausible (denormal soup / out of range).
- */
-function scoreFloatCandidate(
-	cand: number,
-	rec: { stride: number; vcount: number },
-	n: number,
-	headerBounds: ModelBounds,
-): number | null {
-	const view = PROBE_VIEW!;
-	const sample = Math.min(rec.vcount, 128);
-	let mnx = Infinity,
-		mny = Infinity,
-		mnz = Infinity,
-		mxx = -Infinity,
-		mxy = -Infinity,
-		mxz = -Infinity;
-	let denorm = 0;
-	for (let i = 0; i < sample; i++) {
-		const b = cand + i * rec.stride;
-		if (b + 12 > n) return null;
-		const x = view.getFloat32(b, false);
-		const y = view.getFloat32(b + 4, false);
-		const z = view.getFloat32(b + 8, false);
-		if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
-		// Reject tiny denormals (a misaligned u32 table value reads as ~1e-40).
-		const mag = Math.abs(x) + Math.abs(y) + Math.abs(z);
-		if (mag > 0 && mag < 1e-6) denorm++;
-		if (Math.abs(x) > 1e5 || Math.abs(y) > 1e5 || Math.abs(z) > 1e5) return null;
-		mnx = Math.min(mnx, x);
-		mny = Math.min(mny, y);
-		mnz = Math.min(mnz, z);
-		mxx = Math.max(mxx, x);
-		mxy = Math.max(mxy, y);
-		mxz = Math.max(mxz, z);
+	// FLOAT: the bulk data begins at the table end; the in-stride position offset
+	// is resolved by detectVertexFormat. Accept iff a float position column is
+	// found there.
+	if (detectFloatFormat(tableEnd, rec0, n, headerBounds)) {
+		return { vertexDataStart: tableEnd };
 	}
-	if (denorm > sample * 0.2) return null;
-	if (!headerBounds) return mxx - mnx + (mxy - mny) + (mxz - mnz); // no AABB to compare
-	const over = (a: number, lo: number, hi: number) =>
-		Math.max(0, lo - a) + Math.max(0, a - hi);
-	const pad = 1e-2;
-	const excess =
-		over(mnx, headerBounds.min[0] - pad, headerBounds.max[0] + pad) +
-		over(mxx, headerBounds.min[0] - pad, headerBounds.max[0] + pad) +
-		over(mny, headerBounds.min[1] - pad, headerBounds.max[1] + pad) +
-		over(mxy, headerBounds.min[1] - pad, headerBounds.max[1] + pad) +
-		over(mnz, headerBounds.min[2] - pad, headerBounds.max[2] + pad) +
-		over(mxz, headerBounds.min[2] - pad, headerBounds.max[2] + pad);
-	return excess;
+	// Fallback: scan a small window for any float start (no header, denormal pad).
+	for (let cand = tableEnd; cand <= tableEnd + 0x80 && cand + rec0.stride * 4 <= n; cand += 4) {
+		if (detectFloatFormat(cand, rec0, n, headerBounds)) return { vertexDataStart: cand };
+	}
+	return null;
 }
 
 /**
@@ -627,20 +593,95 @@ function halfAt(view: DataView, p: number): number {
 // A DataView shared by the probe functions, set per-parse.
 let PROBE_VIEW: DataView | null = null;
 
+/** A decoded float3 AABB plus the denormal/usable-sample counts used to score it. */
+type FloatAABB = {
+	min: [number, number, number];
+	max: [number, number, number];
+	/** Count of sampled vertices whose magnitude read as a tiny denormal (slip). */
+	denorm: number;
+	/** Number of vertices actually sampled. */
+	sampled: number;
+};
+
 /**
- * Detect a buffer's vertex format by sampling its first vertices:
- *   - 'half': 4 big-endian half-floats per vertex, 4th (w) ≈ 1.0 (hkxVertexP4…).
- *   - 'float': full float32 P3 + UV; positions finite and within a sane range.
- * Returns the format and the byte offset of the position triple within a vertex.
+ * Decode the float32 P3 AABB at a given in-stride position offset over a LARGE,
+ * evenly-spread sample of the buffer (not just the leading vertices — those can
+ * cover only a small sub-region of a big mesh, which was the High-LOD trap).
+ * Returns null when a component is non-finite or wildly out of range.
  */
-function detectVertexFormat(
+function floatAABBAt(
+	view: DataView,
+	bufStart: number,
+	posOffset: number,
+	rec: { stride: number; vcount: number },
+	n: number,
+): FloatAABB | null {
+	// Sample up to ~4096 vertices spread across the whole buffer via a stride step.
+	const want = Math.min(rec.vcount, 4096);
+	const step = Math.max(1, Math.floor(rec.vcount / want));
+	let mnx = Infinity,
+		mny = Infinity,
+		mnz = Infinity,
+		mxx = -Infinity,
+		mxy = -Infinity,
+		mxz = -Infinity;
+	let denorm = 0;
+	let sampled = 0;
+	for (let i = 0; i < rec.vcount; i += step) {
+		const b = bufStart + i * rec.stride + posOffset;
+		if (b + 12 > n) break;
+		sampled++;
+		const x = view.getFloat32(b, false);
+		const y = view.getFloat32(b + 4, false);
+		const z = view.getFloat32(b + 8, false);
+		if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
+		if (Math.abs(x) > 1e5 || Math.abs(y) > 1e5 || Math.abs(z) > 1e5) return null;
+		// Tiny denormals (a misaligned u32 table value reads as ~1e-40) flag a slip.
+		const mag = Math.abs(x) + Math.abs(y) + Math.abs(z);
+		if (mag > 0 && mag < 1e-6) denorm++;
+		if (x < mnx) mnx = x;
+		if (y < mny) mny = y;
+		if (z < mnz) mnz = z;
+		if (x > mxx) mxx = x;
+		if (y > mxy) mxy = y;
+		if (z > mxz) mxz = z;
+	}
+	if (sampled === 0) return null;
+	return { min: [mnx, mny, mnz], max: [mxx, mxy, mxz], denorm, sampled };
+}
+
+/**
+ * Score how well a decoded float AABB matches the header AABB. The engine
+ * permutes axes by its coordinate convention, so we compare SORTED extents (the
+ * three side lengths) — this is what distinguishes the true position column from
+ * a normal/tangent column (extent ~2.0 on every axis) or a UV/weight column
+ * (extent ~1.0). Lower is better; null when there is no header to compare to.
+ */
+function extentMatchError(b: FloatAABB, headerBounds: ModelBounds): number | null {
+	if (!headerBounds) return null;
+	const he = [
+		headerBounds.max[0] - headerBounds.min[0],
+		headerBounds.max[1] - headerBounds.min[1],
+		headerBounds.max[2] - headerBounds.min[2],
+	].sort((p, q) => p - q);
+	const de = [b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]].sort(
+		(p, q) => p - q,
+	);
+	return Math.abs(he[0] - de[0]) + Math.abs(he[1] - de[1]) + Math.abs(he[2] - de[2]);
+}
+
+/**
+ * Detect the HALF (4×f16 P4, w≈1.0) layout at a buffer start: scan the stride
+ * for a 4-half group whose 4th component reads ≈1.0 across the sample. Returns
+ * the position offset within the stride, or null.
+ */
+function detectHalfFormat(
 	bufStart: number,
 	rec: { stride: number; vcount: number },
 	n: number,
-): { format: 'half' | 'float'; posOffset: number } | null {
+): { format: 'half'; posOffset: number } | null {
 	const view = PROBE_VIEW!;
 	const sample = Math.min(rec.vcount, 64);
-	// HALF: scan stride for a 4-half group whose 4th half ≈ 1.0 across samples.
 	for (let po = 0; po + 8 <= rec.stride; po += 2) {
 		let wOk = 0;
 		let posOk = 0;
@@ -666,29 +707,106 @@ function detectVertexFormat(
 			return { format: 'half', posOffset: po };
 		}
 	}
-	// FLOAT: full float32. Position is the first float3 of the stride; require all
-	// finite & in a sane range across samples.
-	{
-		let posOk = 0;
-		for (let i = 0; i < sample; i++) {
-			const b = bufStart + i * rec.stride;
-			if (b + 12 > n) break;
-			const x = view.getFloat32(b, false);
-			const y = view.getFloat32(b + 4, false);
-			const z = view.getFloat32(b + 8, false);
-			if (
-				Number.isFinite(x) &&
-				Number.isFinite(y) &&
-				Number.isFinite(z) &&
-				Math.abs(x) < 1e5 &&
-				Math.abs(y) < 1e5 &&
-				Math.abs(z) < 1e5
-			)
-				posOk++;
-		}
-		if (posOk >= sample * 0.95) return { format: 'float', posOffset: 0 };
-	}
 	return null;
+}
+
+/**
+ * The float32 vertex layout puts a leading weight/UV float BEFORE the position
+ * float3, so the position sits at byte 4 of the stride (data starting at the VB
+ * table end). This is a constant format property across every float .model
+ * sample checked — PointLight (stride-20), NemTruckBarrels Low/Mid/High
+ * (stride-52), Helicopter_Bell206B (stride 24/32/36/44), airport props — i.e.
+ * the cooked hkxVertexP4… layout where the P4 position's leading lane is the
+ * skin-weight/UV slot. Used as the strong default when a per-buffer extent
+ * cannot be matched against the (whole-model) header AABB.
+ */
+const FLOAT_POS_OFFSET = 4;
+
+/** A float column is a usable position column if finite, non-denormal, non-flat. */
+function isUsablePositionColumn(b: FloatAABB | null): boolean {
+	if (!b) return false;
+	if (b.denorm > b.sampled * 0.2) return false;
+	const ext = b.max[0] - b.min[0] + (b.max[1] - b.min[1]) + (b.max[2] - b.min[2]);
+	return ext > 1e-4; // a constant column (e.g. w==1) is not a position
+}
+
+/**
+ * Detect the FLOAT (float32 P3 + UV) layout and, crucially, the byte OFFSET of
+ * the position float3 WITHIN the stride.
+ *
+ * Why this is not "offset 0": a leading weight/UV float precedes the position on
+ * every float sample (PointLight, NemTruckBarrels, the helicopter) — the true
+ * position is at byte 4 (see FLOAT_POS_OFFSET). The High LOD bug came from the
+ * old probe instead sliding the *data start* with the offset pinned at 0 and
+ * greedily accepting the first start whose first-128-vertex AABB merely *fit
+ * inside* the header box; High's leading verts cover a small sub-box, so a wrong
+ * column also fit and won, shearing the mesh.
+ *
+ * Resolution order:
+ *   1. If a single in-stride float3 column's decoded extent (over the FULL
+ *      vertex span) MATCHES the header AABB extent (sorted, allowing axis
+ *      permutation) within a tight tolerance, use it. This nails single-buffer
+ *      models (barrels, PointLight, bench) regardless of the byte offset.
+ *   2. Otherwise (multi-buffer models, where a buffer's local extent legitimately
+ *      differs from the whole-model AABB), use the canonical FLOAT_POS_OFFSET (4)
+ *      if that column is usable.
+ *   3. Final fallbacks: byte 0, then the first usable column.
+ */
+function detectFloatFormat(
+	bufStart: number,
+	rec: { stride: number; vcount: number },
+	n: number,
+	headerBounds: ModelBounds,
+): { format: 'float'; posOffset: number } | null {
+	const view = PROBE_VIEW!;
+	let best: { posOffset: number; err: number } | null = null;
+	let firstUsable = -1;
+	let zeroUsable = false;
+	let canonUsable = false;
+	for (let po = 0; po + 12 <= rec.stride; po += 4) {
+		const b = floatAABBAt(view, bufStart, po, rec, n);
+		if (!isUsablePositionColumn(b)) continue;
+		if (firstUsable < 0) firstUsable = po;
+		if (po === 0) zeroUsable = true;
+		if (po === FLOAT_POS_OFFSET) canonUsable = true;
+		const err = extentMatchError(b!, headerBounds);
+		if (err !== null && (best === null || err < best.err)) best = { posOffset: po, err };
+	}
+	// 1. Clean header-extent match (single-buffer models).
+	if (best && headerBounds) {
+		const he = Math.max(
+			headerBounds.max[0] - headerBounds.min[0],
+			headerBounds.max[1] - headerBounds.min[1],
+			headerBounds.max[2] - headerBounds.min[2],
+		);
+		if (best.err <= Math.max(0.25, he * 0.1)) {
+			return { format: 'float', posOffset: best.posOffset };
+		}
+	}
+	// 2. Canonical format offset (multi-buffer: per-buffer extent != model AABB).
+	if (canonUsable) return { format: 'float', posOffset: FLOAT_POS_OFFSET };
+	// 3. Fallbacks.
+	if (zeroUsable) return { format: 'float', posOffset: 0 };
+	if (firstUsable >= 0) return { format: 'float', posOffset: firstUsable };
+	return null;
+}
+
+/**
+ * Detect a buffer's vertex format and the in-stride position offset. Tries the
+ * HALF (4×f16 P4) layout first — its w≈1.0 fingerprint is decisive — then the
+ * FLOAT (float32 P3) layout, whose position column is resolved against the
+ * header AABB extent (see detectFloatFormat for why offset 0 is wrong on the
+ * float samples).
+ */
+function detectVertexFormat(
+	bufStart: number,
+	rec: { stride: number; vcount: number },
+	n: number,
+	headerBounds: ModelBounds = null,
+): { format: 'half' | 'float'; posOffset: number } | null {
+	return (
+		detectHalfFormat(bufStart, rec, n) ?? detectFloatFormat(bufStart, rec, n, headerBounds)
+	);
 }
 
 /**
@@ -856,20 +974,25 @@ function decodeBufferPositions(
 			positions[i * 3 + 2] = decodeHalf(u16(b + 4));
 		}
 	} else {
-		// float32 P3 + UV: position is the first float3; UV the float2 at byte 12.
+		// float32 P3 + UV: the position float3 sits at `posOffset` within the stride
+		// (byte 4 on every float sample checked — a leading weight/UV float precedes
+		// it). The UV float2 follows the position triple when the stride has room.
 		uv = new Array(buf.vcount * 2);
+		const uvOffset = posOffset + 12;
 		for (let i = 0; i < buf.vcount; i++) {
-			const b = buf.fileOffset + i * buf.stride;
+			const vbase = buf.fileOffset + i * buf.stride;
+			const b = vbase + posOffset;
 			if (b + 12 > n) {
 				positions[i * 3] = positions[i * 3 + 1] = positions[i * 3 + 2] = 0;
+				uv[i * 2] = uv[i * 2 + 1] = 0;
 				continue;
 			}
 			positions[i * 3] = f32(b);
 			positions[i * 3 + 1] = f32(b + 4);
 			positions[i * 3 + 2] = f32(b + 8);
-			if (buf.stride >= 20 && b + 20 <= n) {
-				uv[i * 2] = f32(b + 12);
-				uv[i * 2 + 1] = f32(b + 16);
+			if (uvOffset + 8 <= buf.stride && vbase + uvOffset + 8 <= n) {
+				uv[i * 2] = f32(vbase + uvOffset);
+				uv[i * 2 + 1] = f32(vbase + uvOffset + 4);
 			} else {
 				uv[i * 2] = uv[i * 2 + 1] = 0;
 			}
@@ -1223,9 +1346,12 @@ export function parseModelBase(raw: Uint8Array): ParsedModel {
 			const vertexRegionEnd =
 				buffers[buffers.length - 1].fileOffset + buffers[buffers.length - 1].size;
 
-			// Detect each buffer's format/posOffset.
+			// Detect each buffer's format/posOffset. The header AABB is passed so the
+			// FLOAT path can resolve the in-stride position column by extent-match
+			// (the leading float before the position column is a weight/UV, not the
+			// position — see detectFloatFormat).
 			const fmts = buffers.map((b) =>
-				detectVertexFormat(b.fileOffset, { stride: b.stride, vcount: b.vcount }, n),
+				detectVertexFormat(b.fileOffset, { stride: b.stride, vcount: b.vcount }, n, bounds),
 			);
 
 			// Decode positions per buffer.

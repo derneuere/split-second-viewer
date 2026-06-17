@@ -299,8 +299,11 @@ function swapExt(looseId: string, newExt: string): string {
 
 /**
  * Load the current .model's sibling material assets (.textures / .shaderinst /
- * .shaders / .tex.crcs) from the workspace and resolve per-submesh materials via
- * buildMaterials. Returns null while loading, when the selection isn't a loose
+ * .shaders / .tex.crcs / .streamtex) from the workspace and resolve per-submesh
+ * materials via buildMaterials. This is the STANDARD texturing path: ANY loose,
+ * directory-backed .model whose material siblings sit in the same folder gets
+ * textured by default (vehicles, props, the helicopter — all the same code path,
+ * no special cases). Returns null while loading, when the selection isn't a loose
  * .model, or when no .shaderinst/.textures siblings exist (so the viewer falls
  * back to the flat material). `submeshCount` lets buildMaterials report whether
  * the submesh count matched the shaderinst node count.
@@ -309,8 +312,8 @@ function useSiblingMaterials(submeshCount: number): BuiltMaterials | null {
 	const { selection, getResourceBytes } = useWorkspace();
 	const [built, setBuilt] = useState<BuiltMaterials | null>(null);
 
-	// The loose path of the selected .model (materials only resolve for loose,
-	// directory-backed selections — the helicopter case).
+	// The loose path of the selected .model. Materials resolve for any loose,
+	// directory-backed selection whose siblings live in the same directory.
 	const modelPath =
 		selection?.ref.kind === 'loose' && /\.model$/i.test(selection.ref.looseId)
 			? selection.ref.looseId
@@ -392,11 +395,18 @@ function TexturedSubmeshes({
 				mode === 'textured' && hasUv && mat?.diffuseTexture
 					? makeDiffuseTexture(mat.diffuseTexture)
 					: null;
+			// DXT1 albedo bodies (heli, barrels, skycrane) are effectively opaque —
+			// render them in the opaque queue so double-sided geometry doesn't z-fight
+			// through the transparent sort. DXT5/DXT3 maps can carry smooth alpha
+			// (glass, decals), so those blend. Either way an alphaTest cutout drops
+			// fully-transparent texels without needing the blend path.
+			const fmt = mat?.diffuseTexture?.format;
+			const smoothAlpha = fmt === 'DXT5' || fmt === 'DXT3';
 			const base = mat?.params.baseColor;
 			const color = base
 				? new THREE.Color(base[0], base[1], base[2])
 				: new THREE.Color('#b9bcc4');
-			return { geom, diffuse, color };
+			return { geom, diffuse, color, smoothAlpha };
 		});
 	}, [meshes, materials, mode]);
 
@@ -420,7 +430,7 @@ function TexturedSubmeshes({
 						roughness={0.78}
 						wireframe={mode === 'wireframe'}
 						side={THREE.DoubleSide}
-						transparent={!!e.diffuse}
+						transparent={!!e.diffuse && e.smoothAlpha}
 						alphaTest={e.diffuse ? 0.01 : 0}
 					/>
 				</mesh>

@@ -532,4 +532,93 @@ describe('model parser — REAL devkit samples', () => {
 			}
 		},
 	);
+
+	// Regression for the High-LOD "explodes into spiky triangles" bug. The same
+	// prop ships three LOD .model files (all standard base, magic 0x02000008, a
+	// single stride-52 float32 vertex buffer whose POSITION float3 sits at byte 4
+	// — a leading weight/UV float precedes it). Low/Mid decoded correctly but High
+	// did not: the old probe slid the *data start* with the position offset pinned
+	// at 0 and greedily took the first start whose first-128-vertex AABB merely
+	// "fit inside" the header box. High's first 128 verts cover only a small
+	// sub-region, so a wrong start (decoding a normal column as the position) also
+	// fit and won — producing sheared, non-exploding-but-wrong geometry whose AABB
+	// no longer matched the header (x squashed to ~[-0.67, 0.24]). The fix anchors
+	// the float data start at the table end and resolves the in-stride position
+	// column by EXTENT-MATCH against the header AABB over the full vertex span.
+	// All three LODs must now decode to (a) sane vert/tri counts, (b) in-range
+	// indices, (c) no |component| spikes, and (d) an AABB extent matching the
+	// header float metadata — High's extent matching Low/Mid's.
+	const BARRELS = (lod: string) =>
+		`Generic/Models/NemTruckBarrels_${lod}/NemTruckBarrels_${lod}.model`;
+	for (const lod of ['Low', 'Mid', 'High']) {
+		const rel = BARRELS(lod);
+		it.skipIf(!hasSample(rel))(`decodes NemTruckBarrels ${lod} to plausible geometry`, () => {
+			const raw = readSample(rel);
+			const m = modelHandler.parseRaw(raw, ssCtx());
+			expect(m.kind).toBe('model');
+			expect(m.magic).toBe(MODEL_MAGIC);
+			// One stride-52 float32 vertex buffer per LOD.
+			expect(m.meshes).toHaveLength(1);
+			const mesh = m.meshes[0];
+			expect(mesh.format).toBe('float');
+			expect(mesh.stride).toBe(52);
+			expect(mesh.positions.length).toBe(mesh.vertexCount * 3);
+			// Sane scale: a few thousand to tens of thousands of verts, plenty of tris.
+			expect(mesh.vertexCount).toBeGreaterThan(1000);
+			expect(mesh.vertexCount).toBeLessThan(100000);
+			expect(triangleCount(m)).toBeGreaterThan(500);
+			// Every triangle index is in range for its buffer.
+			expect(mesh.indices.every((i) => i >= 0 && i < mesh.vertexCount)).toBe(true);
+			// No position spikes: finite and metric-scale (barrels are ~1 metre).
+			for (const c of mesh.positions) {
+				expect(Number.isFinite(c)).toBe(true);
+				expect(Math.abs(c)).toBeLessThan(1e4);
+				expect(Math.abs(c)).toBeLessThan(10); // generous — the barrel is ~±1.05
+			}
+			// The decoded AABB must match the header float metadata. The barrel is a
+			// ~1.78 × 2.11 × 2.11 box on every LOD (axes may permute, so compare the
+			// sorted side lengths).
+			expect(m.bounds).not.toBeNull();
+			const ext = [
+				m.bounds!.max[0] - m.bounds!.min[0],
+				m.bounds!.max[1] - m.bounds!.min[1],
+				m.bounds!.max[2] - m.bounds!.min[2],
+			].sort((a, b) => a - b);
+			expect(ext[0]).toBeCloseTo(1.78, 1);
+			expect(ext[1]).toBeCloseTo(2.11, 1);
+			expect(ext[2]).toBeCloseTo(2.11, 1);
+		});
+	}
+
+	// The three LODs are the SAME prop at different tessellation — their decoded
+	// AABBs must agree (this is the crux of the bug: High used to diverge). Higher
+	// LODs have strictly more geometry.
+	it.skipIf(
+		!hasSample(BARRELS('Low')) || !hasSample(BARRELS('Mid')) || !hasSample(BARRELS('High')),
+	)('decodes all three NemTruckBarrels LODs to the same AABB with increasing detail', () => {
+		const decode = (lod: string) => {
+			const m = modelHandler.parseRaw(readSample(BARRELS(lod)), ssCtx());
+			const mesh = m.meshes[0];
+			const ext = [
+				m.bounds!.max[0] - m.bounds!.min[0],
+				m.bounds!.max[1] - m.bounds!.min[1],
+				m.bounds!.max[2] - m.bounds!.min[2],
+			].sort((a, b) => a - b);
+			return { verts: mesh.vertexCount, tris: mesh.indices.length / 3, ext };
+		};
+		const low = decode('Low');
+		const mid = decode('Mid');
+		const high = decode('High');
+		// Detail increases Low -> Mid -> High.
+		expect(mid.verts).toBeGreaterThan(low.verts);
+		expect(high.verts).toBeGreaterThan(mid.verts);
+		expect(mid.tris).toBeGreaterThan(low.tris);
+		expect(high.tris).toBeGreaterThan(mid.tris);
+		// All three share the prop's AABB extent (the High fix). Compare each sorted
+		// side length within a tight tolerance.
+		for (let a = 0; a < 3; a++) {
+			expect(high.ext[a]).toBeCloseTo(low.ext[a], 1);
+			expect(high.ext[a]).toBeCloseTo(mid.ext[a], 1);
+		}
+	});
 });

@@ -36,15 +36,26 @@
 //        kind 3  -> TEXTURE SAMPLER. Layout: 03 00 00 00 SS <CRC:u32 BE> …
 //                   where SS is the sampler slot and the 4 bytes after it are the
 //                   big-endian texture-name CRC.
-//    A texture override whose NAME ends in "diffuseMap" (or, lacking that, the
-//    first texture-typed override) is the DIFFUSE/albedo. The CRC indexes the
-//    .textures C2NM table. Proven on the heli:
-//        node[2] "VehiclePaintFast_0_diffuseMap" -> 0xcf73c06f = "Attack_Chopper"
-//                (1024x1024 DXT1) — the chopper body albedo.
-//        node[1] "alphablend_0_texture"          -> 0x683806eb = "LIT_Glow_Ornage_Red"
-//        node[1] "alphablend_3_texture"          -> 0x65707516 = "MSC_Transp_Gradient_Red"
-//    Nodes with no texture override (glass, emissive-pulse) get no diffuse and
-//    fall back to their colour constant.
+//    GENERALIZED ALBEDO RULE (not heli-specific). A sampler is detected by its
+//    KIND tag, never by name — many real albedo samplers are named plainly. The
+//    diffuse for a node is chosen as:
+//        (a) a name-classified 'diffuse' override (e.g. "*diffuseMap"), else
+//        (b) the LOWEST-SLOT non-reflection/normal/specular sampler.
+//    Slot 1 is the primary albedo sampler in every model inspected. The CRC then
+//    indexes the .textures C2NM table. Verified across:
+//        heli  node[2] "VehiclePaintFast_0_diffuseMap" (slot1) -> Attack_Chopper 1024² (DXT1)
+//        heli  node[1] "alphablend_0_texture"          (slot1) -> LIT_Glow_Ornage_Red (decal)
+//        skycrane "Diffuse_IPR_0_diffuse" (slot1) -> generic_skycrane_military 1024×512   [albedo]
+//                 "Diffuse_IPR_0_ipr"     (slot2) -> *_ipr 512×256                          [reflection]
+//                 "Diffuse_IPR_0_cubemap" (slot3) -> Docks_Outsource_World_Sunset 32×32     [sky cube]
+//                 — the name suffix "cubemap"/"ipr" demotes those to role 'other'
+//                 so slot-1 "diffuse" wins (the heli-naming over-fit that bound the
+//                 32×32 sky cube as albedo is gone).
+//        trailer/nemtruck "texture_0_texture" (slot1) -> car_generic / barrelN  [albedo]
+//    A 0xFFFFFFFF sampler CRC is the "no texture bound" sentinel (NemTruckBarrels
+//    Low/Mid, whose 76-byte .textures stub has no pixels and no .streamtex) — it
+//    binds nothing, so those submeshes fall back to flat. Nodes with no sampler
+//    (glass, emissive-pulse) likewise get no diffuse.
 //
 // 4. CRC -> PIXELS.     The .textures TEXS container is decoded by the existing
 //    textures.ts (decodeAllInline / decodeStreamtex). We index the decoded set
@@ -173,23 +184,42 @@ function lenStringAt(b: Uint8Array, off: number, maxLen = 64): { str: string; ne
 	return { str: new TextDecoder('latin1').decode(b.subarray(ns, ns + len - 1)), next: ns + len };
 }
 
-/** True if a name denotes a texture sampler override (vs. a numeric constant). */
-function isTextureOverrideName(name: string): boolean {
-	const n = name.toLowerCase();
-	return (
-		n.endsWith('map') ||
-		n.endsWith('_texture') ||
-		n.endsWith('texture') ||
-		n.endsWith('_tex')
-	);
-}
-
-/** Classify a texture override's role from its name suffix. */
+/**
+ * Classify a texture override's role from its name suffix.
+ *
+ * Texture overrides are detected by their decoded KIND tag (kind 3), NOT by name
+ * (see readNodeOverrides) — many real albedo samplers are named plainly, e.g.
+ * skycrane's "Diffuse_IPR_0_diffuse" or trailer's "texture_0_texture", neither of
+ * which ends in "map"/"texture". The name only chooses the ROLE.
+ *
+ * Order matters: reflection/cubemap/environment/normal/specular maps are checked
+ * BEFORE the diffuse rule, because a name can legitimately contain "diffuse" as a
+ * prefix while being a reflection probe (skycrane "Diffuse_IPR_0_cubemap" is a
+ * 32×32 sky cubemap, NOT the body albedo — binding it as diffuse was the prime
+ * over-fit to the heli's clean naming).
+ */
 function classifyRole(name: string): TextureBinding['role'] {
 	const n = name.toLowerCase();
-	if (n.includes('diffuse') || n.endsWith('diffusemap')) return 'diffuse';
-	if (n.includes('normal')) return 'normal';
-	if (n.includes('specular') || n.includes('_spec')) return 'specular';
+	// Non-albedo maps first so a "Diffuse_*_cubemap" can't be mistaken for diffuse.
+	if (n.includes('normal') || n.includes('_norm') || n.includes('bump')) return 'normal';
+	if (n.includes('specular') || n.includes('_spec') || n.includes('gloss')) return 'specular';
+	if (
+		n.includes('cubemap') ||
+		n.includes('cube') ||
+		n.includes('reflect') ||
+		n.includes('_ipr') ||
+		n.endsWith('ipr') ||
+		n.includes('_env') ||
+		n.includes('environment') ||
+		n.includes('paraboloid')
+	) {
+		return 'other';
+	}
+	// Real albedo: ends in "diffuse"/"diffusemap", or a name that is "*diffuse*"
+	// with none of the reflection/normal/spec markers above.
+	if (n.endsWith('diffuse') || n.endsWith('diffusemap') || n.includes('diffuse') || n.includes('albedo')) {
+		return 'diffuse';
+	}
 	return 'other';
 }
 
@@ -260,7 +290,11 @@ function readNodeOverrides(b: Uint8Array, start: number, end: number): NodeOverr
 		if (rec && rec.str.length >= 3 && /^[A-Za-z]/.test(rec.str)) {
 			const name = rec.str;
 			const val = decodeOverrideValue(b, rec.next, end);
-			if (val.kind === 3 && isTextureOverrideName(name) && val.crc) {
+			// A texture sampler is identified by its decoded KIND tag (3), NOT by the
+			// override name — real albedo samplers are often named plainly ("diffuse",
+			// "texture_0_texture"). 0xFFFFFFFF is the "no texture bound" sentinel
+			// (NemTruckBarrels Low/Mid stub) — skip it so it never resolves a map.
+			if (val.kind === 3 && val.crc && val.crc !== 0xffffffff) {
 				textures.push({ name, crc: val.crc, slot: val.slot ?? 0, role: classifyRole(name) });
 			} else if (val.floats.length > 0) {
 				constants.push({ name, values: val.floats });
@@ -356,12 +390,36 @@ function decodeTextureSet(
 	return { byCrc, nameByCrc };
 }
 
-/** Choose the diffuse binding for a node: a 'diffuse'-role first, else first texture. */
+/**
+ * Choose the diffuse/albedo binding for a node, generalized across models.
+ *
+ * Priority:
+ *   1. A name-classified 'diffuse' role (heli "VehiclePaintFast_0_diffuseMap").
+ *   2. The lowest-slot NON-special texture (skycrane "Diffuse_IPR_0_diffuse" is
+ *      slot 1; its ipr/cubemap are slots 2/3 — albedo is consistently the first
+ *      sampler slot across every inspected vehicle/prop). 'other'-role textures
+ *      named plainly ("texture_0_texture") qualify; normal/specular/reflection
+ *      maps are skipped as last resorts.
+ *   3. Any texture at all (last resort, so a normal-only node still shows pixels).
+ */
 function pickDiffuse(textures: TextureBinding[]): TextureBinding | undefined {
-	const named = textures.find((t) => t.role === 'diffuse');
-	if (named) return named;
-	// No explicit diffuseMap — a single texture override is most likely the albedo.
-	return textures[0];
+	if (textures.length === 0) return undefined;
+	const bySlot = (a: TextureBinding, b: TextureBinding) => a.slot - b.slot;
+
+	// 1. Explicit diffuse role wins (lowest slot if several).
+	const diffuse = textures.filter((t) => t.role === 'diffuse').sort(bySlot);
+	if (diffuse.length > 0) return diffuse[0];
+
+	// 2. Lowest-slot albedo candidate (anything that isn't a normal/spec/reflection
+	//    map). Plain "other" names like texture_0_texture / *_texture land here.
+	const albedoish = textures
+		.filter((t) => t.role !== 'normal' && t.role !== 'specular')
+		.sort(bySlot);
+	if (albedoish.length > 0) return albedoish[0];
+
+	// 3. Nothing albedo-like — fall back to the lowest-slot texture so the submesh
+	//    still renders with *some* map rather than going flat.
+	return [...textures].sort(bySlot)[0];
 }
 
 /** Extract a base colour from a *paintColour / *colour float3 constant, if present. */
