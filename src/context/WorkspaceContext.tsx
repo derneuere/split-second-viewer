@@ -11,6 +11,7 @@ import {
 	useCallback,
 	useContext,
 	useMemo,
+	useRef,
 	useState,
 	type ReactNode,
 } from 'react';
@@ -22,6 +23,13 @@ import {
 } from '@/lib/core/ark/ArkArchive';
 import { describeMember, memberFileName } from '@/lib/core/ark/nameHash';
 import { ingestLoose, type LooseFile } from '@/lib/core/loose';
+import {
+	enumerateDirectory,
+	readFileBytes,
+	getCachedBytes,
+	clearByteCache,
+	type DirEntry,
+} from '@/lib/core/fs/directory';
 import {
 	getHandlerByCategory,
 	getHandlerByExtension,
@@ -103,13 +111,42 @@ export type WorkspaceContextValue = {
 
 	loadArchive: (staticFile: File, streamFile?: File) => Promise<void>;
 	loadLoose: (file: File) => Promise<void>;
+	/**
+	 * Pick & load a whole Split/Second install folder: enumerate STRUCTURE
+	 * eagerly (folders + filenames) into the unified tree; file bytes are read
+	 * lazily on selection via getResourceBytes.
+	 */
+	loadDirectory: (dirHandle: FileSystemDirectoryHandle) => Promise<void>;
 	closeArchive: (id: ArchiveId) => void;
 	closeLoose: (id: LooseId) => void;
+	/** True once a directory tree has been loaded (drives the empty-state UI). */
+	hasDirectory: boolean;
 
-	/** Extract a Resource's usable bytes (de-framed Stream members). */
+	/**
+	 * Extract a Resource's usable bytes (de-framed Stream members). SYNC: returns
+	 * already-in-memory bytes (loose / ark members) or the cache for a
+	 * directory-backed file; returns null if a directory file hasn't been read
+	 * yet — use the async getResourceBytes for that case.
+	 */
 	getResourceRaw: (ref: ResourceRef) => Uint8Array | null;
+	/**
+	 * ASYNC byte access: resolves in-memory bytes immediately, or lazily reads +
+	 * caches a directory-backed file's bytes on first request. For .ark files in
+	 * a directory it loads the archive (pairing the Static/Stream sibling) and
+	 * returns null (the caller should re-select the materialised archive).
+	 */
+	getResourceBytes: (ref: ResourceRef) => Promise<Uint8Array | null>;
 	/** Resolve the handler for a Resource (by extension, category, or magic). */
 	getHandler: (ref: ResourceRef) => ResourceHandler | undefined;
+	/**
+	 * Open a directory-backed .ark file: read its Static bytes, locate the
+	 * Stream sibling in the same folder by name, parse, add to `archives`, and
+	 * return the new ArchiveId so the caller can select it. No-op (returns null)
+	 * for non-.ark or unknown paths.
+	 */
+	openArkFromDir: (looseId: LooseId) => Promise<ArchiveId | null>;
+	/** Whether a directory-backed loose path is an openable .ark file. */
+	isArkPath: (looseId: LooseId) => boolean;
 	/** Suggested download filename (real Rosetta name or "<hash8>.<ext>"). */
 	getResourceFileName: (ref: ResourceRef) => string;
 	/** All addressable Resource refs in an Archive (both segments). */
@@ -212,6 +249,72 @@ function peekLeading(segBytes: Uint8Array, m: ArchiveMember): Uint8Array {
 	return segBytes.subarray(m.offset, end);
 }
 
+/** Is this a .Static.ark / .Stream.ark / .ark path (so we treat it as an archive)? */
+function isArkName(name: string): boolean {
+	return /\.ark$/i.test(name);
+}
+
+/**
+ * A .Stream.ark is the *twin* of a .Static.ark — it carries no TOC the user
+ * opens directly, so we hide lone Stream leaves and surface only the Static (or
+ * a bare .ark). Returns true for a Stream sibling that should be folded away.
+ */
+function isStreamTwinName(name: string): boolean {
+	return /\.Stream\.ark$/i.test(name);
+}
+
+/**
+ * Build the unified tree from an enumerated directory. Folders become `folder`
+ * group nodes; files become `resource` leaves keyed by their path (a `loose`
+ * ref). Routing is by extension via the registry. .Stream.ark twins are folded
+ * away (the .Static.ark leaf opens the pair); empty folders are pruned so the
+ * tree stays navigable across ~15k entries.
+ *
+ * `loadedArchiveIds` lets an already-materialised archive (opened from an .ark
+ * leaf) be rendered with its members in place of the bare leaf — but to keep
+ * this simple the materialised archive is appended at the top level by buildTree
+ * and the .ark leaf simply re-selects it, so here we only mark the leaf.
+ */
+function buildDirTree(rootEntry: DirEntry): TreeNode[] {
+	function toNode(entry: DirEntry, depth: number): TreeNode | null {
+		if (entry.kind === 'dir') {
+			const children: TreeNode[] = [];
+			for (const child of entry.children ?? []) {
+				const node = toNode(child, depth + 1);
+				if (node) children.push(node);
+			}
+			if (children.length === 0) return null; // prune empty folders
+			return {
+				id: `dir:${entry.path}`,
+				kind: 'folder',
+				label: entry.name,
+				depth,
+				children,
+			};
+		}
+		// File leaf. Fold away .Stream.ark twins — the Static leaf opens the pair.
+		if (isStreamTwinName(entry.name)) return null;
+		const ref: ResourceRef = { kind: 'loose', looseId: entry.path };
+		return {
+			id: `file:${entry.path}`,
+			kind: 'resource',
+			label: entry.name,
+			depth,
+			ref,
+			handler: getHandlerByExtension(entry.name),
+		};
+	}
+
+	// The root's own children become the top-level nodes (don't show the picked
+	// folder itself as a wrapper — the user already knows what they picked).
+	const top: TreeNode[] = [];
+	for (const child of rootEntry.children ?? []) {
+		const node = toNode(child, 0);
+		if (node) top.push(node);
+	}
+	return top;
+}
+
 /**
  * Resolve the handler for an .ark member: prefer routing by the sniffed content
  * category (so framed .geo -> model/MeshViewer and unframed .gputex ->
@@ -239,6 +342,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 	const [selection, setSelection] = useState<WorkspaceSelection>(null);
 	// Visibility map: key -> explicit boolean. Absent = visible (default true).
 	const [visibility, setVisibilityMap] = useState<Record<string, boolean>>({});
+	// Directory-backed structure (File System Access API). The enumerated tree is
+	// STRUCTURE only — bytes load lazily on selection. `dirIndex` maps a file's
+	// path -> its DirEntry (with handle) for O(1) lazy reads + sibling lookup.
+	const [dirTree, setDirTree] = useState<DirEntry | null>(null);
+	const dirIndexRef = useRef<Map<string, DirEntry>>(new Map());
 
 	const findArchive = useCallback(
 		(id: ArchiveId) => archives.find((a) => a.id === id),
@@ -274,6 +382,86 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 		});
 	}, []);
 
+	const loadDirectory = useCallback(async (dirHandle: FileSystemDirectoryHandle) => {
+		const root = await enumerateDirectory(dirHandle);
+		// Index every FILE entry by path for O(1) lazy reads + sibling lookup.
+		const index = new Map<string, DirEntry>();
+		const walk = (entry: DirEntry) => {
+			if (entry.kind === 'file') index.set(entry.path, entry);
+			for (const child of entry.children ?? []) walk(child);
+		};
+		walk(root);
+		dirIndexRef.current = index;
+		clearByteCache();
+		// A fresh directory replaces any prior directory + ad-hoc loads + selection.
+		setArchives([]);
+		setLooseFiles([]);
+		setSelection(null);
+		setDirTree(root);
+	}, []);
+
+	/** Look up a directory file entry by its path (= looseId), or undefined. */
+	const dirEntryFor = useCallback((looseId: LooseId): DirEntry | undefined => {
+		return dirIndexRef.current.get(looseId);
+	}, []);
+
+	const isArkPath = useCallback(
+		(looseId: LooseId): boolean => isArkName(looseId) && !!dirEntryFor(looseId),
+		[dirEntryFor],
+	);
+
+	/**
+	 * Open a directory-backed .ark by path: read the chosen file's bytes, locate
+	 * its Static/Stream sibling in the SAME folder by name, parse the pair, and
+	 * add the archive. Returns the new ArchiveId. The level id is suffixed with
+	 * the folder path so two levels named the same in different folders don't
+	 * collide.
+	 */
+	const openArkFromDir = useCallback(
+		async (looseId: LooseId): Promise<ArchiveId | null> => {
+			const entry = dirEntryFor(looseId);
+			if (!entry?.handle || !isArkName(entry.name)) return null;
+
+			const slash = looseId.lastIndexOf('/');
+			const folder = slash >= 0 ? looseId.slice(0, slash) : '';
+			const base = entry.name;
+
+			// Derive the Static + Stream member names from whichever twin was picked.
+			let staticName: string;
+			let streamName: string | undefined;
+			if (/\.Static\.ark$/i.test(base)) {
+				staticName = base;
+				streamName = base.replace(/\.Static\.ark$/i, '.Stream.ark');
+			} else if (/\.Stream\.ark$/i.test(base)) {
+				streamName = base;
+				staticName = base.replace(/\.Stream\.ark$/i, '.Static.ark');
+			} else {
+				staticName = base; // a bare ".ark" — open it alone
+			}
+
+			const pathIn = (name: string) => (folder ? `${folder}/${name}` : name);
+			const staticEntry = dirEntryFor(pathIn(staticName)) ?? entry;
+			const streamEntry = streamName ? dirEntryFor(pathIn(streamName)) : undefined;
+			if (!staticEntry.handle) return null;
+
+			const staticBytes = await readFileBytes(staticEntry.handle, staticEntry.path);
+			const streamBytes = streamEntry?.handle
+				? await readFileBytes(streamEntry.handle, streamEntry.path)
+				: undefined;
+
+			// Disambiguate by folder so duplicate level names across folders are distinct.
+			const level = levelFromFilename(staticName);
+			const id: ArchiveId = folder ? `${folder}/${level}` : level;
+			const parsed = parseArk(staticBytes, streamBytes, level);
+			setArchives((prev) => {
+				const next = prev.filter((a) => a.id !== id);
+				return [...next, { id, parsed, staticBytes, streamBytes }];
+			});
+			return id;
+		},
+		[dirEntryFor],
+	);
+
 	const closeArchive = useCallback((id: ArchiveId) => {
 		setArchives((prev) => prev.filter((a) => a.id !== id));
 		setSelection((sel) =>
@@ -291,7 +479,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 	const getResourceRaw = useCallback(
 		(ref: ResourceRef): Uint8Array | null => {
 			if (ref.kind === 'loose') {
-				return looseFiles.find((lf) => lf.looseId === ref.looseId)?.bytes ?? null;
+				// In-memory loose file (drag-drop / file input) takes priority…
+				const inMem = looseFiles.find((lf) => lf.looseId === ref.looseId)?.bytes;
+				if (inMem) return inMem;
+				// …else a directory-backed file: return cached bytes if already read.
+				if (dirEntryFor(ref.looseId)) return getCachedBytes(ref.looseId) ?? null;
+				return null;
 			}
 			const arc = findArchive(ref.archiveId);
 			if (!arc) return null;
@@ -305,7 +498,26 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			// 12-byte sub-frame from framed Stream geometry.
 			return getMemberPayload(raw);
 		},
-		[findArchive, looseFiles],
+		[findArchive, looseFiles, dirEntryFor],
+	);
+
+	/**
+	 * Async byte access. Members + in-memory loose files resolve synchronously
+	 * (wrapped in a promise); a directory-backed file is read + cached lazily on
+	 * first request. .ark directory files are NOT byte-served here (open them via
+	 * openArkFromDir) — we return null so the caller materialises the archive.
+	 */
+	const getResourceBytes = useCallback(
+		async (ref: ResourceRef): Promise<Uint8Array | null> => {
+			if (ref.kind === 'member') return getResourceRaw(ref);
+			const inMem = looseFiles.find((lf) => lf.looseId === ref.looseId)?.bytes;
+			if (inMem) return inMem;
+			const entry = dirEntryFor(ref.looseId);
+			if (!entry?.handle) return getResourceRaw(ref);
+			if (isArkName(entry.name)) return null; // archive — caller uses openArkFromDir
+			return readFileBytes(entry.handle, entry.path);
+		},
+		[getResourceRaw, looseFiles, dirEntryFor],
 	);
 
 	const findMember = useCallback(
@@ -336,11 +548,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 	/** Suggested download filename for a Resource (real name or "<hash8>.<ext>"). */
 	const getResourceFileName = useCallback(
 		(ref: ResourceRef): string => {
-			if (ref.kind === 'loose') return ref.looseId.replace(/[\\/]/g, '_');
+			if (ref.kind === 'loose') {
+				// Directory-backed file: download under its real base name.
+				const entry = dirEntryFor(ref.looseId);
+				if (entry) return entry.name;
+				return ref.looseId.replace(/[\\/]/g, '_');
+			}
 			const member = findMember(ref);
 			return memberFileName(ref.nameHash, member?.detectedType?.ext);
 		},
-		[findMember],
+		[findMember, dirEntryFor],
 	);
 
 	/** Every member of an Archive as an addressable ResourceRef (for Extract all). */
@@ -374,10 +591,35 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 		setVisibilityMap((prev) => ({ ...prev, [visibilityKey(node)]: visible }));
 	}, []);
 
-	const tree = useMemo(
-		() => buildTree(archives, looseFiles, segmentBytesFor),
-		[archives, looseFiles, segmentBytesFor],
-	);
+	const tree = useMemo(() => {
+		// Drag-drop / file-input mode: archives + loose at the top level.
+		if (!dirTree) return buildTree(archives, looseFiles, segmentBytesFor);
+
+		// Directory mode: the enumerated folder hierarchy is the tree. Any .ark
+		// the user has opened is surfaced under an "Opened archives" group (with
+		// its Static/Stream members), so the directory tree itself stays intact.
+		const dirNodes = buildDirTree(dirTree);
+		if (archives.length === 0) return dirNodes;
+
+		const archiveNodes = buildTree(archives, [], segmentBytesFor);
+		const bumpDepth = (n: TreeNode): TreeNode => ({
+			...n,
+			depth: n.depth + 1,
+			children: n.children?.map(bumpDepth),
+		});
+		return [
+			{
+				id: '__opened_archives__',
+				kind: 'folder' as const,
+				label: 'Opened archives',
+				depth: 0,
+				children: archiveNodes.map(bumpDepth),
+			},
+			...dirNodes,
+		];
+	}, [dirTree, archives, looseFiles, segmentBytesFor]);
+
+	const hasDirectory = dirTree !== null;
 
 	// Read-only MVP: no undo stack yet (TODO: write packages).
 	const noop = useCallback(() => {}, []);
@@ -389,10 +631,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			tree,
 			loadArchive,
 			loadLoose,
+			loadDirectory,
 			closeArchive,
 			closeLoose,
+			hasDirectory,
 			getResourceRaw,
+			getResourceBytes,
 			getHandler,
+			openArkFromDir,
+			isArkPath,
 			getResourceFileName,
 			membersOf,
 			selection,
@@ -410,10 +657,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			tree,
 			loadArchive,
 			loadLoose,
+			loadDirectory,
 			closeArchive,
 			closeLoose,
+			hasDirectory,
 			getResourceRaw,
+			getResourceBytes,
 			getHandler,
+			openArkFromDir,
+			isArkPath,
 			getResourceFileName,
 			membersOf,
 			selection,

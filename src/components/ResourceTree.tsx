@@ -2,7 +2,7 @@
 // and loose files. Flattens the TreeNode hierarchy honoring per-node collapse,
 // renders only the visible window via @tanstack/react-virtual.
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
 	ChevronDown,
@@ -74,6 +74,35 @@ export function ResourceTree() {
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 	const [extracting, setExtracting] = useState<string | null>(null);
 	const parentRef = useRef<HTMLDivElement>(null);
+
+	// A large directory tree (~15k nodes) would dump thousands of rows if fully
+	// expanded. Default every container to COLLAPSED so the user drills down (and
+	// so flatten() only walks the shallow visible set). We only auto-collapse
+	// containers we haven't SEEN before, so newly-opened archives collapse
+	// without re-collapsing folders the user already expanded.
+	const seenContainers = useRef<Set<string>>(new Set());
+	useEffect(() => {
+		const newlySeen: string[] = [];
+		const walk = (nodes: TreeNode[]) => {
+			for (const n of nodes) {
+				if (n.children && n.children.length > 0) {
+					if (!seenContainers.current.has(n.id)) {
+						seenContainers.current.add(n.id);
+						newlySeen.push(n.id);
+					}
+					walk(n.children);
+				}
+			}
+		};
+		walk(tree);
+		if (newlySeen.length > 0) {
+			setCollapsed((prev) => {
+				const next = new Set(prev);
+				for (const id of newlySeen) next.add(id);
+				return next;
+			});
+		}
+	}, [tree]);
 
 	const extractArchive = async (archiveId: string) => {
 		if (extracting) return;

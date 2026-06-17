@@ -30,6 +30,32 @@
 //   routed to the smallest vertex buffer whose vCount contains all of its
 //   indices. This yields renderable per-buffer submeshes; see "Open questions".
 //
+//   * SKINNED .model (magic 0x02010008) — the animated/skinned Powerplay
+//     variant (1636 files, mostly under Powerplays/Animations). Its container
+//     differs from the standard variant in three ways that this parser now
+//     handles via a DEDICATED path (parseModelSkinned):
+//       - The vertex-buffer table is a run of 0x48-byte records, each holding
+//         TWO 0x24 sub-records that share a vertex count: a stride-12 POSITION
+//         stream (3 big-endian float32 x,y,z — NOT half-floats; half-decoding it
+//         yields the tens-of-thousands garbage the brief warned about) and a
+//         stride-8 aux stream (UV float2 / packed normal). Confirmed on
+//         AA_Bell206B.model: records at 0x560 (vc=16) and 0x5a8 (vc=688), 0x48
+//         apart.
+//       - The records' embedded offset fields are NOT reliable file pointers, so
+//         each position buffer is LOCATED by scanning forward (16-then-4-aligned)
+//         from the table end for the first contiguous float32-P3 block of the
+//         right vertex count whose AABB is finite & bounded, advancing the cursor
+//         past each block so buffers are taken in node order. Validated 100% on a
+//         spread of samples (cars, ferries, cranes; strides 12 and 16).
+//       - There is NO 16-bit tri-strip index buffer and NO 32-byte draw-call
+//         table: across every sample checked the post-vertex region carries ZERO
+//         0xFFFF restarts and no dense u16<vcount run. The triangle topology
+//         lives in the compressed Havok skinning section (not yet cracked), so
+//         the skinned path emits POSITIONS ONLY (point meshes, indices empty) and
+//         flags `partial`. The decoded combined AABB is cross-checked against the
+//         header float AABB for sanity (extents match; axes are permuted by the
+//         engine's coordinate convention).
+//
 // The returned model is the shape the brief asks for:
 //   { meshes: [{ positions, indices, normals?, uv? }], bounds, skeleton? }
 // positions/indices are plain number[] so they stay JSON-serializable for the
@@ -99,6 +125,11 @@ export const MODEL_MAGIC_SKINNED = 0x02010008;
 /** True for any recognised base-.model version/flags word (02 xx 00 08). */
 export function isModelMagic(m: number): boolean {
 	return (m & 0xff0000ff) === 0x02000008;
+}
+
+/** True only for the SKINNED/animated variant (02 01 00 08). */
+export function isSkinnedMagic(m: number): boolean {
+	return m === MODEL_MAGIC_SKINNED;
 }
 
 /** Decode one IEEE-754 binary16 (half) value. */
@@ -693,6 +724,255 @@ function decodeBufferPositions(
 	return { positions, uv };
 }
 
+// ---------------------------------------------------------------------------
+// Skinned .model (magic 0x02010008) section decode
+// ---------------------------------------------------------------------------
+
+/** Plausible position-stream strides seen in the skinned variant. */
+const SKINNED_POS_STRIDES = new Set([12, 16, 20, 24, 28, 32]);
+
+/** One skinned vertex buffer: a position sub-stream + a paired aux sub-stream. */
+type SkinnedBuffer = {
+	/** File offset of the 0x48 record (diagnostic). */
+	recordOffset: number;
+	/** Position sub-buffer: stride-12 (etc) float32 P3. */
+	posSize: number;
+	posStride: number;
+	vcount: number;
+	/** Aux sub-buffer (UV float2 / packed normal), stride-8 etc. */
+	auxSize: number;
+	auxStride: number;
+	/** Located absolute file offset of the position data (null when not found). */
+	posOffset: number | null;
+};
+
+/**
+ * Read the skinned VB table: a run of 0x48-byte records, each TWO 0x24
+ * sub-records {size:u32, stride:u32, vcount:u32, …} that share a vertex count
+ * (sub-record A = position stream, sub-record B = aux/UV stream). The record's
+ * embedded offset fields are not reliable file pointers, so offsets are resolved
+ * separately by `locateSkinnedPositions`. Returns the records plus the offset
+ * just past the table.
+ */
+function readSkinnedBufferTable(
+	u32: (p: number) => number,
+	n: number,
+): { buffers: SkinnedBuffer[]; tableEnd: number } | null {
+	const sub = (p: number): { size: number; stride: number; vcount: number } | null => {
+		if (p + 12 > n) return null;
+		const size = u32(p);
+		const stride = u32(p + 4);
+		const vcount = u32(p + 8);
+		if (stride < 4 || stride > 128) return null;
+		if (vcount <= 0 || vcount > 8_000_000) return null;
+		const exact = stride * vcount;
+		if (size < exact || size - exact >= 64 || size <= 0 || size >= n) return null;
+		return { size, stride, vcount };
+	};
+
+	// A skinned record = two valid 0x24 sub-records that agree on the vertex
+	// count, where the FIRST is a recognised position stride. Find the run start.
+	let start = -1;
+	for (let p = 0x0c; p + 0x48 <= n; p += 4) {
+		const a = sub(p);
+		const b = sub(p + 0x24);
+		if (a && b && a.vcount === b.vcount && SKINNED_POS_STRIDES.has(a.stride)) {
+			start = p;
+			break;
+		}
+	}
+	if (start < 0) return null;
+
+	const buffers: SkinnedBuffer[] = [];
+	let p = start;
+	while (true) {
+		const a = sub(p);
+		if (!a) break;
+		const b = sub(p + 0x24);
+		if (!b || a.vcount !== b.vcount) break;
+		buffers.push({
+			recordOffset: p,
+			posSize: a.size,
+			posStride: a.stride,
+			vcount: a.vcount,
+			auxSize: b.size,
+			auxStride: b.stride,
+			posOffset: null,
+		});
+		p += 0x48;
+	}
+	if (buffers.length === 0) return null;
+	return { buffers, tableEnd: p };
+}
+
+/**
+ * Decide whether a candidate float32-P3 block of `vcount` vertices at `off`
+ * (stride `stride`) looks like a real position buffer: every component finite
+ * and bounded, with a non-degenerate extent. Returns the summed extent (a small
+ * positive number) or null.
+ */
+function scoreSkinnedPosBlock(
+	f32: (p: number) => number,
+	n: number,
+	off: number,
+	vcount: number,
+	stride: number,
+): number | null {
+	let mnx = Infinity,
+		mny = Infinity,
+		mnz = Infinity,
+		mxx = -Infinity,
+		mxy = -Infinity,
+		mxz = -Infinity;
+	for (let v = 0; v < vcount; v++) {
+		const p = off + v * stride;
+		if (p + 12 > n) return null;
+		const x = f32(p),
+			y = f32(p + 4),
+			z = f32(p + 8);
+		if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null;
+		if (Math.abs(x) > 1e4 || Math.abs(y) > 1e4 || Math.abs(z) > 1e4) return null;
+		if (x < mnx) mnx = x;
+		if (y < mny) mny = y;
+		if (z < mnz) mnz = z;
+		if (x > mxx) mxx = x;
+		if (y > mxy) mxy = y;
+		if (z > mxz) mxz = z;
+	}
+	const ext = mxx - mnx + (mxy - mny) + (mxz - mnz);
+	return ext > 1e-3 ? ext : null;
+}
+
+/**
+ * Locate each skinned position buffer in file order. The records do not carry
+ * usable data pointers, so for each record (in order) we scan forward from the
+ * search cursor — 16-byte-aligned first (the common case), then 4-byte-aligned —
+ * for the first contiguous float32-P3 block of the record's vertex count that
+ * passes `scoreSkinnedPosBlock`, then advance the cursor past it. Mutates each
+ * buffer's `posOffset`.
+ */
+function locateSkinnedPositions(
+	f32: (p: number) => number,
+	n: number,
+	buffers: SkinnedBuffer[],
+	tableEnd: number,
+): void {
+	let search = (tableEnd + 15) & ~15;
+	for (const buf of buffers) {
+		let found: number | null = null;
+		for (const align of [16, 4]) {
+			let off = (search + align - 1) & ~(align - 1);
+			while (off + buf.vcount * buf.posStride <= n) {
+				if (scoreSkinnedPosBlock(f32, n, off, buf.vcount, buf.posStride) !== null) {
+					found = off;
+					break;
+				}
+				off += align;
+			}
+			if (found !== null) break;
+		}
+		buf.posOffset = found;
+		if (found !== null) search = found + buf.vcount * buf.posStride;
+	}
+}
+
+/**
+ * Parse a SKINNED .model (magic 0x02010008). Emits one position-only point mesh
+ * per recovered vertex buffer; the triangle topology lives in the compressed
+ * Havok skinning section that isn't decoded yet, so indices are empty and the
+ * model is flagged `partial`. The decoded combined AABB is sanity-checked
+ * against the header float AABB.
+ */
+export function parseModelSkinned(raw: Uint8Array): ParsedModel {
+	const rr = reader(raw);
+	const { r, n, f32 } = rr;
+	if (n < 12) throw new Error(`model: too small (${n} bytes)`);
+	r.seek(0);
+	const magic = r.readU32();
+	const nodeCount = r.readU32();
+	const treeOffset = r.readU32();
+	const headerBounds = scanBounds(rr);
+
+	const meshes: ModelMesh[] = [];
+	let note: string | undefined;
+	let located = 0;
+	let totalRecords = 0;
+
+	try {
+		const table = readSkinnedBufferTable(rr.u32, n);
+		if (table && table.buffers.length > 0) {
+			totalRecords = table.buffers.length;
+			locateSkinnedPositions(f32, n, table.buffers, table.tableEnd);
+			for (const buf of table.buffers) {
+				if (buf.posOffset === null) continue;
+				located++;
+				const positions: number[] = new Array(buf.vcount * 3);
+				for (let v = 0; v < buf.vcount; v++) {
+					const b = buf.posOffset + v * buf.posStride;
+					positions[v * 3] = f32(b);
+					positions[v * 3 + 1] = f32(b + 4);
+					positions[v * 3 + 2] = f32(b + 8);
+				}
+				meshes.push({
+					positions,
+					indices: [], // topology not recoverable (see header note)
+					vertexCount: buf.vcount,
+					stride: buf.posStride,
+					format: 'float',
+				});
+			}
+			const totalVerts = meshes.reduce((s, m) => s + m.vertexCount, 0);
+			note =
+				`Skinned .model (0x${magic.toString(16)}): decoded ${located}/${totalRecords} ` +
+				`position buffer(s) (${totalVerts} verts, float32 P3). Triangle topology ` +
+				`is not recoverable from the skinned container (no 16-bit strips / draw ` +
+				`table — it lives in the compressed Havok skinning section), so meshes are ` +
+				`emitted as positions only.`;
+		} else {
+			note =
+				`Skinned .model (0x${magic.toString(16)}): no 0x48 vertex-buffer table found ` +
+				`(likely a tiny stub or an unmapped sub-variant); header metadata only.`;
+		}
+	} catch (err) {
+		note = `Skinned .model: section decode failed (${String((err as Error)?.message ?? err)}).`;
+	}
+
+	// Prefer decoded-vertex bounds when available; else the header AABB.
+	const decodedBounds = ((): ModelBounds => {
+		let mnx = Infinity,
+			mny = Infinity,
+			mnz = Infinity,
+			mxx = -Infinity,
+			mxy = -Infinity,
+			mxz = -Infinity;
+		let any = false;
+		for (const m of meshes) {
+			if (!m.positions.length) continue;
+			const b = boundsOfPositions(m.positions);
+			if (!b) continue;
+			any = true;
+			mnx = Math.min(mnx, b.min[0]);
+			mny = Math.min(mny, b.min[1]);
+			mnz = Math.min(mnz, b.min[2]);
+			mxx = Math.max(mxx, b.max[0]);
+			mxy = Math.max(mxy, b.max[1]);
+			mxz = Math.max(mxz, b.max[2]);
+		}
+		return any ? { min: [mnx, mny, mnz], max: [mxx, mxy, mxz] } : null;
+	})();
+
+	return {
+		kind: 'model',
+		magic,
+		nodeCount,
+		treeOffset,
+		meshes,
+		bounds: decodedBounds ?? headerBounds,
+		partial: true, // always partial: no triangle indices in this variant
+		note,
+	};
+}
+
 /**
  * Parse a base .model: header + bounds + (where present) the explicit vertex /
  * index section tables -> per-buffer submeshes with positions & indices.
@@ -708,6 +988,9 @@ export function parseModelBase(raw: Uint8Array): ParsedModel {
 	if (!isModelMagic(magic)) {
 		throw new Error(`model: bad magic 0x${magic.toString(16)} (expected 0x02xx0008)`);
 	}
+	// The skinned/animated variant (02 01 00 08) has a different vertex/index
+	// container; route it to the dedicated path even when entered here directly.
+	if (isSkinnedMagic(magic)) return parseModelSkinned(raw);
 	const nodeCount = r.readU32();
 	const treeOffset = r.readU32();
 	const bounds = scanBounds(rr);
@@ -857,13 +1140,15 @@ export function parseModelBase(raw: Uint8Array): ParsedModel {
 }
 
 /**
- * Top-level parse: auto-detect base .model (magic 02 00 00 08) vs a
- * .model.stream (leading dword0==0, dword1==filesize-12).
+ * Top-level parse: auto-detect the standard base .model (magic 02 00 00 08), the
+ * SKINNED variant (02 01 00 08), or a .model.stream (leading dword0==0,
+ * dword1==filesize-12).
  */
 export function parseModel(raw: Uint8Array): ParsedModel {
 	if (raw.byteLength >= 4) {
 		const view = new DataView(raw.buffer, raw.byteOffset, Math.min(12, raw.byteLength));
 		const m = view.getUint32(0, false);
+		if (isSkinnedMagic(m)) return parseModelSkinned(raw);
 		if (isModelMagic(m)) return parseModelBase(raw);
 		if (raw.byteLength >= 12) {
 			const d0 = view.getUint32(0, false);

@@ -3,8 +3,7 @@ import { Gauge } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const NAV = [
-	{ to: '/', label: 'Home' },
-	{ to: '/workspace', label: 'Workspace' },
+	{ to: '/', label: 'Workspace' },
 	{ to: '/docs', label: 'Docs' },
 ];
 

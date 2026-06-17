@@ -4,9 +4,13 @@ import {
 	parseModel,
 	parseModelStream,
 	parseModelBase,
+	parseModelSkinned,
 	expandStrips,
 	triangleCount,
 	MODEL_MAGIC,
+	MODEL_MAGIC_SKINNED,
+	isModelMagic,
+	isSkinnedMagic,
 } from '../../../model';
 import { ssCtx } from '../../handler';
 import { hasSample, readSample } from '@/test/dataRoot';
@@ -91,13 +95,75 @@ function buildInlineBaseModel(): Uint8Array {
 	return buf;
 }
 
+/**
+ * Build a minimal SKINNED .model (magic 02 01 00 08): header + an AABB float
+ * pair + one 0x48 vertex-buffer record (two 0x24 sub-records sharing a vertex
+ * count — a stride-12 float32-P3 position stream + a stride-8 aux stream),
+ * followed by the position data laid 16-aligned after the table. Mirrors the
+ * real container shape (AA_Bell206B.model) closely enough to exercise the
+ * skinned decode path end-to-end.
+ */
+function buildInlineSkinnedModel(): Uint8Array {
+	const aabbAt = 0x10;
+	const tableAt = 0x40;
+	const vcount = 4;
+	const posStride = 12;
+	const posSize = vcount * posStride; // 0x30
+	const auxStride = 8;
+	const auxSize = vcount * auxStride; // 0x20
+	// Position data placed 16-aligned just past the 0x48 record.
+	const dataAt = (tableAt + 0x48 + 15) & ~15;
+	const verts: [number, number, number][] = [
+		[-1, -2, -3],
+		[1, 0, 0],
+		[0, 2, 0],
+		[1.5, 0, 3],
+	];
+	const total = dataAt + posSize + auxSize;
+	const buf = new Uint8Array(total);
+	const dv = new DataView(buf.buffer);
+	dv.setUint32(0, MODEL_MAGIC_SKINNED, false); // 02 01 00 08
+	dv.setUint32(4, 1, false); // node_count
+	dv.setUint32(8, 0x10, false); // tree_offset
+	// AABB min/max rows (w = 1) — extents must enclose the verts above.
+	const mn = [-1, -2, -3];
+	const mx = [1.5, 2, 3];
+	for (let i = 0; i < 3; i++) dv.setFloat32(aabbAt + i * 4, mn[i], false);
+	dv.setFloat32(aabbAt + 12, 1, false);
+	for (let i = 0; i < 3; i++) dv.setFloat32(aabbAt + 16 + i * 4, mx[i], false);
+	dv.setFloat32(aabbAt + 28, 1, false);
+	// 0x48 record = sub-record A (position) + sub-record B (aux).
+	dv.setUint32(tableAt + 0x00, posSize, false);
+	dv.setUint32(tableAt + 0x04, posStride, false);
+	dv.setUint32(tableAt + 0x08, vcount, false);
+	dv.setUint32(tableAt + 0x24, auxSize, false);
+	dv.setUint32(tableAt + 0x28, auxStride, false);
+	dv.setUint32(tableAt + 0x2c, vcount, false);
+	// Position data (float32 P3).
+	let p = dataAt;
+	for (const v of verts) {
+		dv.setFloat32(p, v[0], false);
+		dv.setFloat32(p + 4, v[1], false);
+		dv.setFloat32(p + 8, v[2], false);
+		p += posStride;
+	}
+	return buf;
+}
+
 const INLINE_STREAM = buildInlineStream();
 const INLINE_BASE = buildInlineBaseModel();
+const INLINE_SKINNED = buildInlineSkinnedModel();
 
 const REAL_STREAM =
 	'Vehicles/Frontend/Bodies/Musclecar_01/Musclecar_01.model.stream';
 const REAL_BASE =
 	'Environments/Levels/airport_test_03/ReflectionMap/Lights/PointLight.model';
+// Skinned/animated variant (magic 02 01 00 08) — the brief's worked example.
+const REAL_SKINNED =
+	'Powerplays/Animations/airport_test_03/AA/AA_Bell206B.model';
+// Largest skinned sample (1.9 MB, 54 sections) — performance + scale check.
+const REAL_SKINNED_BIG =
+	'Powerplays/Animations/Downtown/Post/PA03_Heli_tunnel_Roof_MPo.model';
 
 describe('model parser — strip expansion', () => {
 	it('expands a tri-strip into a triangle list with winding flip', () => {
@@ -194,6 +260,46 @@ describe('base .model parser', () => {
 	});
 });
 
+describe('model magic helpers', () => {
+	it('distinguishes the standard and skinned magics', () => {
+		expect(isModelMagic(MODEL_MAGIC)).toBe(true);
+		expect(isModelMagic(MODEL_MAGIC_SKINNED)).toBe(true); // 02 xx 00 08 family
+		expect(isSkinnedMagic(MODEL_MAGIC_SKINNED)).toBe(true);
+		expect(isSkinnedMagic(MODEL_MAGIC)).toBe(false);
+		expect(isSkinnedMagic(0xdeadbeef)).toBe(false);
+	});
+});
+
+describe('skinned .model parser', () => {
+	it('decodes the 0x48 VB record -> a float32-P3 position buffer (inline)', () => {
+		const m = parseModelSkinned(INLINE_SKINNED);
+		expect(m.kind).toBe('model');
+		expect(m.magic).toBe(MODEL_MAGIC_SKINNED);
+		expect(m.nodeCount).toBe(1);
+		// One section: 4 verts, positions only (skinned topology not recoverable).
+		expect(m.meshes).toHaveLength(1);
+		const mesh = m.meshes[0];
+		expect(mesh.format).toBe('float');
+		expect(mesh.stride).toBe(12);
+		expect(mesh.vertexCount).toBe(4);
+		expect(mesh.positions).toEqual([-1, -2, -3, 1, 0, 0, 0, 2, 0, 1.5, 0, 3]);
+		// No index buffer in this variant -> empty indices, partial decode.
+		expect(mesh.indices).toEqual([]);
+		expect(m.partial).toBe(true);
+		expect(triangleCount(m)).toBe(0);
+		// Decoded-vertex AABB.
+		expect(m.bounds).not.toBeNull();
+		expect(m.bounds!.min).toEqual([-1, -2, -3]);
+		expect(m.bounds!.max).toEqual([1.5, 2, 3]);
+	});
+
+	it('routes the skinned magic through parseModel and parseModelBase', () => {
+		expect(parseModel(INLINE_SKINNED).magic).toBe(MODEL_MAGIC_SKINNED);
+		// parseModelBase delegates to the skinned path when it sees 02 01 00 08.
+		expect(parseModelBase(INLINE_SKINNED).meshes).toHaveLength(1);
+	});
+});
+
 describe('model parser — REAL devkit samples', () => {
 	it.skipIf(!hasSample(REAL_STREAM))(
 		'decodes a REAL .model.stream (Musclecar_01)',
@@ -276,6 +382,76 @@ describe('model parser — REAL devkit samples', () => {
 			// Car-body extent: a few metres in each axis, not astronomically large.
 			expect(m.bounds!.max[2] - m.bounds!.min[2]).toBeGreaterThan(1);
 			expect(m.bounds!.max[2] - m.bounds!.min[2]).toBeLessThan(50);
+		},
+	);
+
+	it.skipIf(!hasSample(REAL_SKINNED))(
+		'decodes a REAL skinned .model (0x02010008) into per-section position buffers (AA_Bell206B)',
+		() => {
+			const raw = readSample(REAL_SKINNED);
+			const m = modelHandler.parseRaw(raw, ssCtx());
+			expect(m.kind).toBe('model');
+			expect(m.magic).toBe(MODEL_MAGIC_SKINNED);
+			// The brief's worked example: two 0x48 VB records (vc=16 and vc=688).
+			expect(m.meshes.length).toBe(2);
+			let totalVerts = 0;
+			for (const mesh of m.meshes) {
+				// Skinned positions are full float32 P3 (NOT half-floats).
+				expect(mesh.format).toBe('float');
+				expect(mesh.stride).toBe(12);
+				expect(mesh.positions.length).toBe(mesh.vertexCount * 3);
+				// Topology isn't recoverable from this container -> positions only.
+				expect(mesh.indices).toEqual([]);
+				// Positions are finite and in a sane metric range.
+				for (const c of mesh.positions) {
+					expect(Number.isFinite(c)).toBe(true);
+					expect(Math.abs(c)).toBeLessThan(1000);
+				}
+				totalVerts += mesh.vertexCount;
+			}
+			expect(totalVerts).toBe(704); // 16 + 688
+			// Honest partial flag (no triangles decoded).
+			expect(m.partial).toBe(true);
+			expect(triangleCount(m)).toBe(0);
+			// Cross-check: the decoded combined AABB extents match the header AABB
+			// (the engine permutes axes, so compare SORTED extents).
+			expect(m.bounds).not.toBeNull();
+			const ext = [
+				m.bounds!.max[0] - m.bounds!.min[0],
+				m.bounds!.max[1] - m.bounds!.min[1],
+				m.bounds!.max[2] - m.bounds!.min[2],
+			].sort((a, b) => a - b);
+			// Header AABB extents for AA_Bell206B ≈ [3.9, 12.6, 14.6].
+			expect(ext[0]).toBeCloseTo(3.9, 0);
+			expect(ext[1]).toBeCloseTo(12.6, 0);
+			expect(ext[2]).toBeCloseTo(14.6, 0);
+		},
+	);
+
+	it.skipIf(!hasSample(REAL_SKINNED_BIG))(
+		'decodes the LARGEST skinned .model (1.9 MB, 54 sections) (PA03_Heli_tunnel_Roof_MPo)',
+		() => {
+			const raw = readSample(REAL_SKINNED_BIG);
+			const m = modelHandler.parseRaw(raw, ssCtx());
+			expect(m.kind).toBe('model');
+			expect(m.magic).toBe(MODEL_MAGIC_SKINNED);
+			// Many sections, tens of thousands of verts, all positions only.
+			expect(m.meshes.length).toBeGreaterThan(20);
+			let totalVerts = 0;
+			for (const mesh of m.meshes) {
+				expect(mesh.format).toBe('float');
+				expect(mesh.positions.length).toBe(mesh.vertexCount * 3);
+				expect(mesh.indices).toEqual([]);
+				totalVerts += mesh.vertexCount;
+			}
+			expect(totalVerts).toBeGreaterThan(50000);
+			expect(m.partial).toBe(true);
+			// Decoded bounds are finite and physically plausible (a large set piece).
+			expect(m.bounds).not.toBeNull();
+			for (const v of [...m.bounds!.min, ...m.bounds!.max]) {
+				expect(Number.isFinite(v)).toBe(true);
+				expect(Math.abs(v)).toBeLessThan(5000);
+			}
 		},
 	);
 });

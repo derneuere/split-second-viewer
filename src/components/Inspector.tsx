@@ -2,10 +2,11 @@
 // Read-only MVP: shows the resolved handler, raw byte length, and (when a
 // handler parses cleanly) its one-line describe() summary.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { FileQuestion, Download, BookOpen, FileCheck2, RefreshCw } from 'lucide-react';
 import { useWorkspace } from '@/context/WorkspaceContext';
+import { refKey } from '@/lib/core/types';
 import { ssCtx } from '@/lib/core/registry';
 import { docUrlForHandler, docUrlForName, docsRouteFor } from '@/lib/core/registry/docLinks';
 import { Separator } from '@/components/ui/separator';
@@ -22,12 +23,33 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 export function Inspector() {
-	const { selection, getResourceRaw, getHandler, getResourceFileName } = useWorkspace();
+	const { selection, getResourceBytes, getHandler, getResourceFileName, isArkPath } =
+		useWorkspace();
 
-	const raw = useMemo(
-		() => (selection ? getResourceRaw(selection.ref) : null),
-		[selection, getResourceRaw],
-	);
+	// Bytes load ON DEMAND (directory-backed files are read lazily) — mirror the
+	// Viewport so the Inspector's size / describe() reflect the same selection.
+	const [raw, setRaw] = useState<Uint8Array | null>(null);
+	const reqKey = useRef<string | null>(null);
+	useEffect(() => {
+		if (!selection) {
+			setRaw(null);
+			reqKey.current = null;
+			return;
+		}
+		const ref = selection.ref;
+		// .ark leaves materialise into an archive; nothing to inspect as bytes.
+		if (ref.kind === 'loose' && isArkPath(ref.looseId)) {
+			setRaw(null);
+			reqKey.current = null;
+			return;
+		}
+		const key = refKey(ref);
+		reqKey.current = key;
+		void getResourceBytes(ref).then((bytes) => {
+			if (reqKey.current === key) setRaw(bytes);
+		});
+	}, [selection, getResourceBytes, isArkPath]);
+
 	const handler = useMemo(
 		() => (selection ? getHandler(selection.ref) : undefined),
 		[selection, getHandler],

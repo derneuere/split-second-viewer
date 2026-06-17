@@ -13,9 +13,13 @@
 //                                        → scalar plot + a 1-D node ladder in 3D.
 //   .sideways    (ParsedSideways)     — link adjacency indices, no positions →
 //                                        summary panel (nothing to plot in 3D).
-//   .checkpoints (ParsedCheckpoints)  — PARTIAL verbatim body → header summary;
-//                                        a best-effort float-triple scan is shown
-//                                        as points when it finds plausible coords.
+//   .checkpoints (ParsedCheckpoints)  — recursive tagged-object tree; leaf
+//                                        payloads carry 0x484DC9B4-marked float
+//                                        triples (placement transforms) plotted
+//                                        as instanced points (header summary is
+//                                        the fallback when no triple is found).
+//   .sectorInfo  (ParsedSectorInfo)   — per-sector world-space AABBs drawn as
+//                                        wireframe boxes (level-space line cages).
 //
 // Props contract: { model, raw, handler }. The component is self-contained and
 // is wired into the central viewport dispatcher by the Integrate stage — it does
@@ -56,12 +60,52 @@ type LinkOriginsModel = { linkCount: number; origins: number[] };
 type SplitLengthModel = { sectionCount: number; splitLengths: number[] };
 type SidewaysRecord = { count: number; linkIndices: number[] };
 type SidewaysModel = { linkCount: number; links: SidewaysRecord[] };
+
+// ---- .checkpoints (recursive tagged-object tree) ----------------------------
+// Structural mirror of ParsedCheckpoints / CheckpointObject in
+// src/lib/core/checkpoints.ts. Each leaf object's `elements` holds the raw
+// payload words; placement-transform float triples are marked by the recurring
+// 0x484DC9B4 (=210726.8) constant word.
+export type CheckpointElement =
+	| { kind: 'word'; word: number }
+	| { kind: 'end' }
+	| { kind: 'child'; child: number };
+export type CheckpointObject = {
+	offset: number;
+	size: number;
+	children: CheckpointObject[];
+	elements: CheckpointElement[];
+};
 type CheckpointsModel = {
 	version: number;
 	bodySize: number;
-	body?: Uint8Array;
+	root: CheckpointObject;
 	headerValid?: boolean;
+	objectCount?: number;
 	endSentinelCount?: number;
+};
+
+// ---- .sectorInfo (per-sector world-space AABBs) -----------------------------
+// Structural mirror of ParsedSectorInfo / SectorChunk in
+// src/lib/core/sectorInfo.ts. Each chunk's optional `aabb` is the world-space
+// min/max from the CONFIRMED in-chunk +0x4C 12-float block.
+type SectorAABB = { min: Vec3; max: Vec3 };
+type SectorChunk = {
+	tag: string;
+	offset: number;
+	length: number;
+	name: string;
+	aabb?: SectorAABB;
+};
+type SectorInfoModel = {
+	constA: number;
+	constB: number;
+	sectorCount: number;
+	chunkTag0: string;
+	srcPath: string;
+	chunks: SectorChunk[];
+	countMatches?: boolean;
+	byteLength?: number;
 };
 
 // ---- type guards ------------------------------------------------------------
@@ -106,12 +150,22 @@ function isSideways(m: unknown): m is SidewaysModel {
 		typeof (m as SidewaysModel).linkCount === 'number'
 	);
 }
-function isCheckpoints(m: unknown): m is CheckpointsModel {
+export function isCheckpoints(m: unknown): m is CheckpointsModel {
 	return (
 		!!m &&
 		typeof m === 'object' &&
 		typeof (m as CheckpointsModel).bodySize === 'number' &&
-		typeof (m as CheckpointsModel).version === 'number'
+		typeof (m as CheckpointsModel).version === 'number' &&
+		!!(m as CheckpointsModel).root &&
+		Array.isArray((m as CheckpointsModel).root?.elements)
+	);
+}
+export function isSectorInfo(m: unknown): m is SectorInfoModel {
+	return (
+		!!m &&
+		typeof m === 'object' &&
+		Array.isArray((m as SectorInfoModel).chunks) &&
+		typeof (m as SectorInfoModel).sectorCount === 'number'
 	);
 }
 
@@ -195,10 +249,12 @@ const STROKE_COLORS = [
 function Scene({
 	strokes,
 	points,
+	boxEdges,
 	bounds,
 }: {
 	strokes: Vec3[][];
 	points: Vec3[];
+	boxEdges?: Vec3[];
 	bounds: Bounds;
 }) {
 	// Camera distance scales with the data radius so any track frames nicely.
@@ -229,6 +285,18 @@ function Scene({
 						lineWidth={2}
 					/>
 				) : null,
+			)}
+
+			{boxEdges && boxEdges.length >= 2 && (
+				<lineSegments>
+					<bufferGeometry>
+						<bufferAttribute
+							attach="attributes-position"
+							args={[new Float32Array(boxEdges.flat()), 3]}
+						/>
+					</bufferGeometry>
+					<lineBasicMaterial color="#4db6ac" transparent opacity={0.55} />
+				</lineSegments>
 			)}
 
 			{points.length > 0 && (
@@ -335,6 +403,13 @@ type Renderable = {
 	strokes: Vec3[][];
 	points: Vec3[];
 	bounds: Bounds | null;
+	/**
+	 * Optional uniform-colour wireframe edges, as a flat list of segment endpoint
+	 * pairs ([a0, b0, a1, b1, …]). Drawn as a single lineSegments mesh so that a
+	 * dense set of AABB cages (e.g. 128 sector boxes) renders cheaply in one draw
+	 * call with one colour, instead of cycling the per-stroke palette.
+	 */
+	boxEdges?: Vec3[];
 	/** Optional scalar series shown beneath the 3D scene. */
 	series?: { label: string; unit?: string; values: number[] } | null;
 	/** Human note shown if there is nothing to draw in 3D. */
@@ -400,24 +475,60 @@ function buildSplitLength(m: SplitLengthModel): Renderable {
 	};
 }
 
-/** Best-effort: scan a verbatim body for plausible float32 XYZ triples (BE).
- *  Used only for the PARTIAL .checkpoints body — purely diagnostic. */
-function scanFloatTriples(body: Uint8Array): Vec3[] {
+// The recurring constant word that marks a placement-transform block inside a
+// .checkpoints leaf payload (0x484DC9B4 reinterpreted as BE float32 = 210726.8).
+const CHECKPOINT_PLACEMENT_MARK = 0x484dc9b4;
+
+/** Reinterpret a u32 word's bits as a big-endian float32. */
+function wordToF32(word: number): number {
+	const buf = new ArrayBuffer(4);
+	new DataView(buf).setUint32(0, word >>> 0, false);
+	return new DataView(buf).getFloat32(0, false);
+}
+
+/** A plausible world-space coordinate component (excludes the 0/±tiny sentinels). */
+function plausibleCoord(v: number): boolean {
+	return Number.isFinite(v) && Math.abs(v) > 1.0 && Math.abs(v) < 1e6;
+}
+
+/**
+ * Walk the recursive checkpoint tree and pull out placement-transform positions.
+ *
+ * Each leaf payload that holds a transform begins (per the on-disk layout,
+ * cross-checked against every route on the devkit) with a hash word, then the
+ * 0x484DC9B4 placement MARK, then the transform words. The position triple is
+ * INTERLEAVED with constant sentinel words: it lives at MARK+1, MARK+3, MARK+5
+ * (offsets +0/+2/+4 among the payload float words after the mark), with the
+ * intervening MARK+2 / MARK+4 words being the recurring 0.793 / -0.000 sentinels.
+ * Only the start-line leaf carries a true world-space triple; the remaining
+ * leaves hold normalised direction vectors / fractions, which we drop via the
+ * `plausibleCoord` magnitude filter.
+ */
+export function extractCheckpointPositions(root: CheckpointObject): Vec3[] {
 	const out: Vec3[] = [];
-	if (body.byteLength < 12) return out;
-	const dv = new DataView(body.buffer, body.byteOffset, body.byteLength);
-	const plausible = (v: number) => Number.isFinite(v) && Math.abs(v) > 1e-2 && Math.abs(v) < 1e6;
-	for (let off = 0; off + 12 <= body.byteLength; off += 4) {
-		const x = dv.getFloat32(off, false);
-		const y = dv.getFloat32(off + 4, false);
-		const z = dv.getFloat32(off + 8, false);
-		if (plausible(x) && plausible(y) && plausible(z)) out.push([x, y, z]);
-	}
+	const walk = (o: CheckpointObject) => {
+		// `elements` is the ordered payload (words interleaved with child markers);
+		// gather just the raw words so MARK-relative indexing is contiguous.
+		const words: number[] = [];
+		for (const e of o.elements) if (e.kind === 'word') words.push(e.word >>> 0);
+		for (let i = 0; i < words.length; i++) {
+			if (words[i] !== CHECKPOINT_PLACEMENT_MARK) continue;
+			if (i + 5 >= words.length) continue;
+			const x = wordToF32(words[i + 1]);
+			const y = wordToF32(words[i + 3]);
+			const z = wordToF32(words[i + 5]);
+			// Keep only true world-space placements (start-line checkpoint); the
+			// normalised-direction leaves fail the magnitude filter on X and Z.
+			if (plausibleCoord(x) && plausibleCoord(z)) out.push([x, y, z]);
+		}
+		for (const c of o.children) walk(c);
+	};
+	walk(root);
 	return out;
 }
 
-function buildCheckpoints(m: CheckpointsModel): Renderable {
-	const triples = m.body ? scanFloatTriples(m.body) : [];
+export function buildCheckpoints(m: CheckpointsModel): Renderable {
+	const triples = m.root ? extractCheckpointPositions(m.root) : [];
 	const bounds = computeBounds(triples);
 	const centered = bounds ? recenter(triples, bounds.center) : triples;
 	return {
@@ -426,10 +537,68 @@ function buildCheckpoints(m: CheckpointsModel): Renderable {
 		bounds,
 		series: null,
 		emptyNote:
-			'.checkpoints is PARTIAL (verbatim tagged-serializer body). ' +
-			(triples.length
-				? `${triples.length} plausible float triples shown as points (best-effort, unverified).`
-				: 'No plottable coordinates recovered from the body.'),
+			triples.length === 0
+				? '.checkpoints parsed as a tagged-object tree ' +
+					`(${m.objectCount ?? '?'} objects), but no 0x484DC9B4-marked ` +
+					'placement transform yielded a plottable world-space position.'
+				: undefined,
+	};
+}
+
+// ---- .sectorInfo → wireframe AABB cages -------------------------------------
+
+// The 8 corners of an axis-aligned box, indexed by an (x,y,z) max-bit pattern.
+const AABB_CORNERS: [number, number, number][] = [
+	[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], // z = min face ring
+	[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1], // z = max face ring
+];
+// The 12 edges as corner-index pairs: bottom ring, top ring, vertical pillars.
+const AABB_EDGES: [number, number][] = [
+	[0, 1], [1, 2], [2, 3], [3, 0],
+	[4, 5], [5, 6], [6, 7], [7, 4],
+	[0, 4], [1, 5], [2, 6], [3, 7],
+];
+
+/** Push an AABB's 12 wireframe edges (24 endpoints) into a flat, centred list. */
+function pushAabbEdges(out: Vec3[], min: Vec3, max: Vec3, center: Vec3): void {
+	const corner = (ci: number): Vec3 => {
+		const [xi, yi, zi] = AABB_CORNERS[ci];
+		return [
+			(xi ? max[0] : min[0]) - center[0],
+			(yi ? max[1] : min[1]) - center[1],
+			(zi ? max[2] : min[2]) - center[2],
+		];
+	};
+	for (const [a, b] of AABB_EDGES) {
+		out.push(corner(a), corner(b));
+	}
+}
+
+export function buildSectorInfo(m: SectorInfoModel): Renderable {
+	const boxes = m.chunks.filter((c) => c.aabb).map((c) => c.aabb!);
+	// Collect all corner points to frame the camera over the whole level.
+	const allCorners: Vec3[] = [];
+	for (const b of boxes) {
+		allCorners.push(b.min, b.max);
+	}
+	const bounds = computeBounds(allCorners);
+	const boxEdges: Vec3[] = [];
+	if (bounds) {
+		for (const b of boxes) {
+			pushAabbEdges(boxEdges, b.min, b.max, bounds.center);
+		}
+	}
+	return {
+		strokes: [],
+		points: [],
+		bounds,
+		boxEdges,
+		series: null,
+		emptyNote:
+			boxes.length === 0
+				? `.sectorInfo has ${m.sectorCount} sectors but none carry a decoded ` +
+					'world-space AABB to draw.'
+				: undefined,
 	};
 }
 
@@ -456,6 +625,9 @@ export function WorldViewer({ model, handler, raw }: WorldViewerProps) {
 			}
 			if (key === 'checkpoints' || isCheckpoints(model)) {
 				if (isCheckpoints(model)) return buildCheckpoints(model);
+			}
+			if (key === 'sectorinfo' || isSectorInfo(model)) {
+				if (isSectorInfo(model)) return buildSectorInfo(model);
 			}
 			if (key === 'sideways' || isSideways(model)) {
 				const sw = model as SidewaysModel;
@@ -497,8 +669,9 @@ export function WorldViewer({ model, handler, raw }: WorldViewerProps) {
 		return <Empty title="Nothing to render in 3D" detail={built.error} />;
 	}
 
-	const { strokes, points, bounds, series, emptyNote } = built;
-	const has3D = !!bounds && (strokes.length > 0 || points.length > 0);
+	const { strokes, points, boxEdges, bounds, series, emptyNote } = built;
+	const has3D =
+		!!bounds && (strokes.length > 0 || points.length > 0 || (boxEdges?.length ?? 0) > 0);
 
 	return (
 		<div className="flex h-full w-full flex-col gap-2">
@@ -513,7 +686,7 @@ export function WorldViewer({ model, handler, raw }: WorldViewerProps) {
 						}}
 						onCreated={({ camera }) => camera.lookAt(0, 0, 0)}
 					>
-						<Scene strokes={strokes} points={points} bounds={bounds} />
+						<Scene strokes={strokes} points={points} boxEdges={boxEdges} bounds={bounds} />
 					</Canvas>
 				) : (
 					<div className="absolute inset-0">
@@ -527,6 +700,7 @@ export function WorldViewer({ model, handler, raw }: WorldViewerProps) {
 					<div className="pointer-events-none absolute left-2 top-2 rounded bg-black/40 px-2 py-1 text-[10px] text-white/80">
 						{handler?.name ?? handler?.key ?? 'World'} · {strokes.length} stroke
 						{strokes.length === 1 ? '' : 's'}
+						{boxEdges && boxEdges.length ? ` · ${boxEdges.length / 2} AABB edges` : ''}
 						{points.length ? ` · ${points.length} pts` : ''} · drag to orbit
 					</div>
 				)}

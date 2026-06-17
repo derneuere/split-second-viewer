@@ -1,23 +1,29 @@
 # Split/Second Steward
 
-A browser-based editor for **Split/Second** (PS3, big-endian) game data. It opens
-game archives and loose files into a **Workspace**, browses a unified typed
+A browser-based editor for **Split/Second** (PS3, big-endian) game data. Point it
+at your **whole game install folder** once; it reads the folder structure and
+loads any file on demand into a **Workspace**, browses a unified typed
 **Resource** tree, decodes + visualizes members, and **writes 23 formats back
 byte-for-byte**. It is the Split/Second equivalent of the Burnout
 `paradise-bundle-steward` editor, pruned and adapted to Split/Second's container
 and platform.
 
-> Status: registry + viewport dispatcher + **real `.ark` archive extraction** +
-> **byte-exact write-back** + an **embedded RE wiki**. **32 resource handlers** are
-> registered and CLI-validated against real devkit data; **23 of them round-trip
-> write-back byte-for-byte** (see [Supported formats](#supported-formats)). The
-> Workspace opens a `.ark` pair, routes every member to a bespoke viewer (or the
-> Hex fallback) by sniffed type, supports per-member **Download** + per-archive
-> **Extract all**, and ships the Split/Second reverse-engineering wiki inline at
-> **`/docs`** (see [Embedded docs](#embedded-docs)). The `.ark` extractor is
-> validated **byte-for-byte** against the authoritative Python tool
+> Status: a **single-page folder workspace** + registry + viewport dispatcher +
+> **real `.ark` archive extraction** + **byte-exact write-back** + an **embedded
+> RE wiki**. The app opens on one page (`/`): a **start dialog** asks for your
+> Split/Second install folder (File System Access API), then the unified tree
+> shows the full folder hierarchy and every file is read **on demand** on
+> selection (drag-drop + multi-file open remain a fallback). **32 resource
+> handlers** are registered and CLI-validated against real devkit data; **23 of
+> them round-trip write-back byte-for-byte** (see
+> [Supported formats](#supported-formats)). The Workspace routes every selected
+> file/member to a bespoke viewer (or the Hex fallback) by sniffed type, supports
+> per-member **Download** + per-archive **Extract all**, and ships the
+> Split/Second reverse-engineering wiki inline at **`/docs`** (see
+> [Embedded docs](#embedded-docs)). The `.ark` extractor is validated
+> **byte-for-byte** against the authoritative Python tool
 > (`_tools/ark_extract_full.py`) — all 864 written members of `airport_test_03`
-> match exactly. The four gates — `tsc`, `build`, `test:run` (36 files / 280
+> match exactly. The four gates — `tsc`, `build`, `test:run` (37 files / 296
 > tests), `lint` — are green. The one remaining RE item is the full `nameHash`
 > crack (members not in the Rosetta corpus stay `<hash8>.<ext>` — see
 > [Naming](#naming-the-ark-namehash)).
@@ -41,6 +47,35 @@ and platform.
 - **Loose files** are first-class too: most devkit data ships as individual
   `.model / .textures / .track / .params / .crcs / ...` files. Both an `.ark`
   member and a loose file become a **Resource** in the same tree.
+
+## Folder workspace (single-page workflow)
+
+The app is **one primary page** (`/` = the Workspace editor). On first load it
+shows a **start dialog** (`StartScreen` in `src/pages/WorkspaceEditor.tsx`):
+
+- **Select folder** — uses the **File System Access API**
+  (`window.showDirectoryPicker`, Chromium only) to pick your Split/Second install
+  directory (e.g. `…\USRDIR\Deferred`, or the game root). `enumerateDirectory`
+  (`src/lib/core/fs/directory.ts`) walks the handle tree **structure-only** —
+  folders + filenames, no bytes — into the unified Resource tree, so even a
+  ~15k-file install loads instantly. Empty folders are pruned and `.Stream.ark`
+  twins are folded into their `.Static.ark` sibling.
+- **Drag-drop / Open files** — the fallback path (and the only path on
+  non-Chromium browsers): drop a `.Static.ark` with its `.Stream.ark` to open the
+  pair, or any loose file.
+
+Once a folder is loaded, **bytes are read lazily on selection**: clicking a file
+leaf calls `getResourceBytes(ref)` (async), which reads + caches the file from its
+directory handle on first request, then routes the bytes through the handler →
+`ViewportRouter`. Selecting an `.ark` leaf opens the archive in place (pairing its
+Static/Stream sibling via `openArkFromDir`) and surfaces its members under an
+**"Opened archives"** group, leaving the directory tree intact. Nothing is
+uploaded — all reads are local, in-browser.
+
+> The ambient File System Access types live in
+> `src/types/file-system-access.d.ts`; `directory.ts` is a thin **fs adapter** (it
+> depends only on that API + types, never the core parsers), keeping the
+> registry/parser graph headless and Node-importable.
 
 ## Supported formats
 
@@ -81,6 +116,7 @@ re-emit.
 | `textures` | Texture Set (TEXS) | Graphics | `.textures` | R | Texture |
 | `streamtex` | Streamed Texture Payload | Graphics | `.streamtex` | R | Texture |
 | `model` | Model (Crayon2 mesh) | Graphics | `.model`, `.model.stream` | R | Mesh |
+| `model` (skinned) | Animated Model (`02 01 00 08`) | Graphics | `.model` | R | Mesh |
 | `skel` | Skeleton (ftsc rig) | Graphics | `.skel` | R | Mesh |
 | `deform` | Vehicle Deformation (DFM2) | Graphics | `.deform` | R W | Mesh |
 | `mcl` | Material Clip | Graphics | `.mcl` | R | Mesh |
@@ -163,8 +199,8 @@ family always falls back to the generic Hex view, which never throws.
 | Viewer | Family | Handles | Routed by |
 | --- | --- | --- | --- |
 | `TextureViewer` | `texture` | `textures`, `streamtex` | key set |
-| `MeshViewer` | `mesh` | `model`, `skel`, `deform`, `mcl` | key set |
-| `WorldViewer` | `world` | every `World`-category handler (telemetry `.track`, routes, entities, sectors, NIS, light rigs, …) | `category === 'World'` |
+| `MeshViewer` | `mesh` | `model` (base + `.model.stream` + **skinned `02 01 00 08`** point meshes), `skel` (bone hierarchy), `deform`, `mcl`, `havok` collision hulls | key set |
+| `WorldViewer` | `world` | every `World`-category handler: telemetry `.track` polylines, `.linkorigins`/`.splitlength` scalar plots, `.sideways` summary, **`.sectorInfo` wireframe AABB cages**, **`.checkpoints` placement-transform points** | `category === 'World'` |
 | `ConfigViewer` | `config` | `Data` + `Physics` handlers, plus the shader sets (`shaders`/`shaderinst`/`fxc`) and `crcs` — generic field table | `category` + shader key set |
 | `HexView` | `binary` | no handler, parse failure, or any unmapped family | fallback |
 
@@ -178,7 +214,7 @@ folder dependency at runtime).
 
 - **`/docs` route** (`src/pages/Docs.tsx`) renders the wiki in a full-pane
   `<iframe>` whose base URL is `/wiki/`, so the wiki's own sidebar, search, and
-  internal links keep working untouched. `Home.tsx` and `AppHeader.tsx` link to it.
+  internal links keep working untouched. `AppHeader.tsx` links to it from every page.
 - **Deep-linking:** `/docs?page=format-model.html` points the iframe straight at
   that page. `safePage()` only serves bare same-origin `*.html` names (rejects
   `..`, absolute, and protocol-relative URLs).
@@ -202,7 +238,8 @@ folder dependency at runtime).
 ```bash
 npm install
 
-# dev server (Vite, port 8080)
+# dev server (Vite). vite.config.ts requests port 8080; if it's taken Vite
+# falls back to the next free port (commonly :5173) — watch the startup log.
 npm run dev
 
 # production build + preview
@@ -251,23 +288,34 @@ src/
                     (raw / frame-strip / guarded zlib) + type sniff + extractMember
       nameHash.ts   nameHash -> name via Rosetta + memberFileName + computeNameHash stub
       rosettaNames.ts  309 hash->name pairs (generated; scripts/gen-rosetta.ts)
+    fs/
+      directory.ts  File System Access fs adapter: enumerateDirectory (structure-
+                    only walk), lazy readFileBytes + byte cache, openDirectory
+                    (depends ONLY on the FS Access API + ambient types)
     loose/          ingest a loose File -> Resource by extension
     crcs.ts         per-format parser/writer modules (no registry import)
+    model.ts        Crayon2 mesh: parseModelStream / parseModelBase /
+                    parseModelSkinned (magic 02 01 00 08) + isSkinnedMagic
     types.ts        ArkHeader / ArchiveMember / ParsedArchive / ResourceRef
+  types/
+    file-system-access.d.ts  ambient showDirectoryPicker / handle types
   lib/
     download.ts     zero-dep Blob download (per-member + Extract all)
   context/
-    WorkspaceContext.tsx   loaded Archives + loose files as ONE Resource tree,
+    WorkspaceContext.tsx   directory tree (lazy bytes) + loaded Archives + loose
+                           files as ONE Resource tree; getResourceBytes (async),
                            selection + per-node visibility (undo: TODO)
   components/
     layout/         AppHeader + resizable 3-pane WorkspaceLayout
     ResourceTree.tsx        virtualized unified tree
     Inspector.tsx           metadata + handler describe()
+    viewers/        ViewportRouter + Texture/Mesh/World/Config viewers
     hexviewer/HexView.tsx   generic fallback viewer (every Resource gets one)
     ui/             lean shadcn/ui subset
   pages/
-    Home.tsx                landing + drag-drop / file open
-    WorkspaceEditor.tsx     wires tree + viewport + inspector (HexView fallback)
+    WorkspaceEditor.tsx     the single primary page ("/"): start dialog (folder
+                            picker) + tree + viewport + inspector (HexView fallback)
+    Docs.tsx                embedded RE wiki ("/docs")
 scripts/
   ark-cli.ts        Node CLI dispatcher over the registry + .ark parser
                     (list / extract / parse / roundtrip / stress)

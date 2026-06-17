@@ -7,6 +7,12 @@
 //     index/draw-call section tables, yielding per-buffer submeshes
 //     (positions + unstripped triangle indices, plus float-format UVs). Covers
 //     cars, wheels, level backdrops, environment props and simple lights.
+//   * skinned .model (magic 02 01 00 08) — the animated Powerplay variant. Its
+//     0x48-byte vertex-buffer records pair a stride-12 float32-P3 position stream
+//     with a stride-8 aux stream; this handler decodes per-section position
+//     buffers (point meshes). The triangle topology lives in the compressed
+//     Havok skinning section and isn't recovered yet, so these are flagged
+//     partial (no indices).
 // See src/lib/core/model.ts for the byte-layout notes & wiki references.
 
 import {
@@ -37,8 +43,9 @@ export const modelHandler: ResourceHandler<ParsedModel> = {
 		'stream (4 big-endian half-floats/16-byte stride) + 16-bit triangle ' +
 		'strips, AND a base .model via its node-tree vertex-buffer / draw-call ' +
 		'section tables -> per-buffer submeshes (positions + unstripped indices, ' +
-		'+UVs for float buffers). Skinned (02 01 00 08) variants and a few prop ' +
-		'layouts are decoded header-only (no section table) and flagged partial.',
+		'+UVs for float buffers). Skinned (02 01 00 08) variants decode per-section ' +
+		'float32 position buffers (point meshes, no recoverable topology, flagged ' +
+		'partial); a few prop layouts remain header-only.',
 	category: 'Graphics', // viewport family: mesh
 	caps: { read: true, write: false },
 	extensions: ['.model', '.model.stream'],
@@ -72,6 +79,12 @@ export const modelHandler: ResourceHandler<ParsedModel> = {
 		{
 			// Simple float-format base .model (5x5 quad grid, P3+UV).
 			file: 'Environments/Levels/airport_test_03/ReflectionMap/Lights/PointLight.model',
+			expect: { parseOk: true },
+		},
+		{
+			// Skinned/animated variant (magic 02 01 00 08): per-section float32
+			// position buffers, partial (no topology).
+			file: 'Powerplays/Animations/airport_test_03/AA/AA_Bell206B.model',
 			expect: { parseOk: true },
 		},
 	],
