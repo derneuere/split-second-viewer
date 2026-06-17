@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Split/Second Steward — dark racing tech theme */
+
+@layer base {
+  :root {
+    /* Dark theme with electric accents */
+    --background: 220 24% 7%;
+    --foreground: 200 100% 95%;
+
+    --card: 220 24% 11%;
+    --card-foreground: 200 100% 95%;
+
+    --popover: 220 24% 9%;
+    --popover-foreground: 200 100% 95%;
+
+    /* Split/Second orange-amber primary */
+    --primary: 28 100% 54%;
+    --primary-foreground: 220 24% 7%;
+    --primary-glow: 28 100% 68%;
+
+    --secondary: 220 24% 16%;
+    --secondary-foreground: 200 100% 90%;
+
+    --muted: 220 24% 14%;
+    --muted-foreground: 200 20% 62%;
+
+    /* Cyan accent for highlights */
+    --accent: 190 100% 55%;
+    --accent-foreground: 220 24% 7%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 220 24% 7%;
+
+    --border: 220 24% 20%;
+    --input: 220 24% 16%;
+    --ring: 28 100% 54%;
+
+    --success: 150 100% 45%;
+    --warning: 45 100% 55%;
+    --info: 210 100% 60%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary-glow)));
+    --gradient-dark: linear-gradient(135deg, hsl(var(--background)), hsl(var(--card)));
+    --gradient-accent: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--accent)));
+
+    --shadow-glow: 0 0 20px hsl(var(--primary) / 0.3);
+    --shadow-accent: 0 0 15px hsl(var(--accent) / 0.2);
+
+    --transition-fast: all 0.15s ease-out;
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    --radius: 0.6rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground font-mono;
+    background-image: radial-gradient(circle at 20% 80%, hsl(var(--primary) / 0.05) 0%, transparent 50%),
+                      radial-gradient(circle at 80% 20%, hsl(var(--accent) / 0.05) 0%, transparent 50%);
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-muted;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-accent;
+  }
+}
