@@ -6,12 +6,16 @@ unified typed **Resource** tree, and decodes + visualizes members. It is the
 Split/Second equivalent of the Burnout `paradise-bundle-steward` editor, pruned
 and adapted to Split/Second's container and platform.
 
-> Status: registry + viewport dispatcher integrated. **31 resource handlers**
-> are registered and CLI-validated against real devkit data, the Workspace routes
-> every selection to a bespoke viewer (or the Hex fallback), and the four gates —
-> `tsc`, `build`, `test:run` (33 files / 186 tests), `lint` — are green. The
-> remaining work package is full `.ark` member round-trip + `nameHash` ->
-> filename resolution (see [Supported formats](#supported-formats)).
+> Status: registry + viewport dispatcher + **real `.ark` archive extraction**
+> integrated. **31 resource handlers** are registered and CLI-validated against
+> real devkit data; the Workspace opens a `.ark` pair, routes every member to a
+> bespoke viewer (or the Hex fallback) by sniffed type, and supports per-member
+> **Download** + per-archive **Extract all**. The `.ark` extractor is validated
+> **byte-for-byte** against the authoritative Python tool (`_tools/ark_extract_full.py`)
+> — all 864 written members of `airport_test_03` match exactly. The four gates —
+> `tsc`, `build`, `test:run` (34 files / 208 tests), `lint` — are green. The one
+> remaining RE item is the full `nameHash` crack (members not in the Rosetta
+> corpus stay `<hash8>.<ext>` — see [Naming](#naming-the-ark-namehash)).
 
 ## Platform & formats
 
@@ -20,8 +24,15 @@ and adapted to Split/Second's container and platform.
   opt in explicitly.
 - **Containers:** `.ark` — a paired `<Level>.Static.ark` + `<Level>.Stream.ark`.
   One logical **Archive** = the pair; each file is self-contained (offsets index
-  their own file). Static members are uncompressed; Stream members are
-  deflate-packed (inflate via `pako` — boundary framing is a follow-up WP).
+  their own file). Members are stored **raw** — there is **no** zlib/deflate step
+  in the `.ark` pipeline. The only transform is stripping a 12-byte Stream
+  sub-resource frame (`00000000 | innerSize | 00000000`) from framed members;
+  Static serialized objects and unframed GPU textures are byte-identical to disk.
+  (`getMemberPayload` still *attempts* a real `pako` inflate first, guarded by a
+  genuine `0x78 01/9C/DA` zlib header, so the routine stays correct if a member
+  ever is compressed.) A member's on-disk length is the **offset delta** to the
+  next distinct non-placeholder offset; size-0 TOC entries are placeholders and
+  never bound a live member.
 - **Loose files** are first-class too: most devkit data ships as individual
   `.model / .textures / .track / .params / .crcs / ...` files. Both an `.ark`
   member and a loose file become a **Resource** in the same tree.
@@ -68,6 +79,67 @@ decode but do not yet re-emit.
 | `fxc` | FX Compiled | Graphics | `.fxc` | R | Config |
 | `havok` | Havok Packfile | Physics | `.phys`, `.maincoll`, `.hkcoll`, `.hkpps`, `.hkrbs` | R | Config |
 
+## `.ark` archive browsing & level extraction
+
+Opening a `<Level>.Static.ark` + `<Level>.Stream.ark` pair (drag-drop or file
+open) parses both TOCs into one **Archive** of typed members. Because the
+`nameHash` is not yet computable (see [Naming](#naming-the-ark-namehash)), each
+member's content type is **sniffed** in one pass at parse time
+(`detectMemberType` in `src/lib/core/ark/ArkArchive.ts`):
+
+- **magic** where one exists (serialized-object `02 00 00 08` → `.sobj`, Havok,
+  FSB, GFX/CFX, DDS, PNG, BIK, XML), checked on the de-framed payload then the
+  raw blob;
+- else a framed Stream sub-resource → `.geo` (geometry/vertex/index stream);
+- else a `0001xxxx`-header or mip-sized blob, or any unframed Stream blob →
+  `.gputex` (PS3 swizzled/DXT GPU texture);
+- else `.bin` (unknown).
+
+This mirrors `classify()` in `_tools/ark_extract_full.py` exactly. On
+`airport_test_03` the pair yields **866** TOC entries / **864** written members
+(2 are size-0 placeholders): **365 model** (244 `.sobj` + 121 `.geo`) +
+**499 texture** (`.gputex`), with **121** framed and **743** raw members.
+
+**In the UI**, a selected member routes to a viewer by its sniffed category —
+`model → MeshViewer`, `texture → TextureViewer`, unknown → Hex — and exposes:
+
+- **Download** (Inspector) — the member's de-framed payload as
+  `<real-name>` (Rosetta) or `<hash8>.<ext>`, via a zero-dependency
+  Blob + `<a download>` helper (`src/lib/download.ts`);
+- **Extract all** (tree, per Archive) — every member downloaded sequentially.
+
+**On the CLI**, `extract` mirrors `ark_extract_full.py` (writes
+`Static/` + `Stream/` member files + a `manifest.json`), and `list` prints the
+merged TOC with a type histogram and naming stats:
+
+```bash
+npm run ark -- list    <Level.Static.ark> [Level.Stream.ark]
+npm run ark -- extract <Level.Static.ark> [Level.Stream.ark] [--out DIR] [--limit N]
+```
+
+The TS extractor is verified **byte-for-byte** against `ark_extract_full.py`: a
+`diff -rq` of both tools' `Static/` and `Stream/` output trees for
+`airport_test_03` is empty (all 864 written members identical).
+
+### Naming: the `.ark` `nameHash`
+
+The 32-bit TOC `nameHash` is a **GF(2)-affine** hash of a resource-ID string
+(`"<archiveTag>|<relpath>"`) whose closed form is **not yet cracked**, so member
+names **cannot be computed** from scratch. The only source of real names is the
+**Rosetta corpus** — **309** hash→name pairs harvested from the UI/texture packs,
+embedded as `ROSETTA_NAMES` (`src/lib/core/ark/rosettaNames.ts`, generated by
+`scripts/gen-rosetta.ts` from `_tools/texs_rosetta_corpus.json`). `resolveName()`
+returns the real name when the hash is in the corpus (e.g. `0x8c5ecfcc →
+Bootup/ESRB_rating`), else `null`; unresolved members fall back to
+`<hash8>.<detected-ext>`.
+
+`computeNameHash()` (`src/lib/core/ark/nameHash.ts`) is a documented stub
+recording the proven facts (GF(2)-affine; per-character contribution universal by
+distance-from-end; within-byte LFSR poly `0xDB710641`; ruled out as any standard
+CRC32/FNV/djb2/Murmur). **Open future work:** crack the affine matrix, then build
+a reverse `name → hash` map inside `resolveName()` — every consumer already routes
+through it, so naming *all* members becomes a one-line change.
+
 ## Viewers
 
 `ViewportRouter` (`src/components/viewers/ViewportRouter.tsx`) guard-parses the
@@ -112,7 +184,8 @@ npm run lint
 npx tsc -p tsconfig.app.json --noEmit
 
 # headless CLI over the .ark parser + handler registry
-npm run ark -- list      <Level.Static.ark> [Level.Stream.ark]
+npm run ark -- list      <Level.Static.ark> [Level.Stream.ark]   # TOC + type histogram + naming stats
+npm run ark -- extract   <Level.Static.ark> [Level.Stream.ark] [--out DIR] [--limit N]   # write members + manifest.json
 npm run ark -- parse     <file> [--type <key>]
 npm run ark -- roundtrip <file> [--type <key>]
 npm run ark -- stress    <file> [--type <key>] [--scenario <name>]
@@ -140,11 +213,15 @@ src/
       index.ts      registry array + byKey / byExtension / byMagic lookup
       handlers/     ONE FILE PER FORMAT (crcs.ts is the worked example)
     ark/
-      ArkArchive.ts header + TOC parse, storedLen derivation, pako inflate stub
-      nameHash.ts   nameHash -> filename stub + magic-sniff fallback
+      ArkArchive.ts header + TOC parse, storedLen derivation, getMemberPayload
+                    (raw / frame-strip / guarded zlib) + type sniff + extractMember
+      nameHash.ts   nameHash -> name via Rosetta + memberFileName + computeNameHash stub
+      rosettaNames.ts  309 hash->name pairs (generated; scripts/gen-rosetta.ts)
     loose/          ingest a loose File -> Resource by extension
     crcs.ts         per-format parser/writer modules (no registry import)
     types.ts        ArkHeader / ArchiveMember / ParsedArchive / ResourceRef
+  lib/
+    download.ts     zero-dep Blob download (per-member + Extract all)
   context/
     WorkspaceContext.tsx   loaded Archives + loose files as ONE Resource tree,
                            selection + per-node visibility (undo: TODO)
@@ -159,6 +236,8 @@ src/
     WorkspaceEditor.tsx     wires tree + viewport + inspector (HexView fallback)
 scripts/
   ark-cli.ts        Node CLI dispatcher over the registry + .ark parser
+                    (list / extract / parse / roundtrip / stress)
+  gen-rosetta.ts    regenerate rosettaNames.ts from texs_rosetta_corpus.json
 ```
 
 **Dependency rule (load-bearing):** parser modules (`src/lib/core/*.ts`) must
