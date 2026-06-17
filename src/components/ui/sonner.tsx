@@ -2,7 +2,7 @@ import { Toaster as Sonner, toast } from "sonner"
 
 type ToasterProps = React.ComponentProps<typeof Sonner>
 
-// next-themes was dropped for Split/Second Steward — the app is dark-only, so
+// next-themes was dropped for Split/Second Viewer — the app is dark-only, so
 // the toaster is pinned to the dark theme rather than reading a theme context.
 const Toaster = ({ ...props }: ToasterProps) => {
   return (

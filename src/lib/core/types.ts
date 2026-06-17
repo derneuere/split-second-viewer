@@ -1,4 +1,4 @@
-// Shared domain types for Split/Second Steward — the data shapes the .ark
+// Shared domain types for Split/Second Viewer — the data shapes the .ark
 // parser, the loose loader, and the Workspace context all agree on.
 //
 // Vocabulary (CONTEXT.md, adapted in PORT-BRIEF.md §3): Workspace / Archive /
