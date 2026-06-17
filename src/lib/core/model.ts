@@ -63,19 +63,29 @@
 //       - There is NO 16-bit tri-strip index buffer and NO 32-byte draw-call
 //         table, and — CONFIRMED by exhaustive byte-budget analysis — no index
 //         buffer of ANY encoding is present in the file. Each section has a node
-//         descriptor {…, 0x00020000, 0x81xx0000, 0x42ff2000, (vc<<16|ic),
-//         0xffffffff} that DECLARES a triangle-index count `ic` (AA_Bell206B: 24
-//         + 2274 = 766 tris), but the byte budget is fully consumed by the
-//         position stream (stride-12 f32 P3) + the paired aux stream (stride-8
-//         UV/normal) + a small packed Havok skinning block — there is no room for
-//         the ~ic*2 index bytes anywhere (verified across every multi-section
-//         sample: idxBytesNeeded >> gapAfterVertexData). The topology is therefore
-//         genuinely STRIPPED from the .model (reconstructed at runtime / a RAM
-//         dump would be needed), not merely undecoded. The skinned path emits
-//         POSITIONS ONLY (point meshes, indices empty), flags `partial`, and
+//         descriptor {…, 0x000N0000, 0x81xx0000, 0x42ff2000, (vc<<16|ic),
+//         0xffffffff} that DECLARES a triangle-index count `ic`. The word before
+//         the 0x81xx0000 signature is a section-COUNT word (0x00020000 for
+//         multi-section AA_Bell206B; 0x00010000 for single-section files such as
+//         AA_HelicopterShockwave), so the descriptor scan anchors on the stable
+//         signature, NOT that count word. Examples: AA_Bell206B = 24 + 2274 = 766
+//         tris (two sections); AA_HelicopterShockwave = 8160 idx = 2720 tris (one
+//         section, a tiny disc/ring). The byte budget is fully consumed by the
+//         position stream (stride-12 f32 P3) + the paired aux stream (stride-8 or
+//         stride-16 UV/normal) + a small packed Havok skinning block — there is no
+//         room for the ~ic*2 index bytes anywhere (verified per file: e.g.
+//         Shockwave pos 26748 + aux 35664 + skinning ~2560 already exceed the
+//         remainder of its 65848-byte file; a full-file scan for an 8160-entry u16
+//         region with every index < vcount finds nothing). The topology is
+//         therefore genuinely STRIPPED from the .model (reconstructed at runtime /
+//         a RAM dump would be needed), not merely undecoded. The skinned path
+//         emits POSITIONS ONLY (point meshes, indices empty), flags `partial`, and
 //         reports the descriptor-declared expected triangle total in `note`. The
 //         decoded combined AABB is cross-checked against the header float AABB for
 //         sanity (extents match; axes are permuted by the engine's convention).
+//         The viewer (MeshViewer.tsx) draws such positions-only meshes as a POINT
+//         CLOUD — never a fabricated [0,1,2,…] triangle list, which connected
+//         unrelated disc vertices into the radiating "spike soup" garbage render.
 //
 // The returned model is the shape the brief asks for:
 //   { meshes: [{ positions, indices, normals?, uv? }], bounds, skeleton? }
@@ -950,6 +960,69 @@ function looksLikeStrip(
 }
 
 /**
+ * Locate the two texcoord (UV) columns within a FLOAT vertex stride.
+ *
+ * The cooked Crayon2/Havok vertex (the hkxVertexP…N…C1T2 family) interleaves a
+ * position, a unit normal, optional tangent/colour lanes, and a float2 texcoord
+ * — but the texcoord is NOT at a fixed offset. On the Bell206B helicopter BODY
+ * (stride 32) it is SPLIT: U sits in the leading lane (byte 0) and V in the
+ * trailing lane (byte 28), with the unit normal occupying bytes 16–27. The old
+ * "UV == posOffset + 12" rule therefore read the NORMAL as the UV, yielding a
+ * spurious symmetric [-1,1] range instead of a [0,1] tiling band (and on a
+ * stride-20 prop like PointLight, posOffset+12 overran the stride and emitted
+ * all-zero UVs). Other buffers store the UV contiguously just past the normal
+ * (NemTruckBarrels stride-52 → @28/@32; the 5×5 PointLight grid → @0/@16).
+ *
+ * Since the per-buffer hkxVertexFormat declaration in the node tree is not yet
+ * decoded (the tag→class mapping is unresolved — see the wiki's Partial badge),
+ * we recover the columns STATISTICALLY. A texcoord column's values cluster in
+ * the [0,1] tiling band (mean ≈ 0.5); a normal/tangent column is symmetric about
+ * 0 (≈ 50 % of samples land in [0,1]); a handedness/constant lane has zero
+ * range. So among the non-position columns we take the two NON-CONSTANT columns
+ * with the highest fraction of samples in [0,1] (ties broken by ascending
+ * offset) and return them ordered by offset (low → U, high → V). Returns null
+ * when fewer than two candidate columns exist (caller falls back to the legacy
+ * contiguous slot just past the position).
+ */
+function detectUVOffsets(
+	f32: (p: number) => number,
+	bufStart: number,
+	stride: number,
+	vcount: number,
+	posOffset: number,
+	n: number,
+): [number, number] | null {
+	const want = Math.min(vcount, 2048);
+	const step = Math.max(1, Math.floor(vcount / want));
+	const cols: { off: number; in01: number; range: number }[] = [];
+	for (let off = 0; off + 4 <= stride; off += 4) {
+		// Skip the three position columns — never a texcoord.
+		if (off === posOffset || off === posOffset + 4 || off === posOffset + 8) continue;
+		let mn = Infinity;
+		let mx = -Infinity;
+		let in01 = 0;
+		let sampled = 0;
+		for (let i = 0; i < vcount; i += step) {
+			const p = bufStart + i * stride + off;
+			if (p + 4 > n) break;
+			const x = f32(p);
+			if (!Number.isFinite(x)) continue;
+			sampled++;
+			if (x >= 0 && x <= 1) in01++;
+			if (x < mn) mn = x;
+			if (x > mx) mx = x;
+		}
+		if (sampled === 0) continue;
+		cols.push({ off, in01: in01 / sampled, range: mx - mn });
+	}
+	// Texcoord columns vary (non-constant) and sit mostly in the [0,1] tiling band.
+	const cand = cols.filter((c) => c.range > 1e-4);
+	cand.sort((a, b) => b.in01 - a.in01 || a.off - b.off);
+	if (cand.length < 2) return null;
+	return [cand[0].off, cand[1].off].sort((a, b) => a - b) as [number, number];
+}
+
+/**
  * Decode positions (and best-effort UVs) for one vertex buffer.
  * `posOffset` is the byte offset of the position triple within the stride.
  */
@@ -976,9 +1049,15 @@ function decodeBufferPositions(
 	} else {
 		// float32 P3 + UV: the position float3 sits at `posOffset` within the stride
 		// (byte 4 on every float sample checked — a leading weight/UV float precedes
-		// it). The UV float2 follows the position triple when the stride has room.
+		// it). The texcoord is recovered by detectUVOffsets, NOT assumed contiguous
+		// at posOffset+12: the helicopter body splits its UV across the leading and
+		// trailing lanes (U @0, V @28) around the unit normal, so the old contiguous
+		// rule read the normal as the UV. Fall back to the legacy contiguous slot
+		// when detection finds fewer than two candidate columns.
 		uv = new Array(buf.vcount * 2);
-		const uvOffset = posOffset + 12;
+		const det = detectUVOffsets(f32, buf.fileOffset, buf.stride, buf.vcount, posOffset, n);
+		const uOff = det ? det[0] : posOffset + 12;
+		const vOff = det ? det[1] : posOffset + 16;
 		for (let i = 0; i < buf.vcount; i++) {
 			const vbase = buf.fileOffset + i * buf.stride;
 			const b = vbase + posOffset;
@@ -990,12 +1069,10 @@ function decodeBufferPositions(
 			positions[i * 3] = f32(b);
 			positions[i * 3 + 1] = f32(b + 4);
 			positions[i * 3 + 2] = f32(b + 8);
-			if (uvOffset + 8 <= buf.stride && vbase + uvOffset + 8 <= n) {
-				uv[i * 2] = f32(vbase + uvOffset);
-				uv[i * 2 + 1] = f32(vbase + uvOffset + 4);
-			} else {
-				uv[i * 2] = uv[i * 2 + 1] = 0;
-			}
+			const pu = vbase + uOff;
+			const pv = vbase + vOff;
+			uv[i * 2] = uOff + 4 <= buf.stride && pu + 4 <= n ? f32(pu) : 0;
+			uv[i * 2 + 1] = vOff + 4 <= buf.stride && pv + 4 <= n ? f32(pv) : 0;
 		}
 	}
 	return { positions, uv };
@@ -1013,13 +1090,17 @@ type SkinnedDescriptor = { vcount: number; icount: number; dataOffset: number };
 
 /**
  * Read the skinned variant's per-section MESH DESCRIPTORS from the node tree.
- * Each section is described by a fixed frame:
- *   base+0x00: o0:u32  o1:u32  dataOffset:u32  size:u32
- *   base+0x10: 0x00020000
- *   base+0x14: 0x81xx0000           (section sig; xx varies per section)
- *   base+0x18: 0x42ff2000           (constant)
- *   base+0x1c: packed = (vcount<<16) | icount
- *   base+0x20: 0xffffffff           (terminator)
+ * Each section is described by a fixed frame, anchored on the section SIGNATURE
+ * word `0x81xx0000`:
+ *   sig-0x04: count-of-sections word — 0x00020000 (multi-section, AA_Bell206B)
+ *             or 0x00010000 (single-section, AA_HelicopterShockwave). This word
+ *             VARIES, so the scan anchors on the signature, NOT this prefix
+ *             (the old code keyed on 0x00020000 and silently missed every
+ *             single-section file — e.g. the Shockwave).
+ *   sig+0x00: 0x81xx0000           (section sig; xx varies per section)
+ *   sig+0x04: 0x42ff2000           (constant)
+ *   sig+0x08: packed = (vcount<<16) | icount
+ *   sig+0x0c: 0xffffffff           (terminator)
  * The `icount` is the section's TRIANGLE-INDEX count (verified against the VB
  * table's vcount, which equals the descriptor vcount). Recovering it lets us
  * report the EXPECTED triangle count even though the index data itself is not
@@ -1030,20 +1111,22 @@ function readSkinnedDescriptors(
 	n: number,
 ): SkinnedDescriptor[] {
 	const out: SkinnedDescriptor[] = [];
-	for (let p = 0x10; p + 0x14 < n; p += 4) {
+	// `sig` is the 0x81xx0000 word. Scan from 0x14 so sig-0x04 (the count word) and
+	// the dataOffset field at sig-0x0c stay in bounds.
+	for (let sig = 0x14; sig + 0x0c < n; sig += 4) {
 		if (
-			u32(p) === 0x00020000 &&
 			// Mask the per-section byte (xx in 0x81xx0000); >>>0 keeps it unsigned
 			// (a bare `&` yields a *signed* int32, breaking the 0x81000000 compare).
-			((u32(p + 4) & 0xff00ffff) >>> 0) === 0x81000000 &&
-			u32(p + 8) === 0x42ff2000 &&
-			u32(p + 0x10) === 0xffffffff
+			((u32(sig) & 0xff00ffff) >>> 0) === 0x81000000 &&
+			u32(sig + 4) === 0x42ff2000 &&
+			u32(sig + 0xc) === 0xffffffff
 		) {
-			const packed = u32(p + 0xc);
+			const packed = u32(sig + 8);
 			const vcount = (packed >>> 16) & 0xffff;
 			const icount = packed & 0xffff;
-			const base = p - 0x10;
-			out.push({ vcount, icount, dataOffset: base >= 0 ? u32(base + 8) : 0 });
+			// The descriptor's dataOffset field sits at sig-0x0c (== old base+0x08).
+			const dataAt = sig - 0xc;
+			out.push({ vcount, icount, dataOffset: dataAt >= 0 ? u32(dataAt) : 0 });
 		}
 	}
 	return out;

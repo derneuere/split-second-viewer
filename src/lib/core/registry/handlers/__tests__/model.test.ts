@@ -506,6 +506,66 @@ describe('model parser — REAL devkit samples', () => {
 		},
 	);
 
+	// Regression for the skinned "spike soup" bug. AA_HelicopterShockwave is a
+	// SINGLE-SECTION skinned .model (magic 0x02010008): a tiny disc/ring of 2229
+	// verts whose stride-12 float32-P3 positions land within the tiny header AABB
+	// (±0.07..0.09). Its descriptor uses the 0x00010000 (single-section) prefix —
+	// the old descriptor scan keyed on 0x00020000 and silently missed it. There is
+	// NO index buffer anywhere in the file (verified by byte budget: pos stride-12
+	// + aux stride-16 + a packed skinning block consume the whole file; a full-file
+	// scan for an 8160-entry u16 region with every index < vcount finds nothing).
+	// So it MUST decode to a clean POINT cloud (positions in-AABB, indices empty),
+	// never a fabricated triangle list (that produced the radiating spikes). The
+	// descriptor still recovers the EXPECTED triangle count (vcount=2229,
+	// icount=8160 -> 2720 tris) for the note, proving topology was stripped.
+	const REAL_SKINNED_SHOCKWAVE =
+		'Powerplays/Animations/nem_downtown/Generic/AA/AA_HelicopterShockwave.model';
+	it.skipIf(!hasSample(REAL_SKINNED_SHOCKWAVE))(
+		'decodes AA_HelicopterShockwave to an in-AABB point cloud (no spike soup)',
+		() => {
+			const raw = readSample(REAL_SKINNED_SHOCKWAVE);
+			const m = modelHandler.parseRaw(raw, ssCtx());
+			expect(m.kind).toBe('model');
+			expect(m.magic).toBe(MODEL_MAGIC_SKINNED);
+			// One section: a 2229-vert stride-12 float32-P3 disc.
+			expect(m.meshes).toHaveLength(1);
+			const mesh = m.meshes[0];
+			expect(mesh.format).toBe('float');
+			expect(mesh.stride).toBe(12);
+			expect(mesh.vertexCount).toBe(2229);
+			expect(mesh.positions.length).toBe(2229 * 3);
+			// THE fix's contract: positions fall within ~the tiny header AABB — no
+			// |component| spike (the spikes peaked in the thousands). The disc is
+			// ~±0.09, so a generous metric bound also holds.
+			for (const c of mesh.positions) {
+				expect(Number.isFinite(c)).toBe(true);
+				expect(Math.abs(c)).toBeLessThan(1e4); // never the spike magnitude
+				expect(Math.abs(c)).toBeLessThan(1); // disc is ~±0.09
+			}
+			// Documented point-cloud result: NO real index buffer in this container.
+			expect(mesh.indices).toEqual([]);
+			expect(m.partial).toBe(true);
+			expect(triangleCount(m)).toBe(0);
+			// Decoded AABB is the tiny disc and matches the header float metadata
+			// (extents ≈ 0.144 × 0.029 × 0.172; axes may permute, so compare sorted).
+			expect(m.bounds).not.toBeNull();
+			const ext = [
+				m.bounds!.max[0] - m.bounds!.min[0],
+				m.bounds!.max[1] - m.bounds!.min[1],
+				m.bounds!.max[2] - m.bounds!.min[2],
+			].sort((a, b) => a - b);
+			expect(ext[0]).toBeCloseTo(0.029, 2);
+			expect(ext[1]).toBeCloseTo(0.144, 2);
+			expect(ext[2]).toBeCloseTo(0.172, 2);
+			// The single-section descriptor (0x00010000 prefix) is recovered and the
+			// note reports the expected, stripped triangle count.
+			expect(m.note).toBeDefined();
+			expect(m.note).toMatch(/1 mesh section/);
+			expect(m.note).toMatch(/2720 triangle/);
+			expect(m.note).toMatch(/index buffer is absent/);
+		},
+	);
+
 	it.skipIf(!hasSample(REAL_SKINNED_BIG))(
 		'decodes the LARGEST skinned .model (1.9 MB, 54 sections) (PA03_Heli_tunnel_Roof_MPo)',
 		() => {

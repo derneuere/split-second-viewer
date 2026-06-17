@@ -42,6 +42,15 @@ type RenderMesh = {
 	uv?: Float32Array;
 	/** Submesh index in node order — the key into the resolved materials. */
 	submeshIndex: number;
+	/**
+	 * True when the source mesh has NO real triangle topology (positions only —
+	 * e.g. the skinned .model variant, whose index buffer is stripped from the
+	 * file). Such a mesh is drawn as a POINT CLOUD: drawing it as triangles would
+	 * connect unrelated vertices into a shattered spike soup (the AA_*Shockwave /
+	 * Bell206B bug). `indices` is then the identity 0..n-1 used only for the point
+	 * draw / glTF export, not a triangle list.
+	 */
+	points?: boolean;
 };
 
 /** Display modes the toolbar toggles between. */
@@ -120,23 +129,51 @@ function toRenderMesh(mesh: ModelMesh, submeshIndex: number): RenderMesh | null 
 	if (!mesh.positions || mesh.positions.length < 9) return null; // need >=3 verts
 	const positions = Float32Array.from(mesh.positions);
 	const vertexCount = positions.length / 3;
-	// Use the explicit triangle indices when present & in range; otherwise draw
-	// the vertex stream as a non-indexed point/triangle soup fallback.
-	let indices: Uint32Array;
-	if (mesh.indices && mesh.indices.length >= 3) {
-		const valid = mesh.indices.every((i) => i >= 0 && i < vertexCount);
-		indices = valid
-			? Uint32Array.from(mesh.indices)
-			: Uint32Array.from({ length: vertexCount }, (_, i) => i);
-	} else {
-		indices = Uint32Array.from({ length: vertexCount }, (_, i) => i);
-	}
+	// Decide between a TRIANGLE mesh and a POINT CLOUD. A mesh is drawn as points
+	// whenever it has no usable triangle topology: either no indices at all (the
+	// skinned .model variant, whose index buffer is stripped — see model.ts) or
+	// indices that are out of range. Fabricating a sequential [0,1,2,…] triangle
+	// list for such meshes is exactly what produced the radiating "spike soup"
+	// (AA_HelicopterShockwave, AA_Bell206B): it connects unrelated disc vertices
+	// into giant triangles. A clean point cloud is the honest, non-broken result.
+	const hasTriangles =
+		!!mesh.indices && mesh.indices.length >= 3 && mesh.indices.every((i) => i >= 0 && i < vertexCount);
+	const points = !hasTriangles;
+	// For a point cloud the index is just the identity (used by the point draw and
+	// the glTF export); for a triangle mesh it is the real triangle list.
+	const indices = hasTriangles
+		? Uint32Array.from(mesh.indices)
+		: Uint32Array.from({ length: vertexCount }, (_, i) => i);
 	// Carry UVs through when the decoder recovered them (float32 P3+UV buffers).
 	let uv: Float32Array | undefined;
 	if (mesh.uv && mesh.uv.length === vertexCount * 2) {
 		uv = Float32Array.from(mesh.uv);
 	}
-	return { positions, indices, vertexCount, uv, submeshIndex };
+	return { positions, indices, vertexCount, uv, submeshIndex, points };
+}
+
+/**
+ * Build a single un-indexed THREE point-cloud geometry from the positions of all
+ * supplied meshes. Used both to DRAW point-only meshes (skinned .model variant,
+ * topology stripped) and to provide a bounding sphere for AutoFit. Never builds a
+ * triangle index, so it can never produce the spike soup.
+ */
+function buildPointsGeometry(meshes: RenderMesh[]): THREE.BufferGeometry | null {
+	if (meshes.length === 0) return null;
+	let totalVerts = 0;
+	for (const m of meshes) totalVerts += m.positions.length / 3;
+	if (totalVerts === 0) return null;
+	const positions = new Float32Array(totalVerts * 3);
+	let vOff = 0;
+	for (const m of meshes) {
+		positions.set(m.positions, vOff * 3);
+		vOff += m.positions.length / 3;
+	}
+	const geom = new THREE.BufferGeometry();
+	geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+	geom.computeBoundingSphere();
+	geom.computeBoundingBox();
+	return geom;
 }
 
 /** Build merged THREE geometry from all renderable submeshes (for display). */
@@ -469,6 +506,12 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 		return out;
 	}, [parsed]);
 
+	// Split surfaces (real triangle topology) from point clouds (positions only —
+	// the skinned .model variant, whose index buffer is stripped). Point meshes
+	// are drawn as <points>, NEVER fabricated into triangles (the spike-soup bug).
+	const triangleMeshes = useMemo(() => renderMeshes.filter((m) => !m.points), [renderMeshes]);
+	const pointMeshes = useMemo(() => renderMeshes.filter((m) => m.points), [renderMeshes]);
+
 	// Resolve per-submesh materials from the sibling .textures/.shaderinst/etc.
 	const materials = useSiblingMaterials(parsed?.meshes.length ?? 0);
 
@@ -486,14 +529,25 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 	// If textures aren't available, never sit in 'textured' mode.
 	const effectiveMode: ViewMode = viewMode === 'textured' && !canTexture ? 'flat' : viewMode;
 
-	const geometry = useMemo(() => buildGeometry(renderMeshes), [renderMeshes]);
+	// Surface geometry (merged triangle meshes) and point-cloud geometry (point
+	// meshes) are built separately so each renders with the right primitive.
+	const geometry = useMemo(() => buildGeometry(triangleMeshes), [triangleMeshes]);
+	const pointsGeometry = useMemo(() => buildPointsGeometry(pointMeshes), [pointMeshes]);
+	// AutoFit and the "has geometry" guard need a sphere over EVERYTHING; reuse the
+	// surface geometry when present, else the point cloud.
+	const fitGeometry = geometry ?? pointsGeometry;
 
-	// Dispose the GPU geometry when it is replaced/unmounted.
+	// Dispose the GPU geometries when they are replaced/unmounted.
 	useEffect(() => {
 		return () => {
 			geometry?.dispose();
 		};
 	}, [geometry]);
+	useEffect(() => {
+		return () => {
+			pointsGeometry?.dispose();
+		};
+	}, [pointsGeometry]);
 
 	// Revoke any object URL we created for the glTF download.
 	useEffect(() => {
@@ -503,11 +557,13 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 	}, []);
 
 	const handleExport = async () => {
-		if (renderMeshes.length === 0) return;
+		// Export real triangle surfaces only; point-cloud meshes (skinned variant,
+		// topology stripped) have no triangle list worth writing to glTF.
+		if (triangleMeshes.length === 0) return;
 		setExporting(true);
 		setExportError(null);
 		try {
-			const glb = await exportGlb(renderMeshes);
+			const glb = await exportGlb(triangleMeshes);
 			// Copy into a standalone ArrayBuffer for a clean Blob (avoids SAB typing).
 			const bytes = new Uint8Array(glb.byteLength);
 			bytes.set(glb);
@@ -554,7 +610,7 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 		);
 	}
 
-	if (!geometry || renderMeshes.length === 0) {
+	if (!fitGeometry || renderMeshes.length === 0) {
 		// Base .model commonly decodes indices but no positions (the per-section
 		// vertex table is still unmapped) — explain rather than show a void.
 		const isBase = parsed.kind === 'model';
@@ -577,8 +633,13 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 		);
 	}
 
-	const tris = triCount(geometry);
-	const verts = geometry.getAttribute('position').count;
+	const tris = geometry ? triCount(geometry) : 0;
+	const surfaceVerts = geometry ? geometry.getAttribute('position').count : 0;
+	const pointVerts = pointsGeometry ? pointsGeometry.getAttribute('position').count : 0;
+	const verts = surfaceVerts + pointVerts;
+	// A model with no triangle surface at all (skinned variant, topology stripped)
+	// is labelled as a point cloud so the "0 tris" reads as intentional, not broken.
+	const pointsOnly = !geometry && pointVerts > 0;
 
 	return (
 		<div className="flex h-full flex-col">
@@ -586,10 +647,19 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 			<div className="flex items-center gap-2 border-b border-border bg-card/50 px-3 py-2">
 				<Boxes className="h-4 w-4 text-accent" />
 				<span className="text-sm font-medium">
-					{havok ? 'Collision' : parsed.kind === 'stream' ? 'Model stream' : 'Model'}
+					{havok
+						? 'Collision'
+						: pointsOnly
+							? 'Point cloud'
+							: parsed.kind === 'stream'
+								? 'Model stream'
+								: 'Model'}
 				</span>
 				<span className="text-xs text-muted-foreground">
-					{verts.toLocaleString()} verts · {Math.round(tris).toLocaleString()} tris
+					{verts.toLocaleString()} verts
+					{pointsOnly
+						? ' · points only (no topology)'
+						: ` · ${Math.round(tris).toLocaleString()} tris`}
 					{materials && materials.submeshes.length > 0 && (
 						<>
 							{' · '}
@@ -640,8 +710,12 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 						variant="outline"
 						size="sm"
 						onClick={handleExport}
-						disabled={exporting}
-						title="Export glTF (.glb)"
+						disabled={exporting || triangleMeshes.length === 0}
+						title={
+							triangleMeshes.length === 0
+								? 'No triangle surface to export (point cloud only)'
+								: 'Export glTF (.glb)'
+						}
 					>
 						<Download className="h-4 w-4" />
 						{exporting ? 'Exporting…' : 'Export glTF'}
@@ -666,26 +740,45 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 					<ambientLight intensity={0.6} />
 					<directionalLight position={[5, 10, 7]} intensity={1.1} />
 					<directionalLight position={[-5, -3, -7]} intensity={0.4} />
-					{materials && materials.submeshes.length > 0 ? (
-						// Per-submesh render with resolved materials (textured / flat /
-						// wireframe). Each submesh keeps its own UVs + diffuse map.
-						<TexturedSubmeshes
-							meshes={renderMeshes}
-							materials={materials}
-							mode={effectiveMode}
-						/>
-					) : (
-						// No materials resolved — single merged mesh, flat or wireframe.
-						<mesh geometry={geometry}>
-							<meshStandardMaterial
-								color="#b9bcc4"
-								metalness={0.1}
-								roughness={0.8}
-								wireframe={effectiveMode === 'wireframe'}
-								side={THREE.DoubleSide}
-								flatShading={false}
+					{/* SURFACE meshes (real triangle topology). Point-only meshes are
+					    excluded here and drawn as a point cloud below — drawing them as
+					    triangles would connect unrelated vertices into spike soup. */}
+					{geometry &&
+						(materials && materials.submeshes.length > 0 ? (
+							// Per-submesh render with resolved materials (textured / flat /
+							// wireframe). Each submesh keeps its own UVs + diffuse map.
+							<TexturedSubmeshes
+								meshes={triangleMeshes}
+								materials={materials}
+								mode={effectiveMode}
 							/>
-						</mesh>
+						) : (
+							// No materials resolved — single merged mesh, flat or wireframe.
+							<mesh geometry={geometry}>
+								<meshStandardMaterial
+									color="#b9bcc4"
+									metalness={0.1}
+									roughness={0.8}
+									wireframe={effectiveMode === 'wireframe'}
+									side={THREE.DoubleSide}
+									flatShading={false}
+								/>
+							</mesh>
+						))}
+					{/* POINT-CLOUD meshes (skinned .model variant — topology stripped).
+					    Point size scales with the model's bounding-sphere radius so the
+					    cloud reads cleanly at any scale (a ~0.17u disc and a ~15u heli). */}
+					{pointsGeometry && (
+						<points geometry={pointsGeometry}>
+							<pointsMaterial
+								color="#8fd3ff"
+								size={Math.max(
+									(pointsGeometry.boundingSphere?.radius ?? 1) * 0.012,
+									0.001,
+								)}
+								sizeAttenuation
+							/>
+						</points>
 					)}
 					{/* Paired skeleton overlay (when a .skel rig is attached). */}
 					{skeletonGeom && (
@@ -695,7 +788,7 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 					)}
 					<gridHelper args={[10, 10, '#2a3040', '#1a1f2b']} />
 					<OrbitControls makeDefault enableDamping dampingFactor={0.1} />
-					<AutoFit geometry={geometry} />
+					<AutoFit geometry={fitGeometry} />
 				</Canvas>
 			</div>
 		</div>
