@@ -27,8 +27,10 @@ import { TextureViewer } from '@/components/viewers/TextureViewer';
 import { MeshViewer } from '@/components/viewers/MeshViewer';
 import { WorldViewer } from '@/components/viewers/WorldViewer';
 import { ConfigViewer } from '@/components/viewers/ConfigViewer';
+import { MapViewer } from '@/components/viewers/MapViewer';
 import { ssCtx, type ResourceHandler } from '@/lib/core/registry';
 import { viewportFor } from '@/components/viewers/viewportFamily';
+import type { LevelGeometry } from '@/lib/core/levelGeometry';
 
 export { viewportFor, type ViewportFamily } from '@/components/viewers/viewportFamily';
 
@@ -54,6 +56,12 @@ export type ViewportRouterProps = {
 	raw: Uint8Array | null;
 	/** Title shown above the Hex fallback. */
 	title?: string;
+	/**
+	 * Whole-level override. When set, the router renders the MapViewer for the
+	 * prepared level geometry instead of dispatching on the handler — this is the
+	 * "Render whole level" action's render path. Takes precedence over `handler`.
+	 */
+	levelGeometry?: LevelGeometry | null;
 };
 
 /**
@@ -69,8 +77,14 @@ function StatusBanner({ text }: { text: string }) {
 	);
 }
 
-export function ViewportRouter({ handler, raw, title }: ViewportRouterProps) {
+export function ViewportRouter({ handler, raw, title, levelGeometry }: ViewportRouterProps) {
 	const parsed = useMemo(() => safeParse(handler, raw), [handler, raw]);
+
+	// Whole-level override: render the merged map scene regardless of any single
+	// selected member's handler.
+	if (levelGeometry) {
+		return <MapViewer model={levelGeometry} raw={raw} handler={handler} />;
+	}
 
 	// No handler, or parse failed -> always the Hex fallback (never throws).
 	if (!handler || !parsed || !parsed.ok) {

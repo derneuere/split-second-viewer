@@ -111,6 +111,14 @@ microcode. The whole file is closed by the ASCII tag <code>"END"</code>.</p>
 individual opcodes is out of scope and marked <span class="badge raw">Opaque</span>; the container framing
 (header, per-combo symbol tables, the <code>ATTR*/TEXUNIT*/COLOR0/END</code> markers) is the documented part.</div>
 
+<div class="note">How a combo's symbols map onto registers, samplers (<code>TEXUNIT*</code>) and the
+<a href="format-textures.html">.textures</a> CRCs a material binds — the
+<strong>material / texture binding scheme</strong> — is documented on the
+<a href="format-shaders.html#binding">.shaders</a> page, since the join keys (set-name CRC, per-combo CRC,
+texture CRC) live in both files. The <code>ATTR0 → i.position_half_float_0</code> /
+<code>ATTR1 → i.half_float_0</code> vertex inputs correspond to the half-float P4 vertex layout the
+<a href="format-model.html#vertex-format">.model</a> auto-detect recovers.</div>
+
 <h2>.fxc vs .shaders — division of labour</h2>
 <table class="struct">
 <thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>

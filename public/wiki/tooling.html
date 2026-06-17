@@ -28,13 +28,32 @@
 <code>.ark</code> (ark_extract.py), <code>.fsb</code> (vgmstream), <code>.bik</code> (ffmpeg),
 <code>.gfx</code> (JPEXS ffdec), <code>.powerplays</code>/<code>.triggers</code>/<code>.xml</code>/<code>.params</code> (XML/text),
 and the track/Catnip metadata via tiny tested parsers.</div>
+<div class="tip"><strong>Round-trip-capable formats (byte-exact write-back).</strong> The
+<a href="../index.html">Split/Second Viewer</a> ships parsers that <em>re-emit</em> the original bytes
+exactly (<code>writeRaw(parseRaw(bytes)) === bytes</code>, contract-tested against the devkit corpus) for
+<strong>23</strong> formats:
+<code>.crcs</code> · <code>.splitlength</code> · <code>.linkorigins</code> · <code>.sideways</code> ·
+<code>.checkpoints</code> · <code>.track</code> · <code>.nis</code> · <code>.gbx</code> ·
+<code>.entities</code> · <code>.timelineinfo</code> · <code>.logicinfo</code> · <code>.sectorinfo</code> ·
+<code>.names</code> · <code>.filenames</code> · <code>.parts</code> · <code>.dct</code> ·
+<code>.global_regs</code> · <code>.params</code> · <code>.xml</code> · <code>.powerplays</code> ·
+<code>.triggers</code> · <code>.deform</code>.
+The graphics/geometry formats below (<code>.model</code>, <code>.textures</code>, <code>.shaders</code>,
+<code>.fxc</code>, <code>.skel</code>, <code>.mcl</code>, Havok) are <strong>read/decode-only</strong> so
+far — they parse and visualize but do not yet round-trip.</div>
 <p><strong>High-value custom work remaining (ranked):</strong></p>
 <ol>
 <li><strong><code>.model</code></strong> (+<code>.model.stream</code>) — the big prize; build a <strong>Noesis <code>.py</code> plugin</strong> (medium/high). Unlocks all geometry; no off-the-shelf tool exists.</li>
 <li><strong><code>.textures</code> / <code>.streamtex</code></strong> — PS3 swizzle &rarr; PNG; the probe already IDs format/dims, extend to a full decoder.</li>
 <li><strong><code>.skel</code>, <code>.deform</code> (DFM), <code>.mcl</code>/<code>.shaders</code>/<code>.shaderinst</code> (SDRI/SHDR)</strong> — low-effort bespoke parsers; layouts already in the wiki.</li>
 <li><strong><code>.phys</code> / <code>.mainColl</code></strong> — no tool reads Havok <strong>5.5</strong> packfiles; write a custom reader using the <a href="format-hkpps.html">.hkPPsXml</a>/<a href="format-hkcoll.html">.hkCollXml</a> twins as schema, or evaluate leaked Havok 5.5 Content Tools (caveat).</li>
-<li><strong>Crack the <code>.ark</code> nameHash</strong> (needs resource-name strings from <a href="format-sectors.html">.sectorInfo</a>) to restore filenames, and add zlib inflate of Stream payloads.</li>
+<li><strong><span class="badge ok">Solved</span> the <code>.ark</code> nameHash</strong> — it is a reflected
+table-driven CRC (seed <code>0xDEAFD00D</code>, poly <code>0xDB710641</code>, step
+<code>H=(H&gt;&gt;8)^T[(H^c)&amp;0xFF]</code>, no final XOR; see
+<a href="format-ark.html#namehash">format-ark → Naming</a>). The remaining work is pure enumeration: build
+the resource-ID strings from <a href="format-sectors.html">.sectorInfo</a> + the
+<code>&lt;archiveTag&gt;|&lt;relpath&gt;</code> templates and hash them to restore filenames. (No zlib
+inflate is needed — members are stored raw; only the 12-byte Stream sub-resource frame is stripped.)</li>
 </ol>
 <div class="note"><strong>Existing 3rd-party project to evaluate:</strong> <em>Delutto's ARK Tool</em> — the only Split/Second-specific tool found in the wild (auto-converts <code>.dct</code>&rarr;txt).</div>
 <h2>Status at a glance</h2>

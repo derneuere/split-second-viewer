@@ -158,6 +158,37 @@ partially decoded. Floats and texture CRCs are legible, but the small index tabl
 (<code>00 00 00 02 …</code>) map names to RSX register/sampler slots in a way that is not yet fully confirmed —
 hence the <span class="badge partial">Partial</span> badge.</div>
 
+<h2 id="binding">Material &amp; texture binding scheme</h2>
+<p>The three render files are joined by <strong>CRC strings</strong>, not file offsets, which makes the
+binding recoverable without resolving the node tree:</p>
+<ul>
+  <li><strong>Set-level join key.</strong> A <code>.shaders</code> and its <a href="format-fxc.html">.fxc</a>
+      twin carry a <em>byte-identical</em> <code>set_name</code> CRC string (e.g.
+      <code>"0xe4249692"</code>) and an identical <code>combo_count</code>. Matching those two fields pairs
+      the register-block table to its compiled microcode.</li>
+  <li><strong>Per-combo CRC.</strong> Each <code>HDRB…HDRE</code> record ends in a length-prefixed
+      combo CRC (e.g. <code>"0x618d6dad"</code>); these are the keys behind
+      <em>"Can't find material combo with CRC 0x%08x"</em>. A <a href="format-model.html">.model</a> mesh
+      references a combo by this CRC, and <code>.shaderinst</code> binds a concrete node to it.</li>
+  <li><strong>Constant/sampler symbols.</strong> The <code>HDRB</code> const-table names
+      (<code>WorldCameraPos</code>, <code>sslighting_*</code>, <code>gbuffer_MotionID</code>, …) are the
+      same engine-uniform symbols the <code>.fxc</code> symbol table maps onto hardware registers
+      (<code>C19</code>, <code>C20</code>, …) and samplers (<code>TEXUNIT0…</code>). The two files describe
+      one program from two angles: <code>.fxc</code> = the program + which register each symbol occupies;
+      <code>.shaders</code> = the patch table that supplies each symbol's value.</li>
+  <li><strong>Texture binding.</strong> A texture is bound by its <strong>32-bit CRC</strong> — the same
+      key the <a href="format-textures.html">.textures</a> descriptor and its <code>C2NM</code> trailer use.
+      Instance overrides in <code>.shaderinst</code> (e.g. <code>VehiclePaintFast_1_diffuseMap</code>) carry
+      a texture CRC inline; resolving that CRC against the renderable's <code>.textures</code> C2NM table
+      (and the <a href="format-crcs.html">.crcs</a> reference lists) gives the human texture name the
+      sampler reads. Sampler slots themselves surface as <code>TEXUNIT0…</code> in the
+      <code>.fxc</code> microcode.</li>
+</ul>
+<div class="warn">The exact register-slot index encoding inside each const-table record, and the small
+<code>00 00 00 02 …</code> index tables that follow each <code>.shaderinst</code> override, are only
+partially decoded — the legible part is the symbol/combo/texture <em>CRCs and names</em>, which are enough
+to reconstruct the binding graph; the per-record slot widths stay <span class="badge partial">Partial</span>.</div>
+
 <h2>How the three files fit together</h2>
 <ul>
 <li><a href="format-model.html">.model</a> — geometry + a per-mesh reference to a material combo.</li>

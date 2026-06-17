@@ -37,7 +37,8 @@ sibling <a href="format-streamtex.html">.streamtex</a> blob.</p>
   <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
   <tr><th>Pixel data</th><td>RSX/GCM swizzled (DXT1/DXT5/ARGB8888)</td></tr>
   <tr><th>Variants</th><td><code>.low.textures</code>, <code>.streamtex</code> payload</td></tr>
-  <tr><th>Status</th><td><span class="badge ok">Confirmed</span> (magic/header/descriptor/C2NM) · <span class="badge partial">Partial</span> (placement table, <code>sizeUnits</code>)</td></tr>
+  <tr><th>Decode</th><td>DXT1/3/5 + A8R8G8B8 → RGBA8; PS3 Morton de-swizzle</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span> (magic/header/descriptor/C2NM/pixel decode) · <span class="badge partial">Partial</span> (placement table, <code>sizeUnits</code>)</td></tr>
 </table></div>
 
 <h2>Overview</h2>
@@ -117,7 +118,7 @@ DirtMap, ScratchMap, MetalMap):</p>
 block alignment. That near-exact match is what confirms both the pixel format <em>and</em> the
 stub→stream relationship.</div>
 
-<h2>Pixel formats (gcmFormat enum)</h2>
+<h2 id="pixel-formats">Pixel formats (gcmFormat enum)</h2>
 <p>The high byte is the CELL GCM texture format. Each was confirmed by reconstructing the expected on-disk
 byte size and comparing it to the real file (single-texture files make this unambiguous).</p>
 <table>
@@ -139,6 +140,64 @@ mip block into RSX local memory (in the Frontend stub the second column climbs <
 Compressed pixels are stored in RSX swizzled order (the repeated <code>55 55 55 55</code> / <code>ef 19</code>
 patterns are the swizzle of flat colour fields), not linear, which is why a raw
 <a href="format-streamtex.html">.streamtex</a> is not a plain DDS.</p>
+
+<h2 id="decode">Decoding to RGBA8</h2>
+<p>The in-app <a href="../index.html">viewer</a> decodes every supported surface to RGBA8 for display.
+The four pixel formats and the PS3 swizzle are handled as follows.</p>
+
+<h3>Block-compressed: DXT1 / DXT3 / DXT5 (BC1 / BC2 / BC3)</h3>
+<p>Each 4×4 texel block decodes to RGBA8 with the standard BCn math. One subtlety dominates on PS3: the
+container is big-endian, but the <strong>block colour words and index bits are stored little-endian</strong>
+within a block (DXT data is LE even on PS3 — only the TEXS framing is BE). The decoders read them LE
+accordingly.</p>
+<ul>
+  <li><strong>DXT1/BC1</strong> — two RGB565 endpoints (<code>c0</code>, <code>c1</code>) + a 2-bit index
+      per texel. When <code>c0 ≤ c1</code> the block is in 1-bit-alpha mode: palette index 3 is
+      transparent black. 8 bytes/block.</li>
+  <li><strong>DXT3/BC2</strong> — an 8-byte block of <strong>explicit 4-bit alpha</strong> (each nibble
+      expanded <code>a·17</code>, so <code>0xF → 0xFF</code>) followed by a BC1 colour block (always
+      4-colour mode). 16 bytes/block.</li>
+  <li><strong>DXT5/BC3</strong> — an 8-byte <strong>BC4 interpolated-alpha</strong> block (two alpha
+      endpoints + a 48-bit, 3-bits-per-texel index field, LE) followed by a BC1 colour block. 16
+      bytes/block.</li>
+</ul>
+<p>Mip-chain sizing uses <code>ceil(w/4)·ceil(h/4)·blockBytes</code> per level (8 B/block for DXT1, 16 for
+DXT3/DXT5), summed over the stored mip count — the same arithmetic that reproduced the on-disk byte sizes
+in <a href="#pixel-formats">Pixel formats</a>.</p>
+
+<h3>Uncompressed: A8R8G8B8 (GCM <code>0xA5</code>, remap <code>0xAA1B</code>)</h3>
+<p>With the <code>0xAA1B</code> channel remap, each texel is a <strong>little-endian ARGB dword</strong>, so
+the in-memory byte order is <strong>B, G, R, A</strong>. Reading it as B,G,R,A (not A,R,G,B) is what makes
+the real devkit assets — the 512×512 Downtown skydome, the airport skydome, the UI ColorCubes — decode to
+correct, un-channel-swapped images. The earlier A,R,G,B reading produced washed-out, swapped output; the
+pixel-level checks live in the viewer's texture test suite ("REAL devkit samples").</p>
+
+<h3 id="swizzle">PS3 RSX Morton de-swizzle</h3>
+<p>CELL GCM can store a 2D surface in one of two layouts:</p>
+<ul>
+  <li><strong>Linear</strong> (rows top-to-bottom, left-to-right) — what <em>every</em> Split/Second
+      <code>.textures</code>/<code>.streamtex</code> asset inspected on the NPXX00575 devkit uses. The
+      bodyPaint DXT1, the ARGB skydomes/ColorCubes and the DXT5 point-light masks all decode correctly
+      linearly; forcing a Morton read scrambles them.</li>
+  <li><strong>Swizzled</strong> (Morton / Z-order) — texel <code>(x,y)</code> lives at the bit-interleaved
+      index <code>morton(x,y)</code>. Only power-of-two <em>square</em> surfaces can be Morton-swizzled.</li>
+</ul>
+<p>The decoder implements the de-swizzle (so a swizzled surface — a modded asset or a format variant —
+would still render) but <strong>defaults to linear</strong>, because that is what the shipped data is. For
+a swizzle-eligible (pow2 square) surface it measures both readings: a correctly-ordered surface has strong
+2-D local coherence (a texel resembles both its right and down neighbour), whereas a Morton layout read
+linearly interleaves distant texels and destroys it. It scores each candidate by mean absolute difference
+to the right + down neighbour and de-swizzles only when that is clearly (&gt;15&nbsp;%) smoother; ties stay
+linear. For BCn the heuristic and de-swizzle operate on 4×4 <em>blocks</em>; for ARGB, on texels.</p>
+
+<h3>Inline vs streamed payload location</h3>
+<p>Single-file (non-stub) TEXS store the decodable textures as concatenated full mip chains immediately
+<em>before</em> the <code>C2NM</code> trailer, in descriptor order — so the last chain ends at the
+<code>C2NM</code> offset and each earlier chain ends where the next begins. This was verified against
+<code>ColorCubes.textures</code> (three ARGB 1024×32 surfaces) and the single-texture bodyPaint/skydome
+files. For a Frontend <em>stub</em>, the descriptors carry <code>payloadSize = 0</code> and the full-res
+pixels sit consecutively from offset&nbsp;0 of the sibling <a href="format-streamtex.html">.streamtex</a>,
+again in descriptor order.</p>
 
 <h2>C2NM name trailer</h2>
 <p>Every TEXS file ends with a <code>C2NM</code> ("Crayon2 Name") table mapping each CRC back to a

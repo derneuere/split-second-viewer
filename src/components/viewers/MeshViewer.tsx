@@ -15,11 +15,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import { Document, WebIO, type Accessor } from '@gltf-transform/core';
-import { Boxes, Download, Grid3x3, AlertTriangle } from 'lucide-react';
+import { Boxes, Download, Grid3x3, AlertTriangle, Image as ImageIcon, Palette } from 'lucide-react';
 import * as THREE from 'three';
 
 import type { ParsedModel, ModelMesh } from '@/lib/core/model';
 import type { ResourceHandler } from '@/lib/core/registry/handler';
+import { buildMaterials, type BuiltMaterials, type SubmeshMaterial } from '@/lib/core/material';
+import type { DecodedTexture } from '@/lib/core/textures';
+import { useWorkspace } from '@/context/WorkspaceContext';
+import type { ResourceRef } from '@/lib/core/types';
 import { Button } from '@/components/ui/button';
 
 /** Shared viewer props. `model` is the matched handler's parseRaw output. */
@@ -34,7 +38,14 @@ type RenderMesh = {
 	positions: Float32Array;
 	indices: Uint32Array;
 	vertexCount: number;
+	/** Per-vertex UVs (u,v…) when the source buffer carried them. */
+	uv?: Float32Array;
+	/** Submesh index in node order — the key into the resolved materials. */
+	submeshIndex: number;
 };
+
+/** Display modes the toolbar toggles between. */
+type ViewMode = 'textured' | 'flat' | 'wireframe';
 
 /** Narrow the opaque model to a ParsedModel with at least the fields we read. */
 function asParsedModel(model: unknown): ParsedModel | null {
@@ -105,7 +116,7 @@ function buildSkeletonGeometry(bones: DrawBone[]): THREE.BufferGeometry | null {
  * A base .model often has indices but no positions (the section table is not yet
  * resolved); such meshes are not renderable and are filtered out by the caller.
  */
-function toRenderMesh(mesh: ModelMesh): RenderMesh | null {
+function toRenderMesh(mesh: ModelMesh, submeshIndex: number): RenderMesh | null {
 	if (!mesh.positions || mesh.positions.length < 9) return null; // need >=3 verts
 	const positions = Float32Array.from(mesh.positions);
 	const vertexCount = positions.length / 3;
@@ -120,7 +131,12 @@ function toRenderMesh(mesh: ModelMesh): RenderMesh | null {
 	} else {
 		indices = Uint32Array.from({ length: vertexCount }, (_, i) => i);
 	}
-	return { positions, indices, vertexCount };
+	// Carry UVs through when the decoder recovered them (float32 P3+UV buffers).
+	let uv: Float32Array | undefined;
+	if (mesh.uv && mesh.uv.length === vertexCount * 2) {
+		uv = Float32Array.from(mesh.uv);
+	}
+	return { positions, indices, vertexCount, uv, submeshIndex };
 }
 
 /** Build merged THREE geometry from all renderable submeshes (for display). */
@@ -151,6 +167,45 @@ function buildGeometry(meshes: RenderMesh[]): THREE.BufferGeometry | null {
 	geom.computeBoundingSphere();
 	geom.computeBoundingBox();
 	return geom;
+}
+
+/** Build one THREE geometry per submesh (so each keeps its own UVs + material). */
+function buildSubmeshGeometry(m: RenderMesh): THREE.BufferGeometry {
+	const geom = new THREE.BufferGeometry();
+	geom.setAttribute('position', new THREE.BufferAttribute(m.positions, 3));
+	geom.setIndex(new THREE.BufferAttribute(m.indices, 1));
+	if (m.uv && m.uv.length === (m.positions.length / 3) * 2) {
+		geom.setAttribute('uv', new THREE.BufferAttribute(m.uv, 2));
+	}
+	geom.computeVertexNormals();
+	geom.computeBoundingSphere();
+	geom.computeBoundingBox();
+	return geom;
+}
+
+/**
+ * Wrap a decoded RGBA8 texture (top mip) in a THREE.DataTexture suitable for a
+ * standard material's `map`. Flips V (the .textures decoder hands rows top-down;
+ * glTF/THREE sample bottom-up) and enables wrap + sRGB so the albedo reads true.
+ */
+function makeDiffuseTexture(decoded: DecodedTexture): THREE.DataTexture | null {
+	if (!decoded.rgba) return null;
+	// DataTexture wants a Uint8Array; copy out of the Uint8ClampedArray. Build the
+	// buffer explicitly (`.buffer` is ArrayBufferLike, which can be a
+	// SharedArrayBuffer under DOM lib typings) and `.set` the clamped bytes in.
+	const data = new Uint8Array(decoded.rgba.length);
+	data.set(decoded.rgba);
+	const tex = new THREE.DataTexture(data, decoded.width, decoded.height, THREE.RGBAFormat);
+	tex.colorSpace = THREE.SRGBColorSpace;
+	tex.wrapS = THREE.RepeatWrapping;
+	tex.wrapT = THREE.RepeatWrapping;
+	tex.flipY = true;
+	tex.magFilter = THREE.LinearFilter;
+	tex.minFilter = THREE.LinearMipmapLinearFilter;
+	tex.generateMipmaps = true;
+	tex.anisotropy = 4;
+	tex.needsUpdate = true;
+	return tex;
 }
 
 /** Position the camera so the whole bounding sphere fits the current frustum. */
@@ -211,6 +266,16 @@ async function exportGlb(meshes: RenderMesh[]): Promise<Uint8Array> {
 			.setAttribute('POSITION', pos)
 			.setIndices(idx)
 			.setMaterial(material);
+		// Carry UVs into the glTF when the decoder recovered them, so the export
+		// keeps texture coordinates for downstream texturing.
+		if (m.uv && m.uv.length === (m.positions.length / 3) * 2) {
+			const tex: Accessor = doc
+				.createAccessor(`texcoord_${i}`)
+				.setType('VEC2')
+				.setArray(m.uv)
+				.setBuffer(buffer);
+			prim.setAttribute('TEXCOORD_0', tex);
+		}
 		const mesh = doc.createMesh(`mesh_${i}`).addPrimitive(prim);
 		const node = doc.createNode(`node_${i}`).setMesh(mesh);
 		scene.addChild(node);
@@ -225,8 +290,147 @@ function triCount(geometry: THREE.BufferGeometry): number {
 	return idx ? idx.count / 3 : geometry.getAttribute('position').count / 3;
 }
 
+/** Swap the trailing extension on a loose path: ".../foo.model" -> ".../foo.textures". */
+function swapExt(looseId: string, newExt: string): string {
+	const dot = looseId.lastIndexOf('.');
+	const base = dot >= 0 ? looseId.slice(0, dot) : looseId;
+	return base + newExt;
+}
+
+/**
+ * Load the current .model's sibling material assets (.textures / .shaderinst /
+ * .shaders / .tex.crcs) from the workspace and resolve per-submesh materials via
+ * buildMaterials. Returns null while loading, when the selection isn't a loose
+ * .model, or when no .shaderinst/.textures siblings exist (so the viewer falls
+ * back to the flat material). `submeshCount` lets buildMaterials report whether
+ * the submesh count matched the shaderinst node count.
+ */
+function useSiblingMaterials(submeshCount: number): BuiltMaterials | null {
+	const { selection, getResourceBytes } = useWorkspace();
+	const [built, setBuilt] = useState<BuiltMaterials | null>(null);
+
+	// The loose path of the selected .model (materials only resolve for loose,
+	// directory-backed selections — the helicopter case).
+	const modelPath =
+		selection?.ref.kind === 'loose' && /\.model$/i.test(selection.ref.looseId)
+			? selection.ref.looseId
+			: null;
+
+	useEffect(() => {
+		let cancelled = false;
+		setBuilt(null);
+		if (!modelPath) return;
+
+		const looseRef = (looseId: string): ResourceRef => ({ kind: 'loose', looseId });
+		const load = async (ext: string): Promise<Uint8Array | null> => {
+			try {
+				return await getResourceBytes(looseRef(swapExt(modelPath, ext)));
+			} catch {
+				return null;
+			}
+		};
+
+		void (async () => {
+			const [textures, shaderinst, shaders, texCrcs, streamtex] = await Promise.all([
+				load('.textures'),
+				load('.shaderinst'),
+				load('.shaders'),
+				load('.tex.crcs'),
+				load('.streamtex'),
+			]);
+			if (cancelled) return;
+			// Nothing material-bearing alongside this model — leave null (flat render).
+			if (!shaderinst && !textures) return;
+			try {
+				const result = buildMaterials({
+					textures,
+					shaderinst,
+					shaders,
+					texCrcs,
+					streamtex,
+					submeshCount,
+				});
+				if (!cancelled) setBuilt(result);
+			} catch {
+				if (!cancelled) setBuilt(null);
+			}
+		})();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [modelPath, submeshCount, getResourceBytes]);
+
+	return built;
+}
+
+/**
+ * Render each submesh with its resolved material. The textured path uses a
+ * MeshStandardMaterial with the submesh's diffuse DataTexture UV-mapped; submeshes
+ * without a diffuse fall back to their base colour (or a neutral grey). The flat
+ * path drops the texture (base colour / grey only). Wireframe overlays edges.
+ */
+function TexturedSubmeshes({
+	meshes,
+	materials,
+	mode,
+}: {
+	meshes: RenderMesh[];
+	materials: BuiltMaterials;
+	mode: ViewMode;
+}) {
+	// Build geometries + diffuse textures once per mesh/material set; dispose on swap.
+	const entries = useMemo(() => {
+		return meshes.map((m) => {
+			const geom = buildSubmeshGeometry(m);
+			const mat: SubmeshMaterial | undefined =
+				materials.submeshes.length > 0
+					? materials.submeshes[Math.min(m.submeshIndex, materials.submeshes.length - 1)]
+					: undefined;
+			const hasUv = !!geom.getAttribute('uv');
+			const diffuse =
+				mode === 'textured' && hasUv && mat?.diffuseTexture
+					? makeDiffuseTexture(mat.diffuseTexture)
+					: null;
+			const base = mat?.params.baseColor;
+			const color = base
+				? new THREE.Color(base[0], base[1], base[2])
+				: new THREE.Color('#b9bcc4');
+			return { geom, diffuse, color };
+		});
+	}, [meshes, materials, mode]);
+
+	useEffect(() => {
+		return () => {
+			for (const e of entries) {
+				e.geom.dispose();
+				e.diffuse?.dispose();
+			}
+		};
+	}, [entries]);
+
+	return (
+		<>
+			{entries.map((e, i) => (
+				<mesh key={i} geometry={e.geom}>
+					<meshStandardMaterial
+						map={e.diffuse ?? null}
+						color={e.diffuse ? '#ffffff' : e.color}
+						metalness={0.1}
+						roughness={0.78}
+						wireframe={mode === 'wireframe'}
+						side={THREE.DoubleSide}
+						transparent={!!e.diffuse}
+						alphaTest={e.diffuse ? 0.01 : 0}
+					/>
+				</mesh>
+			))}
+		</>
+	);
+}
+
 export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
-	const [wireframe, setWireframe] = useState(false);
+	const [viewMode, setViewMode] = useState<ViewMode>('textured');
 	const [exporting, setExporting] = useState(false);
 	const [exportError, setExportError] = useState<string | null>(null);
 	const objectUrlRef = useRef<string | null>(null);
@@ -246,12 +450,31 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 	const renderMeshes = useMemo<RenderMesh[]>(() => {
 		if (!parsed) return [];
 		const out: RenderMesh[] = [];
-		for (const mesh of parsed.meshes) {
-			const rm = toRenderMesh(mesh);
+		// IMPORTANT: keep the ORIGINAL submesh index (node order) so it maps to the
+		// resolved material, even when an earlier submesh had no geometry.
+		parsed.meshes.forEach((mesh, idx) => {
+			const rm = toRenderMesh(mesh, idx);
 			if (rm) out.push(rm);
-		}
+		});
 		return out;
 	}, [parsed]);
+
+	// Resolve per-submesh materials from the sibling .textures/.shaderinst/etc.
+	const materials = useSiblingMaterials(parsed?.meshes.length ?? 0);
+
+	// A textured render is possible only when materials resolved AND at least one
+	// renderable submesh both has UVs and a diffuse texture.
+	const canTexture = useMemo(() => {
+		if (!materials || materials.submeshes.length === 0) return false;
+		return renderMeshes.some((m) => {
+			if (!m.uv) return false;
+			const mat = materials.submeshes[Math.min(m.submeshIndex, materials.submeshes.length - 1)];
+			return !!mat?.diffuseTexture;
+		});
+	}, [materials, renderMeshes]);
+
+	// If textures aren't available, never sit in 'textured' mode.
+	const effectiveMode: ViewMode = viewMode === 'textured' && !canTexture ? 'flat' : viewMode;
 
 	const geometry = useMemo(() => buildGeometry(renderMeshes), [renderMeshes]);
 
@@ -357,17 +580,52 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 				</span>
 				<span className="text-xs text-muted-foreground">
 					{verts.toLocaleString()} verts · {Math.round(tris).toLocaleString()} tris
+					{materials && materials.submeshes.length > 0 && (
+						<>
+							{' · '}
+							{materials.submeshes.filter((s) => s.diffuseTexture).length} textured
+						</>
+					)}
 				</span>
 				<div className="ml-auto flex items-center gap-2">
-					<Button
-						variant={wireframe ? 'default' : 'outline'}
-						size="sm"
-						onClick={() => setWireframe((w) => !w)}
-						title="Toggle wireframe"
-					>
-						<Grid3x3 className="h-4 w-4" />
-						Wireframe
-					</Button>
+					{/* Render-mode toggle: textured / flat / wireframe. */}
+					<div className="flex items-center overflow-hidden rounded-md border border-border">
+						<Button
+							variant={effectiveMode === 'textured' ? 'default' : 'ghost'}
+							size="sm"
+							className="rounded-none border-0"
+							onClick={() => setViewMode('textured')}
+							disabled={!canTexture}
+							title={
+								canTexture
+									? 'Textured (diffuse maps)'
+									: 'No diffuse textures resolved for this model'
+							}
+						>
+							<ImageIcon className="h-4 w-4" />
+							Textured
+						</Button>
+						<Button
+							variant={effectiveMode === 'flat' ? 'default' : 'ghost'}
+							size="sm"
+							className="rounded-none border-0"
+							onClick={() => setViewMode('flat')}
+							title="Flat shaded"
+						>
+							<Palette className="h-4 w-4" />
+							Flat
+						</Button>
+						<Button
+							variant={effectiveMode === 'wireframe' ? 'default' : 'ghost'}
+							size="sm"
+							className="rounded-none border-0"
+							onClick={() => setViewMode('wireframe')}
+							title="Wireframe"
+						>
+							<Grid3x3 className="h-4 w-4" />
+							Wireframe
+						</Button>
+					</div>
 					<Button
 						variant="outline"
 						size="sm"
@@ -398,16 +656,27 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 					<ambientLight intensity={0.6} />
 					<directionalLight position={[5, 10, 7]} intensity={1.1} />
 					<directionalLight position={[-5, -3, -7]} intensity={0.4} />
-					<mesh geometry={geometry}>
-						<meshStandardMaterial
-							color="#b9bcc4"
-							metalness={0.1}
-							roughness={0.8}
-							wireframe={wireframe}
-							side={THREE.DoubleSide}
-							flatShading={false}
+					{materials && materials.submeshes.length > 0 ? (
+						// Per-submesh render with resolved materials (textured / flat /
+						// wireframe). Each submesh keeps its own UVs + diffuse map.
+						<TexturedSubmeshes
+							meshes={renderMeshes}
+							materials={materials}
+							mode={effectiveMode}
 						/>
-					</mesh>
+					) : (
+						// No materials resolved — single merged mesh, flat or wireframe.
+						<mesh geometry={geometry}>
+							<meshStandardMaterial
+								color="#b9bcc4"
+								metalness={0.1}
+								roughness={0.8}
+								wireframe={effectiveMode === 'wireframe'}
+								side={THREE.DoubleSide}
+								flatShading={false}
+							/>
+						</mesh>
+					)}
 					{/* Paired skeleton overlay (when a .skel rig is attached). */}
 					{skeletonGeom && (
 						<lineSegments geometry={skeletonGeom}>

@@ -33,11 +33,13 @@ index buffers cooked for the PS3 RSX.</p>
   <tr><th>Container</th><td>Crayon2 node tree</td></tr>
   <tr><th>Mesh classes</th><td>Havok <code>hkxMesh</code> (graphics)</td></tr>
   <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
-  <tr><th>Magic</th><td><code>02 00 00 08</code></td></tr>
+  <tr><th>Magic</th><td><code>02 00 00 08</code> (base) · <code>02 01 00 08</code> (skinned)</td></tr>
+  <tr><th>Section tables</th><td>VB table (<code>0x24</code> stride) + draw-call/index table (32-byte)</td></tr>
   <tr><th>Index data</th><td>16-bit tri-strips, <code>FFFF</code> restart</td></tr>
+  <tr><th>Vertex format</th><td>half-float P4 (cooked) or float32 P3+UV (props); auto-detected</td></tr>
   <tr><th>Streamed twin</th><td><code>.model.stream</code> (high-LOD)</td></tr>
-  <tr><th>Count</th><td>2 425 files (every renderable)</td></tr>
-  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+  <tr><th>Count</th><td>2 425 base + 1 636 skinned (<code>02 01 00 08</code>)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Decoded</span> (base/stream geometry) · <span class="badge partial">Partial</span> (skinned topology, node-tag map)</td></tr>
 </table></div>
 
 <h2>Identification</h2>
@@ -59,11 +61,13 @@ the EBOOT string table lists <code>hkxMesh</code>, <code>hkxMeshSection</code>,
 <h2>Top-level layout</h2>
 <p>After the 4-byte magic the file is a header section (a small typed-node tree of
 <em>(offset,&nbsp;type)</em> pairs), followed by per-section float metadata (transforms and bounding
-boxes), then the bulk vertex buffers, and finally one or more 16-bit index buffers. The header grows
-with mesh complexity: the <code>PointLight.model</code> probe (1 054 bytes, one section) has a
-~0x90-byte header; <code>Musclecar_01.model</code> (1.30 MB) and
+boxes), then two explicit <strong>section tables</strong> — a vertex-buffer table and an
+index/draw-call table — then the bulk vertex buffers and the 16-bit index buffers they point at. The
+header grows with mesh complexity: the <code>PointLight.model</code> probe (1 054 bytes, one section)
+has a ~0x90-byte header; <code>Musclecar_01.model</code> (1.30 MB) and
 <code>Downtown_backdrop.model</code> (1.48 MB) carry long header trees describing dozens of
-sections.</p>
+sections. The two tables are what the in-app decoder reads to recover renderable submeshes
+(<a href="#section-tables">Section tables</a>), superseding the earlier strip-scanning heuristic.</p>
 
 <table class="struct">
 <thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
@@ -73,8 +77,10 @@ sections.</p>
 <tr><td>0x08</td><td>0x4</td><td>uint32_t</td><td>tree_size / first_offset</td><td>Offset just past the node-descriptor block (<code>0x20</code> / <code>0x28</code> / <code>0x14</code>). Points at where the typed property stream begins.</td></tr>
 <tr><td>0x0C</td><td>…</td><td>node[]</td><td>node descriptors</td><td>Stream of <em>(rel_offset:uint32, type_tag:uint32)</em> pairs forming a tree (see below).</td></tr>
 <tr><td>…</td><td>var</td><td>float32_t[]</td><td>section metadata</td><td>Per-section local transform (4×4 / quaternion) + AABB min/max corners.</td></tr>
-<tr><td>…</td><td>var</td><td>raw</td><td>vertex buffers</td><td>Interleaved vertex streams (RSX vertex format, see vertex layouts).</td></tr>
-<tr><td>…</td><td>var</td><td>uint16_t[]</td><td>index buffers</td><td>Triangle strips, <code>0xFFFF</code> = primitive-restart. Runs to EOF.</td></tr>
+<tr><td>…</td><td>0x24·N</td><td>vbrec[]</td><td>vertex-buffer table</td><td>Repeating <code>0x24</code>-byte records <code>{size:u32, stride:u32, vcount:u32, …}</code>, one per vertex buffer (see <a href="#section-tables">below</a>).</td></tr>
+<tr><td>…</td><td>0x20·M</td><td>dcrec[]</td><td>draw-call / index table</td><td>Repeating 32-byte records <code>{relOffset:u32, 0,0,0, idxCount:u32, idxCount·2:u32, 0,0}</code>, one per draw call.</td></tr>
+<tr><td>…</td><td>var</td><td>raw</td><td>vertex buffers</td><td>Interleaved vertex streams, concatenated in VB-table order (RSX vertex format, see vertex layouts).</td></tr>
+<tr><td>…</td><td>var</td><td>uint16_t[]</td><td>index buffers</td><td>Triangle strips, <code>0xFFFF</code> = primitive-restart, addressed by the draw-call table's relative offsets. Runs to EOF.</td></tr>
 </tbody>
 </table>
 
@@ -101,6 +107,72 @@ badge. <span class="badge theory">Theory</span></p>
 <p class="cap">Annotated: <code>02000008</code> magic; <code>0000001c</code> = 28 top-level nodes;
 <code>00000020</code> = tree starts at 0x20; then the (offset,type) descriptor stream. The
 <code>05 / 0F / 06</code> type tags repeat as the tree is walked.</p>
+
+<h2 id="section-tables">Section tables: vertex buffers &amp; draw calls</h2>
+<p>The boundary between the vertex region and the index region is <strong>not</strong> guessed by
+scanning for strip data — the node tree carries two explicit, regular section tables that the in-app
+decoder reads directly. (The older "scan for the first <code>FFFF</code>" approach is kept only as a
+fallback for stub <code>.model</code> files whose geometry has moved to a
+<code>.model.stream</code> twin.)</p>
+
+<h3>Vertex-buffer (VB) table — <code>0x24</code> stride</h3>
+<p>A run of <strong>36-byte (<code>0x24</code>)</strong> records, one per vertex buffer:</p>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>+0x00</td><td>0x4</td><td>uint32_t</td><td>size</td><td>Byte length of this vertex buffer, <strong>padded up to a 16-byte multiple</strong> — i.e. <code>size ≈ stride · vcount</code> rounded up. This relationship is the table's recognition signature (<code>0 ≤ size − stride·vcount &lt; 64</code>).</td></tr>
+<tr><td>+0x04</td><td>0x4</td><td>uint32_t</td><td>stride</td><td>Per-vertex byte stride (12–64 in samples).</td></tr>
+<tr><td>+0x08</td><td>0x4</td><td>uint32_t</td><td>vcount</td><td>Vertex count for this buffer.</td></tr>
+<tr><td>+0x0C</td><td>0x18</td><td>—</td><td>(trailing)</td><td>Remaining 24 bytes of the record (format/flags + the buffer's own offset hint, not yet fully mapped).</td></tr>
+</tbody>
+</table>
+<p>The bulk vertex data follows the VB table; buffers are stored back-to-back in table order, so buffer
+<em>k</em> begins where buffer <em>k−1</em> ends (the decoder absorbs a small alignment gap after the
+table before buffer 0). The actual data start is found by probing the first record's decode just past
+the table.</p>
+
+<h3>Draw-call / index table — 32-byte stride</h3>
+<p>A run of <strong>32-byte</strong> records, one per draw call:</p>
+<pre class="hex">+0x00  relOffset : u32   ; index-region-relative byte offset of this strip
++0x04  00 00 00 00       ; three zero words
++0x08  00 00 00 00
++0x0C  00 00 00 00
++0x10  idxCount  : u32   ; number of 16-bit indices in the strip
++0x14  idxCount·2: u32   ; byte length of the strip (== idxCount × 2) — the self-check
++0x18  00 00 00 00
++0x1C  …                 ; (32-byte stride)</pre>
+<p>The <code>idxCount·2 == byteLength</code> invariant is what pins this table down. The
+<code>relOffset</code> values are <strong>relative</strong> to the start of the index region; the
+absolute file position is recovered by solving a single correction constant — the last draw call must
+end at (or just before, modulo &le;16 bytes of pad) EOF, which fixes
+<code>correction = fileSize − pad − (lastRelOffset + lastIdxCount·2)</code>; the first draw call is then
+validated to land on a strip-like run of small ascending <code>u16</code>s.</p>
+
+<h3>Draw-call → vertex-buffer binding</h3>
+<p>The explicit per-draw-call → vertex-buffer link in the node tree is not yet mapped, so a decoded
+strip is routed to the <strong>smallest vertex buffer whose <code>vcount</code> exceeds the strip's
+maximum index</strong>. That yields correct, renderable per-buffer submeshes for the samples checked,
+but a draw call that legitimately indexes a larger buffer than necessary could be mis-routed — hence the
+<span class="badge partial">Partial</span> on the binding (see <a href="#open-questions">Open
+questions</a>).</p>
+
+<h3 id="vertex-format">Vertex-format auto-detect: half-float vs float32</h3>
+<p>Two storage formats occur, and the decoder distinguishes them by <em>sampling</em> a buffer rather
+than reading a format flag:</p>
+<ul>
+  <li><strong><code>half</code></strong> — four big-endian IEEE-754 <strong>half-floats per vertex</strong>
+      (<code>P4</code>: x, y, z, w&nbsp;≈&nbsp;1.0), the cooked layout for car/level meshes. Detected by
+      scanning the stride for a 4-half group whose 4th component reads ≈&nbsp;1.0 across &ge;85&nbsp;% of
+      sampled vertices (the <code>hkxVertexP4…</code> position-with-w convention).</li>
+  <li><strong><code>float</code></strong> — full <strong>float32 P3 + UV</strong>: position is the first
+      <code>float3</code> of the stride, a <code>float2</code> UV follows at byte 12 when the stride is
+      &ge;&nbsp;20. Used by simple props (e.g. <code>PointLight.model</code>). Detected when every
+      sampled position is finite and within a sane range.</li>
+</ul>
+<div class="tip">The auto-detect matters because reading a float32 position buffer as half-floats (or vice
+versa) yields tens-of-thousands-of-units garbage. For the float path the decoder additionally scores each
+candidate data-start by how tightly the decoded AABB sits inside the header AABB, which disambiguates the
+4-byte alignment slip where a stray table <code>u32</code> happens to read as a finite denormal.</div>
 
 <h2>Section metadata: transforms and bounding boxes</h2>
 <p>In the single-section <code>PointLight.model</code> the header is short enough to read the float
@@ -194,6 +266,37 @@ confirmed across all five Musclecar streams checked. <span class="badge partial"
 12ad90  2e 92 2e 93  ff ff 2e 94  2e 95 2e 96  2e 97 2e 96   ← tail: 16-bit strips, ffff restart (same as base .model)
 </pre>
 
+<h2 id="skinned">Skinned / animated variant (magic <code>02 01 00 08</code>)</h2>
+<p>The animated Powerplay props — helicopters, ferries, cranes, the Bell 206B and friends — use a
+<strong>skinned</strong> Crayon2 variant whose magic is <code>02 01 00 08</code> (the <code>01</code> flag
+byte distinguishes it from the static <code>02 00 00 08</code>). There are <strong>1 636</strong> of these,
+mostly under <code>Powerplays/Animations</code>. The container differs from the standard variant in three
+ways:</p>
+<ul>
+  <li><strong>Paired sub-record VB table (<code>0x48</code> stride).</strong> Instead of <code>0x24</code>
+      single records, the skinned table is a run of <strong>72-byte (<code>0x48</code>)</strong> records,
+      each holding <em>two</em> <code>0x24</code> sub-records that share a vertex count: sub-record A is a
+      <strong>stride-12 position stream</strong> (3 big-endian <strong>float32</strong> x,y,z —
+      <em>not</em> half-floats), and sub-record B is a <strong>stride-8 aux stream</strong> (UV
+      <code>float2</code> / packed normal). Confirmed on <code>AA_Bell206B.model</code>: records at
+      <code>0x560</code> (vc&nbsp;=&nbsp;16) and <code>0x5A8</code> (vc&nbsp;=&nbsp;688), exactly
+      <code>0x48</code> apart.</li>
+  <li><strong>Position buffers are located by scanning, not by the record's offset field.</strong> The
+      embedded offset fields in the skinned records are <em>not</em> reliable file pointers, so each
+      position buffer is found by scanning forward from the table end (16-byte-aligned first, then
+      4-byte) for the first contiguous float32-P3 block of the right vertex count whose AABB is finite and
+      bounded, advancing the cursor past each block so buffers are taken in node order. Validated 100&nbsp;%
+      across a spread of cars, ferries and cranes (strides 12 and 16).</li>
+  <li><strong>No 16-bit strips, no draw-call table — topology is in the Havok skinning section.</strong>
+      Every skinned sample checked has <em>zero</em> <code>0xFFFF</code> restarts and no dense
+      <code>u16&lt;vcount</code> run after the vertex data: the triangle topology lives in the compressed
+      Havok skinning section, which is not yet cracked. The decoder therefore emits
+      <strong>positions only</strong> (point meshes, empty indices) and flags the result
+      <span class="badge partial">partial</span>. The combined decoded AABB is cross-checked against the
+      header float AABB for sanity (extents match; the axes are permuted by the engine's coordinate
+      convention).</li>
+</ul>
+
 <h2>Relationship to other vehicle files</h2>
 <p>A car body folder pairs the <code>.model</code> (visual mesh) with a parallel set of files:
 <code>.phys</code> (<a href="format-phys.html">Havok rigid body</a>),
@@ -204,14 +307,16 @@ confirmed across all five Musclecar streams checked. <span class="badge partial"
 <code>.textures</code>. The <code>.model</code> references materials and vertex formats but contains
 only geometry — shading lives in the shader files.</p>
 
-<div class="warn">Open questions: the node-tree type tags (<code>0x04/05/06/0E/0F</code>) are not yet
-mapped to specific Havok classes (mesh vs material-ref vs vertex-buffer); the boundary between the
-vertex-buffer region and the index-buffer region is currently located by scanning for the strip data
-rather than read from an explicit section-table field (a clean section table almost certainly lives
-inside the node tree); and per-section vertex-format selection / per-strip material binding are not
-yet read from the header. The 12-byte <code>.model.stream</code> header is decoded only as far as the
-<code>filesize − 12</code> payload-length field; how the stub <code>.model</code> points the loader at
-its stream (filename convention vs an embedded offset) is not yet pinned down.</div>
+<div class="warn" id="open-questions"><strong>Open questions.</strong> The vertex/index section
+boundary is now <em>resolved</em> — it is read from the explicit
+<a href="#section-tables">VB and draw-call tables</a>, not by strip-scanning (which survives only as the
+stub fallback). What remains: the node-tree type tags (<code>0x04/05/06/0E/0F</code>) are still not mapped
+to specific Havok classes (mesh vs material-ref vs vertex-buffer); the per-draw-call → vertex-buffer
+binding is heuristic (smallest buffer that contains the strip's indices) rather than read from the tree;
+the skinned variant's triangle topology lives in an un-cracked compressed Havok skinning section, so those
+meshes are positions-only; and the 12-byte <code>.model.stream</code> header is decoded only as far as the
+<code>filesize − 12</code> payload-length field (how a stub <code>.model</code> points the loader at its
+stream — filename convention vs embedded offset — is not yet pinned down).</div>
 
 <h2>Related pages</h2>
 <ul>

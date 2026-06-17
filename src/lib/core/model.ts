@@ -25,10 +25,23 @@
 //                      meshes, or as full float32 (P3 + UV) for simple props
 //                      (e.g. PointLight). The parser auto-detects which.
 //
-//   The exact node-tree TYPE TAGS (0x04/05/06/0E/0F) and the per-draw-call →
-//   vertex-buffer binding are still only partially mapped, so a draw call is
-//   routed to the smallest vertex buffer whose vCount contains all of its
-//   indices. This yields renderable per-buffer submeshes; see "Open questions".
+//   The per-draw-call -> vertex-buffer BINDING is now read EXACTLY from the
+//   node-tree binding table that sits just before the draw-call table: one
+//   16-byte record per draw {0:u32, ptrA:u32, ptrB:u32, 6:u32}, where ptrB takes
+//   exactly `bufferCount` distinct values spaced 0x24 apart (the per-buffer node
+//   stride); sorting them ascending maps each draw to its true buffer. This
+//   replaced the old "smallest fitting buffer" heuristic, which mis-routed draws
+//   and rendered some cars/props (Musclecar_02 et al.) with scrambled geometry.
+//   The heuristic is kept only as a fallback when the binding table is ambiguous.
+//
+//   LEVEL-SOBJ ROBUSTNESS: some level .ark members use a QUANTIZED-position
+//   variant (int16 dequantized against a per-buffer node-tree box not yet read)
+//   whose half/float decode yields ±tens-of-thousands garbage. Such buffers are
+//   detected (extent overshoots the header AABB / |component| >= 1e4) and BLANKED
+//   (emitted as no-geometry) rather than rendered wrong — "prefer no-geometry
+//   over wrong geometry". Likewise a level Stream .geo (float32-P3 at a variable
+//   interleaved stride) is distinguished from the half4 car stream by the w≈1.0
+//   test and withheld until its stride is recovered, instead of spiking to ±65504.
 //
 //   * SKINNED .model (magic 0x02010008) — the animated/skinned Powerplay
 //     variant (1636 files, mostly under Powerplays/Animations). Its container
@@ -48,13 +61,21 @@
 //         past each block so buffers are taken in node order. Validated 100% on a
 //         spread of samples (cars, ferries, cranes; strides 12 and 16).
 //       - There is NO 16-bit tri-strip index buffer and NO 32-byte draw-call
-//         table: across every sample checked the post-vertex region carries ZERO
-//         0xFFFF restarts and no dense u16<vcount run. The triangle topology
-//         lives in the compressed Havok skinning section (not yet cracked), so
-//         the skinned path emits POSITIONS ONLY (point meshes, indices empty) and
-//         flags `partial`. The decoded combined AABB is cross-checked against the
-//         header float AABB for sanity (extents match; axes are permuted by the
-//         engine's coordinate convention).
+//         table, and — CONFIRMED by exhaustive byte-budget analysis — no index
+//         buffer of ANY encoding is present in the file. Each section has a node
+//         descriptor {…, 0x00020000, 0x81xx0000, 0x42ff2000, (vc<<16|ic),
+//         0xffffffff} that DECLARES a triangle-index count `ic` (AA_Bell206B: 24
+//         + 2274 = 766 tris), but the byte budget is fully consumed by the
+//         position stream (stride-12 f32 P3) + the paired aux stream (stride-8
+//         UV/normal) + a small packed Havok skinning block — there is no room for
+//         the ~ic*2 index bytes anywhere (verified across every multi-section
+//         sample: idxBytesNeeded >> gapAfterVertexData). The topology is therefore
+//         genuinely STRIPPED from the .model (reconstructed at runtime / a RAM
+//         dump would be needed), not merely undecoded. The skinned path emits
+//         POSITIONS ONLY (point meshes, indices empty), flags `partial`, and
+//         reports the descriptor-declared expected triangle total in `note`. The
+//         decoded combined AABB is cross-checked against the header float AABB for
+//         sanity (extents match; axes are permuted by the engine's convention).
 //
 // The returned model is the shape the brief asks for:
 //   { meshes: [{ positions, indices, normals?, uv? }], bounds, skeleton? }
@@ -334,6 +355,51 @@ function boundsOfPositions(pos: number[]): ModelBounds {
 	return { min: [mnx, mny, mnz], max: [mxx, mxy, mxz] };
 }
 
+/**
+ * True when a decoded position buffer is clearly GARBAGE rather than real
+ * geometry: the half-float-spike fingerprint of the level-sobj quantized variant.
+ * We reject a buffer only on strong evidence so cars/props (whose decoded extent
+ * may differ from the header AABB by an axis permutation, but stays bounded) are
+ * never wrongly blanked:
+ *   - any |component| >= 1e4  (half-float spikes peak near ±65504; real meshes are
+ *     metres-to-hundreds-of-metres), OR
+ *   - a non-finite component, OR
+ *   - when a header AABB exists, a decoded extent that overshoots the header
+ *     extent by >8x on the dominant axis (the dequant-against-wrong-box symptom).
+ */
+function positionsImplausible(pos: number[], headerBounds: ModelBounds): boolean {
+	const b = boundsOfPositions(pos);
+	if (!b) return true; // all non-finite → unusable
+	let maxAbs = 0;
+	let anyNonFinite = false;
+	for (let i = 0; i < pos.length; i++) {
+		const v = pos[i];
+		if (!Number.isFinite(v)) {
+			anyNonFinite = true;
+			break;
+		}
+		const a = Math.abs(v);
+		if (a > maxAbs) maxAbs = a;
+	}
+	if (anyNonFinite) return true;
+	if (maxAbs >= 1e4) return true;
+	if (headerBounds) {
+		const decExt = Math.max(
+			b.max[0] - b.min[0],
+			b.max[1] - b.min[1],
+			b.max[2] - b.min[2],
+		);
+		const hdrExt = Math.max(
+			headerBounds.max[0] - headerBounds.min[0],
+			headerBounds.max[1] - headerBounds.min[1],
+			headerBounds.max[2] - headerBounds.min[2],
+			1e-3,
+		);
+		if (decExt > hdrExt * 8) return true;
+	}
+	return false;
+}
+
 /** Parse a .model.stream high-LOD payload: 12-byte header + interleaved verts + strips. */
 export function parseModelStream(raw: Uint8Array): ParsedModel {
 	const rr = reader(raw);
@@ -349,6 +415,42 @@ export function parseModelStream(raw: Uint8Array): ParsedModel {
 	const idxStart = findStreamIndexStart(u16, n, payloadStart);
 	const vbytes = idxStart - payloadStart;
 	const vertexCount = Math.floor(vbytes / 16);
+
+	// Discriminate the two stream layouts that both carry the 12-byte frame:
+	//   * the high-LOD CAR stream (Musclecar_*.model.stream): a 16-byte stride of
+	//     4 big-endian half-floats per vertex, the 4th (w) == 1.0 (hkxVertexP4…).
+	//   * the level Stream .geo (airport_test_03): float32 P3 at a LARGER, varying
+	//     stride interleaved with attributes — decoding THAT as 16-byte half4 yields
+	//     the ±65504 half-float spikes the level loader flags as "suspect".
+	// The w≈1.0 fraction is a clean separator (cars: ~100%; level .geo: ~0-15%), so
+	// we only emit the half4 decode when it is genuinely a P4-half stream. For the
+	// level .geo we emit no positions (no-geometry beats wrong geometry) and flag
+	// partial; its float32 layout, which needs per-stream stride recovery, is not
+	// decoded here yet.
+	let wHits = 0;
+	const wSamples = Math.min(vertexCount, 64);
+	for (let v = 0; v < wSamples; v++) {
+		const w = decodeHalf(u16(payloadStart + v * 16 + 6));
+		if (Math.abs(w - 1.0) < 1e-2) wHits++;
+	}
+	const isHalf4 = wSamples > 0 && wHits >= wSamples * 0.85;
+
+	if (!isHalf4) {
+		return {
+			kind: 'stream',
+			streamPayloadLen,
+			meshes: [{ positions: [], indices: [], vertexCount: 0 }],
+			bounds: null,
+			partial: true,
+			note:
+				`Stream .geo: not a P4-half (16-byte half4) vertex stream — only ` +
+				`${wHits}/${wSamples} vertices have w≈1.0. This is the level Stream .geo ` +
+				`float32-P3 layout (variable stride + interleaved attributes); decoding it ` +
+				`as half4 would produce ±65504 spikes, so positions are withheld until the ` +
+				`float32 stride is recovered.`,
+		};
+	}
+
 	const positions: number[] = new Array(vertexCount * 3);
 	for (let v = 0; v < vertexCount; v++) {
 		const base = payloadStart + v * 16;
@@ -591,9 +693,14 @@ function detectVertexFormat(
 
 /**
  * Find the INDEX-BUFFER / draw-call table: the first 32-byte-strided run of
- * records {relOffset:u32, 0,0,0, idxCount:u32, idxCount*2:u32, 0,0}.
+ * records {relOffset:u32, 0,0,0, idxCount:u32, idxCount*2:u32, 0,0}. Returns the
+ * draw calls plus the file offset where the table starts (used to locate the
+ * draw->buffer binding table that immediately precedes it).
  */
-function readDrawCallTable(u32: (p: number) => number, n: number): DrawCall[] {
+function readDrawCallTable(
+	u32: (p: number) => number,
+	n: number,
+): { draws: DrawCall[]; tableStart: number } {
 	const validRec = (p: number): DrawCall | null => {
 		if (p + 32 > n) return null;
 		const off = u32(p);
@@ -615,9 +722,56 @@ function readDrawCallTable(u32: (p: number) => number, n: number): DrawCall[] {
 			recs.push(rec);
 			p += 32;
 		}
-		if (recs.length >= 1) return recs;
+		if (recs.length >= 1) return { draws: recs, tableStart: start };
 	}
-	return [];
+	return { draws: [], tableStart: -1 };
+}
+
+/**
+ * Read the draw->vertex-buffer BINDING table that sits in the node tree just
+ * before the draw-call table. Each draw call has one 16-byte record
+ * {0:u32, ptrA:u32, ptrB:u32, 6:u32}; the `ptrB` field points at the draw's
+ * vertex-buffer node and takes exactly `bufferCount` distinct values spaced 0x24
+ * bytes apart (the node-tree per-buffer record stride). Sorting those distinct
+ * ptrB values ascending and indexing 0..bufferCount-1 yields the TRUE per-draw
+ * buffer index.
+ *
+ * This is the fix for the "renders weirdly" class of bugs (e.g. Musclecar_02):
+ * the old "smallest fitting buffer" heuristic mis-routed draw calls whose index
+ * range happened to fit a smaller buffer than the one they actually belong to,
+ * scrambling which positions each triangle referenced. The binding is exact.
+ *
+ * Returns `null` (caller falls back to the heuristic) unless the table is
+ * unambiguous: exactly `drawCount` records AND exactly `bufferCount` distinct
+ * 0x24-spaced ptrB values. This keeps the multi-/shared-buffer variants (where
+ * the distinct count != bufferCount) on the safe heuristic path.
+ */
+function readDrawBufferBinding(
+	u32: (p: number) => number,
+	n: number,
+	drawTableStart: number,
+	drawCount: number,
+	bufferCount: number,
+): number[] | null {
+	if (drawTableStart < 0x1c || drawCount <= 0 || bufferCount <= 0) return null;
+	// Walk backwards over the {0, ptrA, ptrB, 6} records ending right before the
+	// draw table.
+	const ptrBs: number[] = [];
+	let p = drawTableStart - 16;
+	while (p >= 0x0c && u32(p) === 0 && u32(p + 12) === 6) {
+		ptrBs.push(u32(p + 8));
+		p -= 16;
+	}
+	ptrBs.reverse();
+	if (ptrBs.length !== drawCount) return null;
+	const distinct = Array.from(new Set(ptrBs)).sort((a, b) => a - b);
+	if (distinct.length !== bufferCount) return null;
+	for (let i = 1; i < distinct.length; i++) {
+		if (distinct[i] - distinct[i - 1] !== 0x24) return null;
+	}
+	const ptrToBuf = new Map<number, number>();
+	distinct.forEach((v, i) => ptrToBuf.set(v, i));
+	return ptrBs.map((v) => ptrToBuf.get(v)!);
 }
 
 /**
@@ -730,6 +884,47 @@ function decodeBufferPositions(
 
 /** Plausible position-stream strides seen in the skinned variant. */
 const SKINNED_POS_STRIDES = new Set([12, 16, 20, 24, 28, 32]);
+
+/** One per-section descriptor from the skinned node tree (vertex + index counts). */
+type SkinnedDescriptor = { vcount: number; icount: number; dataOffset: number };
+
+/**
+ * Read the skinned variant's per-section MESH DESCRIPTORS from the node tree.
+ * Each section is described by a fixed frame:
+ *   base+0x00: o0:u32  o1:u32  dataOffset:u32  size:u32
+ *   base+0x10: 0x00020000
+ *   base+0x14: 0x81xx0000           (section sig; xx varies per section)
+ *   base+0x18: 0x42ff2000           (constant)
+ *   base+0x1c: packed = (vcount<<16) | icount
+ *   base+0x20: 0xffffffff           (terminator)
+ * The `icount` is the section's TRIANGLE-INDEX count (verified against the VB
+ * table's vcount, which equals the descriptor vcount). Recovering it lets us
+ * report the EXPECTED triangle count even though the index data itself is not
+ * present anywhere in the .model file (see parseModelSkinned).
+ */
+function readSkinnedDescriptors(
+	u32: (p: number) => number,
+	n: number,
+): SkinnedDescriptor[] {
+	const out: SkinnedDescriptor[] = [];
+	for (let p = 0x10; p + 0x14 < n; p += 4) {
+		if (
+			u32(p) === 0x00020000 &&
+			// Mask the per-section byte (xx in 0x81xx0000); >>>0 keeps it unsigned
+			// (a bare `&` yields a *signed* int32, breaking the 0x81000000 compare).
+			((u32(p + 4) & 0xff00ffff) >>> 0) === 0x81000000 &&
+			u32(p + 8) === 0x42ff2000 &&
+			u32(p + 0x10) === 0xffffffff
+		) {
+			const packed = u32(p + 0xc);
+			const vcount = (packed >>> 16) & 0xffff;
+			const icount = packed & 0xffff;
+			const base = p - 0x10;
+			out.push({ vcount, icount, dataOffset: base >= 0 ? u32(base + 8) : 0 });
+		}
+	}
+	return out;
+}
 
 /** One skinned vertex buffer: a position sub-stream + a paired aux sub-stream. */
 type SkinnedBuffer = {
@@ -898,6 +1093,13 @@ export function parseModelSkinned(raw: Uint8Array): ParsedModel {
 	let located = 0;
 	let totalRecords = 0;
 
+	// Per-section descriptors carry the section vertex AND triangle-index counts.
+	// We can't recover the index DATA (it is absent from the file — see the long
+	// note below), but the expected triangle count is a useful sanity figure and
+	// proves the topology was stripped rather than merely undecoded.
+	const descriptors = readSkinnedDescriptors(rr.u32, n);
+	const expectedTris = descriptors.reduce((s, d) => s + Math.floor(d.icount / 3), 0);
+
 	try {
 		const table = readSkinnedBufferTable(rr.u32, n);
 		if (table && table.buffers.length > 0) {
@@ -922,12 +1124,21 @@ export function parseModelSkinned(raw: Uint8Array): ParsedModel {
 				});
 			}
 			const totalVerts = meshes.reduce((s, m) => s + m.vertexCount, 0);
+			const triNote =
+				descriptors.length > 0
+					? ` Per-section descriptors declare ${descriptors.length} mesh section(s) ` +
+						`totalling ${expectedTris} triangle(s), but the index buffer is absent ` +
+						`from the file (the position+aux streams and a small packed skinning ` +
+						`section consume the entire byte budget — verified: no room for ` +
+						`${expectedTris * 3}+ u16 indices).`
+					: '';
 			note =
 				`Skinned .model (0x${magic.toString(16)}): decoded ${located}/${totalRecords} ` +
 				`position buffer(s) (${totalVerts} verts, float32 P3). Triangle topology ` +
 				`is not recoverable from the skinned container (no 16-bit strips / draw ` +
 				`table — it lives in the compressed Havok skinning section), so meshes are ` +
-				`emitted as positions only.`;
+				`emitted as positions only.` +
+				triNote;
 		} else {
 			note =
 				`Skinned .model (0x${magic.toString(16)}): no 0x48 vertex-buffer table found ` +
@@ -1005,7 +1216,7 @@ export function parseModelBase(raw: Uint8Array): ParsedModel {
 
 	try {
 		const vbTable = readVertexBufferTable(u32, n, bounds);
-		const draws = readDrawCallTable(u32, n);
+		const { draws, tableStart: drawTableStart } = readDrawCallTable(u32, n);
 
 		if (vbTable && vbTable.buffers.length > 0) {
 			const { buffers } = vbTable;
@@ -1024,12 +1235,44 @@ export function parseModelBase(raw: Uint8Array): ParsedModel {
 				return { buf: b, fmt, ...d };
 			});
 
+			// GUARD: reject any buffer whose decoded positions are clearly garbage —
+			// the half-float-spike fingerprint of the level-sobj QUANTIZED-position
+			// variant (int16 positions dequantized against a per-buffer node-tree box
+			// we don't yet read). Such buffers decode to ±tens-of-thousands extents,
+			// far beyond the model's header AABB. We blank them (positions [] →
+			// no-geometry) and flag partial rather than emit wrong geometry; the
+			// undetected format would otherwise place vertices at ±65504 spikes.
+			let blanked = 0;
+			for (const d of decoded) {
+				if (!d.positions.length) continue;
+				if (positionsImplausible(d.positions, bounds)) {
+					d.positions = [];
+					d.uv = undefined;
+					blanked++;
+					partial = true;
+				}
+			}
+
+			// The EXACT draw->buffer binding from the node-tree binding table (one
+			// record per draw call). When present this overrides the legacy
+			// "smallest fitting buffer" heuristic, which mis-routed draws and made
+			// some cars/props (e.g. Musclecar_02) render with scrambled geometry.
+			const binding = readDrawBufferBinding(
+				u32,
+				n,
+				drawTableStart,
+				draws.length,
+				buffers.length,
+			);
+
 			// Distribute draw calls to buffers and expand strips.
 			const corr = findIndexCorrection(u16, n, draws, vertexRegionEnd);
 			const perBufferIndices: number[][] = buffers.map(() => []);
+			let misbound = 0;
 
 			if (corr !== null && draws.length > 0) {
-				for (const dc of draws) {
+				for (let di = 0; di < draws.length; di++) {
+					const dc = draws[di];
 					const start = dc.relOffset + corr;
 					if (start < 0 || start + dc.idxCount * 2 > n) {
 						partial = true;
@@ -1043,11 +1286,22 @@ export function parseModelBase(raw: Uint8Array): ParsedModel {
 						strip[i] = v;
 						if (v !== 0xffff && v > maxIdx) maxIdx = v;
 					}
-					// Route to the smallest buffer whose vcount contains maxIdx.
+					// Pick the target buffer: prefer the exact binding; fall back to the
+					// smallest-fitting-buffer heuristic when no binding is available.
 					let target = -1;
-					for (let bi = 0; bi < buffers.length; bi++) {
-						if (buffers[bi].vcount > maxIdx) {
-							if (target < 0 || buffers[bi].vcount < buffers[target].vcount) target = bi;
+					if (binding) {
+						const bound = binding[di];
+						// Trust the binding only if it can actually hold this draw's
+						// indices; otherwise fall through to the heuristic (defensive —
+						// the binding was verified exact across the sample set).
+						if (buffers[bound].vcount > maxIdx) target = bound;
+						else misbound++;
+					}
+					if (target < 0) {
+						for (let bi = 0; bi < buffers.length; bi++) {
+							if (buffers[bi].vcount > maxIdx) {
+								if (target < 0 || buffers[bi].vcount < buffers[target].vcount) target = bi;
+							}
 						}
 					}
 					if (target < 0) {
@@ -1064,27 +1318,38 @@ export function parseModelBase(raw: Uint8Array): ParsedModel {
 				partial = true;
 			}
 
-			// Emit one submesh per buffer that has geometry.
+			// Emit one submesh per buffer that has geometry. A blanked buffer (garbage
+			// positions, see GUARD above) emits as an empty submesh — no positions and
+			// no indices — so it contributes no wrong geometry to the scene.
 			for (let bi = 0; bi < buffers.length; bi++) {
 				const d = decoded[bi];
-				const indices = perBufferIndices[bi];
+				const blank = d.positions.length === 0;
+				const indices = blank ? [] : perBufferIndices[bi];
 				meshes.push({
 					positions: d.positions,
 					indices,
-					vertexCount: buffers[bi].vcount,
+					vertexCount: blank ? 0 : buffers[bi].vcount,
 					uv: d.uv,
 					stride: buffers[bi].stride,
-					format: d.fmt?.format,
+					format: blank ? undefined : d.fmt?.format,
 				});
 			}
 
 			const decodedDraws = draws.length;
 			const usedDraws = corr !== null ? draws.length : 0;
 			if (partial || usedDraws < decodedDraws) {
+				const bindNote = binding
+					? `Draw->buffer binding is EXACT (node-tree binding table).`
+					: `Per-buffer binding is heuristic.`;
+				const blankNote = blanked
+					? ` ${blanked} buffer(s) blanked (quantized-position variant not yet decoded — kept as no-geometry to avoid garbage).`
+					: '';
 				note =
 					`Base .model: decoded ${buffers.length} vertex buffer(s) ` +
 					`(${buffers.reduce((s, b) => s + b.vcount, 0)} verts) and ` +
-					`${usedDraws}/${decodedDraws} draw call(s). Per-buffer binding is heuristic.`;
+					`${usedDraws}/${decodedDraws} draw call(s). ${bindNote}` +
+					(misbound ? ` (${misbound} binding entr(y/ies) fell back to heuristic.)` : '') +
+					blankNote;
 			}
 		} else {
 			// No VB table — likely a stub .model (geometry in .model.stream) or an

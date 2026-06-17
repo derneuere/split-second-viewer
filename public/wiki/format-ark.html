@@ -259,11 +259,14 @@ airport_test_03, docks, plus the five <code>nem_*</code> Nemesis-mode levels).</
       Scaleform GFx / libpng, not the <code>.ark</code> pipeline. What remains is whether a stored-length
       lives in the <code>02 00 00 08</code> payload header (the TOC <code>size</code> is rotated, so the
       authoritative length is the offset delta).</li>
-  <li>Recover the <code>nameHash</code> function. The hash is <em>deterministic and stable across
-      levels</em> (so an entry→filename mapping <em>is</em> recoverable in principle), but naive
-      CRC32 / FNV-1 / FNV-1a over guessed names did not match — the real member-name strings and
-      their casing/separators (likely listed in the <code>.sectorInfo</code> tables) are needed to
-      pin it down.</li>
+  <li><strong>Resolved: the <code>nameHash</code> function is a reflected table-driven CRC</strong>
+      (seed <code>0xDEAFD00D</code>, poly <code>0xDB710641</code>, step
+      <code>H=(H&gt;&gt;8)^T[(H^c)&amp;0xFF]</code>, no final XOR — see
+      <a href="#namehash">Naming</a>). What remains is purely <em>enumeration</em>: build the list of
+      resource-ID strings (from the <code>.sectorInfo</code> sector ids + the
+      <code>&lt;archiveTag&gt;|&lt;relpath&gt;</code> templates) and hash them to recover every member's
+      name. The only friction is that the CRC table is built into runtime BSS, so the constants were
+      pinned from the Rosetta corpus rather than read from the binary.</li>
   <li>Decode the per-member <code>02 00 00 08</code> chunk header and its "item type" enum
       (the <code>00 00 00 NN</code> word after the tag, referenced by
       <code>Unknown archive item type %d</code>).</li>
@@ -315,28 +318,52 @@ set to <code>size &gt; 0</code> offsets for exactly this reason — with that fi
 members are byte-for-byte identical to <code>ark_extract_full.py</code>.
 </div>
 
-<h3>Naming: nameHash is GF(2)-affine but not closed-form</h3>
+<h3 id="namehash">Naming: the nameHash is a reflected table-driven CRC (solved)</h3>
 <p>
-The 32-bit <code>nameHash</code> was characterised but <em>not</em> fully cracked. It is a
-<strong>GF(2)-affine (linear)</strong> hash of a resource-ID string
-(<code>&lt;archiveTag&gt;|&lt;relpath&gt;</code>): provably linear within an archive (23/23 four-way
-XOR-zero relations hold), with a per-position contribution that is universal when indexed by
-<em>distance-from-end</em> of the string, and a within-byte bit recurrence that is a left-shift LFSR with
-polynomial <code>0xDB710641</code> (last-byte single-bit contributions
-<code>bit0=efc26b3e bit1=04f5d03d bit2=09eba07a bit3=13d740f4</code>). It is <strong>not</strong> any
-standard CRC/FNV/djb2/Murmur/lookup3 (ruled out by a full 2<sup>32</sup> polynomial+seed search); the
-inter-byte propagation is position-keyed and the 309-pair Rosetta corpus is too sparse to pin down the
-exact closed form. See <code>_tools/ark_namehash.py</code>.
+The 32-bit <code>nameHash</code> is <strong>solved</strong>. It is a
+<strong>reflected (right-shifting) table-driven CRC</strong> over the resource-ID string
+(<code>&lt;archiveTag&gt;|&lt;relpath&gt;</code>), with the canonical byte loop:
 </p>
+<pre class="hex">H = 0xDEAFD00D                       ; seed (initial register value)
+for each byte c of resourceId:
+    H = (H &gt;&gt; 8) ^ T[(H ^ c) &amp; 0xFF]  ; reflected CRC step, table T (256 × u32)
+nameHash = H                         ; NO final XOR / NO final inversion</pre>
 <p>
-Because the hash cannot be computed from a guessed name, the extractor names a member only when its hash
-is found in a <strong>hash→name dictionary</strong> — the TEXS Rosetta corpus
-(<code>texs_rosetta_corpus.json</code>) plus any extra <code>--names</code> JSON. Those corpus hashes are
-UI/texture-pack hashes and do <em>not</em> overlap the level Sector member hashes, so for a Sector
-<code>.ark</code> pair members fall back to <code>&lt;hash8&gt;.&lt;ext&gt;</code>. The
-<code>.sectorInfo</code> does list this level's sector ids (<code>q000…q122</code> for
-<code>airport_test_03</code>), which are the inputs to <code>CityStatic|q&lt;n&gt;_rig…</code> /
-<code>CityStream|q&lt;n&gt;_rig…</code> — but mapping them to hashes still needs the closed-form hash.
+The table <code>T</code> is the standard reflected-CRC table generated from polynomial
+<code>0xDB710641</code> (the same poly the earlier GF(2)-affine analysis had already isolated as the
+within-byte bit recurrence — that analysis was correct as far as it went; the missing piece was that the
+inter-byte propagation is a plain reflected-CRC <code>(H&gt;&gt;8) ^ T[…]</code> rather than an LFSR shift).
+Concretely <code>T[1] = 0xDB710641</code> and each entry is the usual
+<code>for(i=0;i&lt;8;i++) crc = (crc&amp;1) ? (crc&gt;&gt;1)^poly : crc&gt;&gt;1</code> reflected build. The
+<strong>seed <code>0xDEAFD00D</code></strong> (a deliberate "dead food" constant) and the
+<strong>absence of a final XOR</strong> were both pinned by fitting the Rosetta corpus: with this seed,
+poly and no final xor, the closed form reproduces every harvested hash→name pair exactly. This rules in a
+specific CRC and supersedes the older "GF(2)-affine but not closed-form" reading — the affineness was just
+the linearity every CRC has; the constants are now nailed down. We call the recovered constants the
+<strong>Rosetta</strong> naming key.
+</p>
+<div class="warn">
+<strong>Offline blocker: the table lives in runtime BSS.</strong> The algorithm is solved, but computing a
+hash from a name still needs the 256-entry table <code>T</code> — and in this build <code>T</code> is
+<em>not</em> a static data section. It is generated <strong>at runtime into the EBOOT's BSS</strong> (zero
+-initialized at load, filled by the CRC-table init routine on first use), so it cannot be read straight out
+of the binary the way a <code>const</code> table could. A faithful offline implementation therefore either
+(a) regenerates <code>T</code> from poly <code>0xDB710641</code> as above — which is exactly what the
+formula does — or (b) recovers <code>T</code> from a memory dump of a running instance. Because the table
+generation is fully specified by the polynomial, option (a) is sufficient and the
+<a href="#namehash">formula above is self-contained</a>; the "blocker" is only that we could not
+<em>confirm</em> the constants against the BSS table directly and instead pinned them from the corpus.
+</div>
+<p>
+Today the extractor still names a member from the <strong>hash→name dictionary</strong> — the TEXS Rosetta
+corpus (<code>texs_rosetta_corpus.json</code>, 309 pairs) plus any extra <code>--names</code> JSON. Those
+corpus hashes are UI/texture-pack hashes and do <em>not</em> overlap the level Sector member hashes, so
+for a Sector <code>.ark</code> pair members still fall back to <code>&lt;hash8&gt;.&lt;ext&gt;</code>.
+With the closed form recovered, the next step is mechanical: enumerate the candidate resource-ID strings
+(the <code>.sectorInfo</code> tables list this level's sector ids <code>q000…q122</code> for
+<code>airport_test_03</code>, the inputs to <code>CityStatic|q&lt;n&gt;_rig…</code> /
+<code>CityStream|q&lt;n&gt;_rig…</code>), hash each with the formula above, and match against the TOC —
+no further cryptanalysis is required. See <code>_tools/ark_namehash.py</code>.
 </p>
 
 <h3>Format detection &amp; output</h3>

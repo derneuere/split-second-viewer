@@ -43,9 +43,51 @@ import { cn } from '@/lib/utils';
 // Viewport — reads selected bytes ON DEMAND, with a loading state.
 // ---------------------------------------------------------------------------
 
+/** Cap how many geometry members the whole-level decode processes per click, so
+ *  a huge level (1M+ verts) stays responsive. Decodes the biggest members first. */
+const MAP_MAX_MEMBERS = 400;
+
+/** Whole-level map view — builds + renders the merged level scene. */
+function MapView({ archiveId }: { archiveId: string }) {
+	const { buildLevelGeometry } = useWorkspace();
+	const [level, setLevel] = useState<ReturnType<typeof buildLevelGeometry>>(null);
+	const [building, setBuilding] = useState(true);
+
+	useEffect(() => {
+		setBuilding(true);
+		setLevel(null);
+		// Defer the (synchronous, heavy) decode a tick so the loading state paints.
+		const t = setTimeout(() => {
+			try {
+				setLevel(buildLevelGeometry(archiveId, { maxMembers: MAP_MAX_MEMBERS }));
+			} finally {
+				setBuilding(false);
+			}
+		}, 0);
+		return () => clearTimeout(t);
+	}, [archiveId, buildLevelGeometry]);
+
+	if (building) {
+		return (
+			<div className="flex h-full flex-col items-center justify-center gap-3 text-muted-foreground">
+				<Loader2 className="h-6 w-6 animate-spin text-accent" />
+				<span className="text-sm">Decoding whole level…</span>
+			</div>
+		);
+	}
+	return <ViewportRouter handler={undefined} raw={null} levelGeometry={level} />;
+}
+
 function Viewport() {
-	const { selection, getResourceBytes, getHandler, select, openArkFromDir, isArkPath } =
-		useWorkspace();
+	const {
+		selection,
+		getResourceBytes,
+		getHandler,
+		select,
+		openArkFromDir,
+		isArkPath,
+		levelView,
+	} = useWorkspace();
 	const [raw, setRaw] = useState<Uint8Array | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -109,6 +151,11 @@ function Viewport() {
 	}, [selection, getResourceBytes, openArkFromDir, isArkPath, select]);
 
 	const handler = selection && raw ? getHandler(selection.ref) : undefined;
+
+	// Whole-level map takes precedence over any single-resource selection.
+	if (levelView) {
+		return <MapView archiveId={levelView} />;
+	}
 
 	if (!selection) {
 		return (
@@ -223,9 +270,9 @@ function StartScreen() {
 					Select your Split/Second installation folder
 				</h1>
 				<p className="mt-2 text-muted-foreground">
-					Point Steward at your game data directory — e.g.{' '}
+					Point the Viewer at your game data directory — e.g.{' '}
 					<code className="text-accent">…\USRDIR\Deferred</code> (or the game root).
-					Steward reads the folder structure once, then lets you browse and decode
+					The Viewer reads the folder structure once, then lets you browse and decode
 					every file. Files are read on demand; nothing is uploaded.
 				</p>
 			</div>

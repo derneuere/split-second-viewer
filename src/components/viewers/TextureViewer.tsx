@@ -50,6 +50,59 @@ function formatBadge(fmt: string): string {
 	return fmt === 'raw' ? 'unknown' : fmt;
 }
 
+/**
+ * Structural guard for a usable TEXS model. The texture viewport is reached for
+ * BOTH the `textures` handler (a ParsedTextures with a real `descriptors[]`) AND
+ * the `streamtex` handler (a ParsedStreamtex = `{ headerless, byteLength,
+ * payload }` — NO descriptor table). A bare `.gputex` Stream member routes to
+ * streamtex too, so `model` here may carry no `descriptors`. Accessing
+ * `model.descriptors.length` blindly threw "Cannot read properties of undefined
+ * (reading 'length')" (#7) — this guard makes that path render a graceful
+ * message instead. Any object that exposes a `descriptors` array AND a numeric
+ * `textureCount` is treated as a TEXS model.
+ */
+export function isParsedTextures(model: unknown): model is ParsedTextures {
+	return (
+		!!model &&
+		typeof model === 'object' &&
+		Array.isArray((model as Partial<ParsedTextures>).descriptors) &&
+		typeof (model as Partial<ParsedTextures>).textureCount === 'number'
+	);
+}
+
+/** A headerless streamtex payload `{ headerless, byteLength, payload }`. */
+export function asStreamtexPayloadLen(model: unknown): number | null {
+	if (!model || typeof model !== 'object') return null;
+	const m = model as { headerless?: unknown; byteLength?: unknown };
+	if (m.headerless === true && typeof m.byteLength === 'number') return m.byteLength;
+	return null;
+}
+
+/**
+ * The top-level render decision the TextureViewer makes from its `model` prop,
+ * factored out as a pure function so the #7 regression is testable headlessly
+ * (the vitest env is `node` — no DOM to render the component into).
+ *
+ *   'no-model'   — model is null/undefined            → "No texture model"
+ *   'streamtex'  — headerless { byteLength } payload   → streamtex explainer
+ *   'not-texs'   — truthy but no descriptor table      → "Not a TEXS texture set"
+ *   'empty'      — TEXS model with 0 textures          → "Empty texture set"
+ *   'texs'       — usable TEXS model                   → canvas + descriptor table
+ *
+ * Every branch is a graceful, non-throwing outcome — none dereferences a missing
+ * `descriptors`/`textureCount` (the crash that #7 reported).
+ */
+export type TextureModelClass = 'no-model' | 'streamtex' | 'not-texs' | 'empty' | 'texs';
+
+export function classifyTextureModel(model: unknown): TextureModelClass {
+	if (!model) return 'no-model';
+	if (!isParsedTextures(model)) {
+		return asStreamtexPayloadLen(model) !== null ? 'streamtex' : 'not-texs';
+	}
+	if (model.textureCount === 0 || model.descriptors.length === 0) return 'empty';
+	return 'texs';
+}
+
 /** A small empty-state card with an icon + message (graceful fallback). */
 function EmptyState({ title, detail }: { title: string; detail?: string }) {
 	return (
@@ -162,7 +215,11 @@ export function TextureViewer({ model, raw }: TextureViewerProps) {
 		textures: DecodedTexture[];
 		error: string | null;
 	}>(() => {
-		if (!model || !raw) return { textures: [], error: null };
+		// Only the descriptor-bearing TEXS model can be decoded inline. A streamtex
+		// (or any non-TEXS shape that reached this viewport) has no descriptor table
+		// — bail to an empty set so the graceful fallback renders instead of the
+		// decoder throwing on a missing `descriptors`/`textureCount`.
+		if (!isParsedTextures(model) || !raw) return { textures: [], error: null };
 		try {
 			const all = decodeAllInline(raw, model);
 			if (all.length > 0) return { textures: all, error: null };
@@ -204,6 +261,28 @@ export function TextureViewer({ model, raw }: TextureViewerProps) {
 			<EmptyState
 				title="No texture model"
 				detail="This resource has no parsed TEXS model. The Hex fallback shows the raw bytes."
+			/>
+		);
+	}
+
+	// A non-TEXS model reached the texture viewport — most commonly a headerless
+	// streamtex / raw .gputex Stream member, whose pixel layout is described by a
+	// SIBLING .textures stub we don't have in hand. Render a clear message instead
+	// of dereferencing a descriptor table that isn't there (the #7 crash).
+	if (!isParsedTextures(model)) {
+		const payloadLen = asStreamtexPayloadLen(model);
+		return (
+			<EmptyState
+				title={payloadLen !== null ? 'Streamed texture payload' : 'Not a TEXS texture set'}
+				detail={
+					payloadLen !== null
+						? `This is a headerless ${payloadLen.toLocaleString()}-byte swizzled pixel ` +
+							'payload (.gputex / .streamtex). Its format, dimensions and mip layout ' +
+							'live in the companion .textures stub — open that descriptor file to ' +
+							'decode and view the image. The raw bytes are shown in the Hex fallback.'
+						: 'The selected resource did not parse into a TEXS texture set. The Hex ' +
+							'fallback shows the raw bytes.'
+				}
 			/>
 		);
 	}

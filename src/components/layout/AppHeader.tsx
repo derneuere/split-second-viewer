@@ -13,7 +13,7 @@ export function AppHeader() {
 		<header className="flex h-12 shrink-0 items-center gap-4 border-b border-border bg-card/60 px-4 backdrop-blur">
 			<Link to="/" className="flex items-center gap-2 font-semibold text-primary">
 				<Gauge className="h-5 w-5" />
-				<span>Split/Second Steward</span>
+				<span>Split/Second Viewer</span>
 			</Link>
 			<nav className="flex items-center gap-1 text-sm">
 				{NAV.map((item) => {

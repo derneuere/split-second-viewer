@@ -23,6 +23,7 @@ import {
 } from '@/lib/core/ark/ArkArchive';
 import { describeMember, memberFileName } from '@/lib/core/ark/nameHash';
 import { ingestLoose, type LooseFile } from '@/lib/core/loose';
+import { loadLevelGeometry, type LevelGeometry } from '@/lib/core/levelGeometry';
 import {
 	enumerateDirectory,
 	readFileBytes,
@@ -151,10 +152,25 @@ export type WorkspaceContextValue = {
 	getResourceFileName: (ref: ResourceRef) => string;
 	/** All addressable Resource refs in an Archive (both segments). */
 	membersOf: (id: ArchiveId) => ResourceRef[];
+	/**
+	 * Decode EVERY geometry member of a loaded Archive into one world-space scene
+	 * for the MapViewer ("Render whole level"). Returns null when the archive
+	 * isn't loaded. Pure synchronous decode over the in-memory segment bytes;
+	 * `maxMembers` caps the decode for very large levels.
+	 */
+	buildLevelGeometry: (id: ArchiveId, opts?: { maxMembers?: number }) => LevelGeometry | null;
 
 	// selection
 	selection: WorkspaceSelection;
 	select: (next: WorkspaceSelection) => void;
+
+	/**
+	 * Whole-level view target (orthogonal to `selection`): the ArchiveId the user
+	 * asked to "Render whole level", or null. Setting it switches the viewport to
+	 * the MapViewer; selecting any normal resource clears it.
+	 */
+	levelView: ArchiveId | null;
+	setLevelView: (id: ArchiveId | null) => void;
 
 	// visibility
 	isVisible: (node: VisibilityNode) => boolean;
@@ -340,6 +356,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 	const [archives, setArchives] = useState<EditableArchive[]>([]);
 	const [looseFiles, setLooseFiles] = useState<EditableLooseFile[]>([]);
 	const [selection, setSelection] = useState<WorkspaceSelection>(null);
+	const [levelView, setLevelViewState] = useState<ArchiveId | null>(null);
 	// Visibility map: key -> explicit boolean. Absent = visible (default true).
 	const [visibility, setVisibilityMap] = useState<Record<string, boolean>>({});
 	// Directory-backed structure (File System Access API). The enumerated tree is
@@ -397,6 +414,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 		setArchives([]);
 		setLooseFiles([]);
 		setSelection(null);
+		setLevelViewState(null);
 		setDirTree(root);
 	}, []);
 
@@ -467,6 +485,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 		setSelection((sel) =>
 			sel?.ref.kind === 'member' && sel.ref.archiveId === id ? null : sel,
 		);
+		setLevelViewState((lv) => (lv === id ? null : lv));
 	}, []);
 
 	const closeLoose = useCallback((id: LooseId) => {
@@ -572,7 +591,28 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 		[findArchive],
 	);
 
-	const select = useCallback((next: WorkspaceSelection) => setSelection(next), []);
+	/** Decode every geometry member of an Archive into one world-space scene. */
+	const buildLevelGeometry = useCallback(
+		(id: ArchiveId, opts?: { maxMembers?: number }): LevelGeometry | null => {
+			const arc = findArchive(id);
+			if (!arc) return null;
+			const segBytes = (seg: 'static' | 'stream') =>
+				seg === 'static' ? arc.staticBytes : arc.streamBytes;
+			return loadLevelGeometry(arc.parsed, segBytes, opts);
+		},
+		[findArchive],
+	);
+
+	// Selecting any normal resource leaves the whole-level view.
+	const select = useCallback((next: WorkspaceSelection) => {
+		setSelection(next);
+		if (next) setLevelViewState(null);
+	}, []);
+
+	const setLevelView = useCallback((id: ArchiveId | null) => {
+		setLevelViewState(id);
+		if (id) setSelection(null); // the map takes over the viewport
+	}, []);
 
 	const isVisible = useCallback(
 		(node: VisibilityNode): boolean => {
@@ -642,8 +682,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			isArkPath,
 			getResourceFileName,
 			membersOf,
+			buildLevelGeometry,
 			selection,
 			select,
+			levelView,
+			setLevelView,
 			isVisible,
 			setVisibility,
 			canUndo: false,
@@ -668,8 +711,11 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			isArkPath,
 			getResourceFileName,
 			membersOf,
+			buildLevelGeometry,
 			selection,
 			select,
+			levelView,
+			setLevelView,
 			isVisible,
 			setVisibility,
 			noop,

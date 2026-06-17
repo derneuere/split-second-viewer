@@ -385,6 +385,77 @@ describe('model parser — REAL devkit samples', () => {
 		},
 	);
 
+	// Regression for the "renders weirdly" bug. Musclecar_02 was scrambled by the
+	// old "smallest fitting buffer" heuristic, which mis-bound ~10 of its 39 draw
+	// calls to the wrong vertex buffer. The node-tree binding table fixes it: every
+	// triangle index must be in range for the buffer it is bound to.
+	const REAL_BASE_CAR2 = 'Vehicles/Bodies/Musclecar_02/Musclecar_02.model';
+	it.skipIf(!hasSample(REAL_BASE_CAR2))(
+		'decodes Musclecar_02 with the EXACT draw->buffer binding (no scrambled geometry)',
+		() => {
+			const raw = readSample(REAL_BASE_CAR2);
+			const m = modelHandler.parseRaw(raw, ssCtx());
+			expect(m.kind).toBe('model');
+			// Four vertex buffers, plenty of geometry — like Musclecar_01.
+			expect(m.meshes.length).toBe(4);
+			let totalVerts = 0;
+			let totalTris = 0;
+			for (const mesh of m.meshes) {
+				expect(mesh.format).toBe('half');
+				expect(mesh.positions.length).toBe(mesh.vertexCount * 3);
+				// THE fix: every triangle index is in range for its OWN buffer. With the
+				// old heuristic this was violated (indices referenced the wrong buffer).
+				expect(mesh.indices.every((i) => i >= 0 && i < mesh.vertexCount)).toBe(true);
+				totalVerts += mesh.vertexCount;
+				totalTris += mesh.indices.length / 3;
+			}
+			// Comparable scale to Musclecar_01 (a full car body).
+			expect(totalVerts).toBeGreaterThan(10000);
+			expect(totalTris).toBeGreaterThan(5000);
+			// Bounds match the header AABB scale (a few metres per axis).
+			expect(m.bounds).not.toBeNull();
+			for (const v of [...m.bounds!.min, ...m.bounds!.max]) {
+				expect(Number.isFinite(v)).toBe(true);
+			}
+			expect(m.bounds!.max[2] - m.bounds!.min[2]).toBeGreaterThan(1);
+			expect(m.bounds!.max[2] - m.bounds!.min[2]).toBeLessThan(50);
+			// Every buffer that received any draw call must have triangles (the
+			// binding distributes draws across all four buffers, not just buf0).
+			const buffersWithTris = m.meshes.filter((mesh) => mesh.indices.length > 0).length;
+			expect(buffersWithTris).toBeGreaterThanOrEqual(3);
+		},
+	);
+
+	// A couple of airport sobj props (PhysicsInstances). These have a VB table + an
+	// IB/draw table + the binding table; they must decode to plausible, in-range
+	// geometry (never garbage). One of them is a prop the old heuristic mis-bound.
+	const REAL_PROP_TRESSLE =
+		'Environments/Objects/PhysicsInstances/tressle_2/tressle_2.model';
+	const REAL_PROP_BENCH =
+		'Environments/Objects/PhysicsInstances/airport_bench_01/airport_bench_01.model';
+	for (const rel of [REAL_PROP_TRESSLE, REAL_PROP_BENCH]) {
+		it.skipIf(!hasSample(rel))(`decodes an airport sobj prop cleanly (${rel.split('/').pop()})`, () => {
+			const raw = readSample(rel);
+			const m = modelHandler.parseRaw(raw, ssCtx());
+			expect(m.kind).toBe('model');
+			expect(m.meshes.length).toBeGreaterThanOrEqual(1);
+			let totalTris = 0;
+			for (const mesh of m.meshes) {
+				expect(mesh.positions.length).toBe(mesh.vertexCount * 3);
+				// Never emit garbage: every index in range for its own buffer.
+				expect(mesh.indices.every((i) => i >= 0 && i < mesh.vertexCount)).toBe(true);
+				totalTris += mesh.indices.length / 3;
+				for (const c of mesh.positions) {
+					expect(Number.isFinite(c)).toBe(true);
+					expect(Math.abs(c)).toBeLessThan(1e4);
+				}
+			}
+			// A real prop has at least a handful of triangles.
+			expect(totalTris).toBeGreaterThanOrEqual(2);
+			expect(m.bounds).not.toBeNull();
+		});
+	}
+
 	it.skipIf(!hasSample(REAL_SKINNED))(
 		'decodes a REAL skinned .model (0x02010008) into per-section position buffers (AA_Bell206B)',
 		() => {
@@ -425,6 +496,13 @@ describe('model parser — REAL devkit samples', () => {
 			expect(ext[0]).toBeCloseTo(3.9, 0);
 			expect(ext[1]).toBeCloseTo(12.6, 0);
 			expect(ext[2]).toBeCloseTo(14.6, 0);
+			// The per-section descriptors recover the EXPECTED triangle count even
+			// though the index data is absent: small=24 + big=2274 indices = 766 tris.
+			// The note must surface that the topology was stripped, not undecoded.
+			expect(m.note).toBeDefined();
+			expect(m.note).toMatch(/2 mesh section/);
+			expect(m.note).toMatch(/766 triangle/);
+			expect(m.note).toMatch(/index buffer is absent/);
 		},
 	);
 

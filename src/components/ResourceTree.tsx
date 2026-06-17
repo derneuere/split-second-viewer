@@ -13,6 +13,7 @@ import {
 	FileBox,
 	Folder,
 	Layers,
+	Map as MapIcon,
 	Package,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -70,6 +71,8 @@ export function ResourceTree() {
 		membersOf,
 		getResourceRaw,
 		getResourceFileName,
+		levelView,
+		setLevelView,
 	} = useWorkspace();
 	const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 	const [extracting, setExtracting] = useState<string | null>(null);
@@ -194,23 +197,39 @@ export function ResourceTree() {
 							<Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
 							<span className="truncate">{node.label}</span>
 							{node.kind === 'archive' && (
-								<button
-									type="button"
-									className="ml-auto shrink-0 text-muted-foreground hover:text-accent disabled:opacity-50"
-									title="Extract all members to disk"
-									disabled={extracting !== null}
-									onClick={(e) => {
-										e.stopPropagation();
-										void extractArchive(node.id);
-									}}
-								>
-									<DownloadCloud
+								<span className="ml-auto flex shrink-0 items-center gap-1.5">
+									<button
+										type="button"
 										className={cn(
-											'h-3.5 w-3.5',
-											extracting === node.id && 'animate-pulse text-accent',
+											'text-muted-foreground hover:text-accent',
+											levelView === node.id && 'text-accent',
 										)}
-									/>
-								</button>
+										title="Render whole level — decode & place every geometry member in one 3D scene"
+										onClick={(e) => {
+											e.stopPropagation();
+											setLevelView(levelView === node.id ? null : node.id);
+										}}
+									>
+										<MapIcon className="h-3.5 w-3.5" />
+									</button>
+									<button
+										type="button"
+										className="text-muted-foreground hover:text-accent disabled:opacity-50"
+										title="Extract all members to disk"
+										disabled={extracting !== null}
+										onClick={(e) => {
+											e.stopPropagation();
+											void extractArchive(node.id);
+										}}
+									>
+										<DownloadCloud
+											className={cn(
+												'h-3.5 w-3.5',
+												extracting === node.id && 'animate-pulse text-accent',
+											)}
+										/>
+									</button>
+								</span>
 							)}
 							{isResource && (
 								<button
