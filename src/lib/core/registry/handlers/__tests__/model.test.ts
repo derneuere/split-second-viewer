@@ -162,7 +162,7 @@ describe('model.stream parser', () => {
 });
 
 describe('base .model parser', () => {
-	it('decodes the header, AABB bounds, and tri-strips (inline)', () => {
+	it('decodes the header + AABB bounds; no section table -> no meshes (inline)', () => {
 		const m = parseModelBase(INLINE_BASE);
 		expect(m.kind).toBe('model');
 		expect(m.magic).toBe(MODEL_MAGIC);
@@ -170,9 +170,10 @@ describe('base .model parser', () => {
 		expect(m.bounds).not.toBeNull();
 		expect(m.bounds!.min).toEqual([-2, -3, -4]);
 		expect(m.bounds!.max).toEqual([5, 6, 7]);
-		// indices decoded; positions empty for base .model (vertex layout unresolved)
-		expect(m.meshes[0].indices.length).toBeGreaterThanOrEqual(3);
-		expect(m.meshes[0].positions).toEqual([]);
+		// This synthetic file has no vertex/index section table, so the decode is
+		// honest about producing no geometry (and flags partial).
+		expect(m.meshes).toHaveLength(0);
+		expect(m.partial).toBe(true);
 	});
 
 	it('rejects a bad magic', () => {
@@ -220,17 +221,61 @@ describe('model parser — REAL devkit samples', () => {
 	);
 
 	it.skipIf(!hasSample(REAL_BASE))(
-		'decodes a REAL base .model header + bounds (PointLight)',
+		'decodes a REAL base .model with float-format geometry (PointLight)',
 		() => {
 			const raw = readSample(REAL_BASE);
 			const m = modelHandler.parseRaw(raw, ssCtx());
 			expect(m.kind).toBe('model');
 			expect(m.magic).toBe(MODEL_MAGIC);
 			expect(m.nodeCount).toBe(1);
-			// PointLight AABB is the symmetric ±0.5 box from the wiki
+			// One section: a 5x5 quad grid (25 verts, P3+UV full-float).
+			expect(m.meshes).toHaveLength(1);
+			const mesh = m.meshes[0];
+			expect(mesh.format).toBe('float');
+			expect(mesh.vertexCount).toBe(25);
+			expect(mesh.positions.length).toBe(25 * 3);
+			expect(mesh.uv?.length).toBe(25 * 2);
+			expect(mesh.indices.length).toBeGreaterThanOrEqual(3);
+			expect(mesh.indices.every((i) => i >= 0 && i < mesh.vertexCount)).toBe(true);
+			// First vertex of the grid is the -0.5,-0.5 corner.
+			expect(mesh.positions[0]).toBeCloseTo(-0.5, 3);
+			expect(mesh.positions[1]).toBeCloseTo(-0.5, 3);
+			// Decoded-vertex AABB is the symmetric ±0.5 box from the wiki.
 			expect(m.bounds).not.toBeNull();
 			expect(m.bounds!.min[0]).toBeCloseTo(-0.5, 3);
 			expect(m.bounds!.max[0]).toBeCloseTo(0.5, 3);
+		},
+	);
+
+	const REAL_BASE_CAR = 'Vehicles/Bodies/Musclecar_01/Musclecar_01.model';
+	it.skipIf(!hasSample(REAL_BASE_CAR))(
+		'decodes a REAL base car .model via its section tables (Musclecar_01)',
+		() => {
+			const raw = readSample(REAL_BASE_CAR);
+			const m = modelHandler.parseRaw(raw, ssCtx());
+			expect(m.kind).toBe('model');
+			// The in-race car body has no .model.stream: geometry lives in the base
+			// .model's vertex-buffer + draw-call section tables.
+			expect(m.meshes.length).toBeGreaterThanOrEqual(2);
+			let totalVerts = 0;
+			let totalTris = 0;
+			for (const mesh of m.meshes) {
+				expect(mesh.format).toBe('half');
+				expect(mesh.positions.length).toBe(mesh.vertexCount * 3);
+				// every triangle index is in range for its own buffer
+				expect(mesh.indices.every((i) => i >= 0 && i < mesh.vertexCount)).toBe(true);
+				totalVerts += mesh.vertexCount;
+				totalTris += mesh.indices.length / 3;
+			}
+			expect(totalVerts).toBeGreaterThan(10000);
+			expect(totalTris).toBeGreaterThan(5000);
+			expect(m.bounds).not.toBeNull();
+			for (const v of [...m.bounds!.min, ...m.bounds!.max]) {
+				expect(Number.isFinite(v)).toBe(true);
+			}
+			// Car-body extent: a few metres in each axis, not astronomically large.
+			expect(m.bounds!.max[2] - m.bounds!.min[2]).toBeGreaterThan(1);
+			expect(m.bounds!.max[2] - m.bounds!.min[2]).toBeLessThan(50);
 		},
 	);
 });

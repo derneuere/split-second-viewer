@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Physics Packs (.hkPPs / .hkPPsXml) — Split/Second RE Wiki</title>
+<meta name="description" content="The per-subtrack 'Physics Pack' — a Havok 5.5 packfile bundling trigger phantoms, area-of-effect explosion volumes, animated rigid bodies and MOPP collision into one root container.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Physics Packs (.hkPPs / .hkPPsXml)" data-category="Formats · Physics (Havok)">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Physics Packs (.hkPPs / .hkPPsXml)</h1>
+<p>The <code>.hkPPs</code> ("Physics Pack") is the largest per-subtrack physics asset: a single
+<a href="format-havok.html">Havok 5.5 packfile</a> whose root container bundles <em>eight</em> named
+sub-systems — the dynamic-physics world, gameplay <strong>trigger</strong> phantoms,
+<strong>area-of-effect</strong> (explosion) volumes, <strong>animated rigid bodies</strong> and their
+animation containers, plus MOPP-accelerated <a href="format-hkcoll.html">collision meshes</a>. It is the
+runtime backbone that connects the <a href="data-catnip.html">Catnip</a> /
+<a href="system-powerplay.html">Powerplay</a> scripting layer to physics. Each file ships next to a
+human-readable XML twin (<code>.hkPPsXml</code>).</p>
+
+<div class="infobox"><div class="ib-title">.hkPPs</div><table>
+  <tr><th>Category</th><td>Per-subtrack physics package</td></tr>
+  <tr><th>Container</th><td><a href="format-havok.html">Havok 5.5.0-r1 packfile</a></td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Magic</th><td><code>57 E0 E0 57</code></td></tr>
+  <tr><th>Root class</th><td><code>hkRootLevelContainer</code> (8 variants)</td></tr>
+  <tr><th>XML twin</th><td><code>.hkPPsXml</code> (Havok tagfile)</td></tr>
+  <tr><th>Location</th><td><code>Environments/Levels/&lt;lvl&gt;/Subtracks/&lt;A–D&gt;/</code></td></tr>
+  <tr><th>Count</th><td>19 binaries (+ 19 XML)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>Where it lives &amp; how it loads</h2>
+<p>One <code>.hkPPs</code> exists per <em>subtrack</em> (the A/B/C/D directional/seasonal variants of a
+level), beside the matching <code>.hkRBs</code> and the route data. The EBOOT loads it from the path
+template</p>
+<pre class="hex">environment|Subtracks/%s/%s.hkPPs</pre>
+<p>and reports it through the generic packfile loader (<code>HK PACKFILE %s: SIZE = %d kb</code>). The
+binaries are sizeable — Downtown subtrack&nbsp;A is <strong>2.88&nbsp;MB</strong> (3,021,456&nbsp;bytes;
+its XML twin is 11.3&nbsp;MB / 11,299,746&nbsp;bytes), versus the much smaller
+<a href="format-hkrbs.html">.hkRBs</a> at 140&nbsp;KB — because the pack carries the level's MOPP
+collision geometry in addition to the gameplay phantoms.</p>
+
+<div class="note">The <code>environment|</code> prefix is the resource-residency tag used throughout the
+build (see <a href="engine-resources.html">Resources &amp; Streaming</a>). <code>%s</code> is the
+subtrack letter / level name.</div>
+
+<h2>Container layout</h2>
+<p>Like every Havok asset in the game this is a standard packfile: a fixed
+<code>57 E0 E0 57</code> header, the <code>Havok-5.5.0-r1</code> version string, and the three serialized
+sections <code>__classnames__</code>, <code>__types__</code>, <code>__data__</code>. The header is byte-for-byte
+identical to <a href="format-phys.html">.phys</a>, <a href="format-hkcoll.html">.hkColl</a> and the other
+Havok files through offset <code>0x25</code> (verified identical across every environment
+<code>.hkPPs/.hkRBs/.hkRBXs/.hkHBXs</code> sample); the first byte that varies between files is the
+32-bit field at <code>0x24</code> — the Havok header's <code>contentsClassNameSectionOffset</code> (its
+value fits in 16 bits, so only the word at <code>0x26–0x27</code> changes). This is a class-name
+section offset, <em>not</em> a data or file size. See
+<a href="format-havok.html">Havok Packfiles</a> for the full header walk-through.</p>
+
+<pre class="hex">000000  57 e0 e0 57 10 c0 c0 10 00 00 00 1a 00 00 00 05   W..W............   magic + userTag(0x1a) + version(5)
+000010  04 00 01 01 00 00 00 03 00 00 00 02 00 00 00 00   ................   layoutRules · numSections=3 · contentsIdx=2
+000020  00 00 00 00 00 00 03 50 48 61 76 6f 6b 2d 35 2e   .......PHavok-5.   0x24: contentsClassNameSectionOffset=0x350
+000030  35 2e 30 2d 72 31 00 ff ff ff ff ff ff ff ff ff   5.0-r1..........   contentsVersion string @ 0x28
+000040  5f 5f 63 6c 61 73 73 6e 61 6d 65 73 5f 5f 00 00   __classnames__..   section table</pre>
+<p class="muted">First 0x50 of <code>Downtown/Subtracks/A/Downtown.hkPPs</code>. Bytes
+<code>0x00–0x25</code> are byte-identical across every <code>.hkPPs</code>, <code>.hkRBs</code>,
+<code>.hkRBXs</code> and <code>.hkHBXs</code> sample examined; the only varying header field is the
+<code>contentsClassNameSectionOffset</code> word at <code>0x26–0x27</code> (e.g. <code>0x350</code> for
+Downtown&nbsp;A and docks&nbsp;A, <code>0x2b0</code> for Downtown&nbsp;B). The ASCII
+<code>Havok-5.5.0-r1</code> begins at <code>0x28</code>.</p>
+
+<h2>Root container — the eight variants</h2>
+<p>Reading the <code>__data__</code> section of the XML twin, the
+<code>hkRootLevelContainer</code> exposes eight <code>namedVariants</code>. This is what makes the
+"Pack" a pack: a normal Havok scene would carry only <code>hkpPhysicsData</code>; Black Rock appends
+six custom <em>export user-data</em> containers that bind Havok objects back to game events.</p>
+
+<table class="struct">
+<thead><tr><th>#</th><th>className</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td>0</td><td><code>hkpPhysicsData</code></td><td>The physics world: an array of <code>hkpPhysicsSystem</code> (72 in Downtown&nbsp;A) holding rigid bodies, phantoms and collision shapes.</td></tr>
+<tr><td>1</td><td><code>HavokTriggerPhantomExportUserDataContainer</code></td><td>Binds each trigger phantom to a Catnip event name (see below).</td></tr>
+<tr><td>2</td><td><code>HavokTriggerSystemExportUserData</code></td><td>System-level wrapper for the trigger phantom system.</td></tr>
+<tr><td>3</td><td><code>HavokAreaOfEffectExportUserDataContainer</code></td><td>Explosion / force volumes with impulse + duration data.</td></tr>
+<tr><td>4</td><td><code>HavokAreaOfEffectSystemExportUserData</code></td><td>System-level wrapper for the AOE system.</td></tr>
+<tr><td>5</td><td><code>HavokAnimatedRigidBodyExportUserDataContainer</code></td><td>Keyframed / scripted moving bodies (drawbridges, gates, kinematic powerplay pieces).</td></tr>
+<tr><td>6</td><td><code>HavokAnimatedSystemExportUserDataContainer</code></td><td>System-level wrapper for the animated bodies.</td></tr>
+<tr><td>7</td><td><code>HavokAnimationContainerContainer</code></td><td>The <code>hkaAnimation</code> clips driving variant&nbsp;5 (Havok Animation, <a href="engine-middleware.html">Havok 5.5</a>).</td></tr>
+</tbody>
+</table>
+
+<h3>Trigger phantoms</h3>
+<p>Each <code>HavokTriggerPhantomExportUserData</code> record pairs a Havok phantom volume with a
+gameplay event. The container in Downtown&nbsp;A holds 37 of them; a typical record looks like:</p>
+<pre class="hex">&lt;hkobject&gt;
+  &lt;hkparam name="type"&gt;TRIGGER_PHANTOM_TYPE&lt;/hkparam&gt;
+  &lt;hkparam name="trigger"&gt;#0198&lt;/hkparam&gt;            &larr; ref to the hkpRigidBody/phantom
+  &lt;hkparam name="eventName"&gt;1249478979.1976132399&lt;/hkparam&gt;   &larr; Catnip event id pair
+  &lt;hkparam name="triggeredBy"&gt;&lt;/hkparam&gt;
+  &lt;hkparam name="triggeredByDelay"&gt;0.000000&lt;/hkparam&gt;
+&lt;/hkobject&gt;</pre>
+<p>The <code>eventName</code> values are the same dotted <code>&lt;crc&gt;.&lt;crc&gt;</code> hashed-name pairs
+used as rigid-body names (see <a href="format-hkrbs.html">.hkRBs</a>); they resolve into the
+<a href="format-triggers.html">Catnip trigger</a> graph that fires <a href="system-powerplay.html">powerplays</a>.</p>
+
+<h3>Area-of-Effect (explosion) volumes</h3>
+<p>The <code>HavokAreaOfEffectExportUserData</code> records (75 in Downtown&nbsp;A) describe the radial
+force volumes that throw cars during powerplay detonations. Confirmed fields:</p>
+<table class="struct">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>type</code></td><td>enum</td><td>Always <code>AREA_OF_EFFECT_TYPE</code> in samples.</td></tr>
+<tr><td><code>area</code></td><td>ref</td><td>The Havok phantom/shape the effect is bound to.</td></tr>
+<tr><td><code>eventName</code></td><td>string</td><td>Comma-separated list of Catnip event-id pairs that fire it.</td></tr>
+<tr><td><code>centerImpulse</code></td><td>float32_t</td><td>Force applied at the centre of the volume.</td></tr>
+<tr><td><code>boundaryImpulse</code></td><td>float32_t</td><td>Force at the boundary (falls off to here).</td></tr>
+<tr><td><code>delay</code></td><td>float32_t</td><td>Seconds before the impulse fires.</td></tr>
+<tr><td><code>looped</code></td><td>bool</td><td>Whether the AOE re-applies each frame.</td></tr>
+<tr><td><code>duration</code></td><td>float32_t</td><td>How long the volume stays active.</td></tr>
+</tbody>
+</table>
+<p>These map directly to the <a href="system-areaofeffects.html">Area of Effects</a> system and the
+EBOOT's <code>HavokAreaOfEffectExportUserDataContainer</code> class.</p>
+
+<h2>Collision geometry inside the pack</h2>
+<p>Beyond the gameplay phantoms, the <code>__data__</code> section also stores real collision shapes:
+<code>hkpMoppCode</code> (the MOPP mid-phase BV tree) paired with
+<code>hkpStorageExtendedMeshShape</code> (the triangle soup). This is the same MOPP+mesh pairing
+documented for <a href="format-hkcoll.html">.hkColl / .mainColl</a>; here it travels with the dynamic
+objects so a subtrack can be streamed as one physics unit.</p>
+
+<div class="tip">A quick way to tell the four environment-physics formats apart without reading the data
+is the root container's variant list: <code>.hkPPs</code> has <strong>8</strong> variants (triggers + AOE
++ animation), <code>.hkRBs</code> has <strong>4</strong> (furniture/single/compound bodies),
+<code>.hkRBXs</code> has <strong>3</strong> (respot boxes) and <code>.hkHBXs</code> has <strong>3</strong>
+(handling boxes).</div>
+
+<h2>Confidence</h2>
+<p><span class="badge ok">Confirmed</span> for the container format, root-variant list and the trigger /
+AOE record fields — every claim here is read straight from the XML twin and corroborated by the EBOOT
+class names and load path. The exact binary byte offsets of each custom user-data struct inside
+<code>__data__</code> are <span class="badge partial">Partial</span>: they are reconstructible from the
+<code>__types__</code> reflection but were verified through the XML rather than by hand-parsing the packed
+blob.</p>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-havok.html">Havok Packfiles</a> — shared <code>0x57E0E057</code> header &amp; sections</li>
+  <li><a href="format-hkrbs.html">Rigid Bodies (.hkRBs / .hkRBXs / .hkHBXs)</a> — the sibling environment-physics files</li>
+  <li><a href="format-hkcoll.html">Collision (.hkColl / .mainColl)</a> — MOPP + mesh collision detail</li>
+  <li><a href="system-areaofeffects.html">Area of Effects</a> — explosion forces &amp; handling effects</li>
+  <li><a href="system-powerplay.html">Powerplay System</a> — what the triggers/AOEs drive</li>
+  <li><a href="format-triggers.html">Triggers (.triggers)</a> &amp; <a href="data-catnip.html">Catnip Entity System</a></li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

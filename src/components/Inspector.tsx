@@ -2,10 +2,12 @@
 // Read-only MVP: shows the resolved handler, raw byte length, and (when a
 // handler parses cleanly) its one-line describe() summary.
 
-import { useMemo } from 'react';
-import { FileQuestion, Download } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { FileQuestion, Download, BookOpen, FileCheck2, RefreshCw } from 'lucide-react';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { ssCtx } from '@/lib/core/registry';
+import { docUrlForHandler, docUrlForName, docsRouteFor } from '@/lib/core/registry/docLinks';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { downloadBytes } from '@/lib/download';
@@ -45,6 +47,30 @@ export function Inspector() {
 		}
 	}, [handler, raw]);
 
+	// Wiki page for this resource: prefer the handler mapping, else the filename
+	// extension (covers loose resources that fell through to the Hex viewer).
+	const docUrl = useMemo(
+		() => docUrlForHandler(handler) ?? docUrlForName(fileName),
+		[handler, fileName],
+	);
+
+	// caps.write === true means writeRaw(parseRaw(bytes)) is byte-exact-proven —
+	// surface it as a badge + a "re-serialize and download" action.
+	const writable = !!handler?.caps?.write && typeof handler.writeRaw === 'function';
+	const [reserializeError, setReserializeError] = useState<string | null>(null);
+
+	const handleReserialize = () => {
+		if (!handler?.writeRaw || !raw) return;
+		setReserializeError(null);
+		try {
+			const model = handler.parseRaw(raw, ssCtx());
+			const out = handler.writeRaw(model, ssCtx());
+			downloadBytes(out, fileName);
+		} catch (err) {
+			setReserializeError(String((err as Error)?.message ?? err));
+		}
+	};
+
 	if (!selection) {
 		return (
 			<div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
@@ -83,7 +109,27 @@ export function Inspector() {
 				label="Raw size"
 				value={raw ? `${raw.byteLength.toLocaleString()} bytes` : '—'}
 			/>
-			<Row label="Handler" value={handler ? `${handler.name} (${handler.key})` : 'none'} />
+			<Row
+				label="Handler"
+				value={
+					handler ? (
+						<span className="inline-flex items-center gap-2">
+							{`${handler.name} (${handler.key})`}
+							{writable && (
+								<span
+									className="inline-flex items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-emerald-400"
+									title="caps.write — writeRaw(parseRaw(bytes)) round-trips byte-for-byte against real files"
+								>
+									<FileCheck2 className="h-3 w-3" />
+									writable
+								</span>
+							)}
+						</span>
+					) : (
+						'none'
+					)
+				}
+			/>
 			<Row label="Filename" value={<span className="font-mono text-xs">{fileName}</span>} />
 
 			<Button
@@ -97,6 +143,42 @@ export function Inspector() {
 				<Download className="h-4 w-4" />
 				Download
 			</Button>
+
+			{writable && (
+				<Button
+					variant="outline"
+					size="sm"
+					className="mt-2 w-full"
+					disabled={!raw}
+					onClick={handleReserialize}
+					title="Parse then re-serialize with the handler's writer (round-trips byte-for-byte for an unedited resource)"
+				>
+					<RefreshCw className="h-4 w-4" />
+					Download (re-serialized)
+				</Button>
+			)}
+
+			{reserializeError && (
+				<p className="mt-1 text-xs text-destructive">
+					Re-serialize failed: {reserializeError}
+				</p>
+			)}
+
+			{docUrl && (
+				<div className="mt-2 flex items-center gap-2">
+					<Button asChild variant="ghost" size="sm" className="flex-1 justify-start">
+						<Link to={docsRouteFor(docUrl)} title="Open this format's wiki page in the Docs pane">
+							<BookOpen className="h-4 w-4" />
+							Format docs
+						</Link>
+					</Button>
+					<Button asChild variant="ghost" size="sm" title="Open the wiki page in a new tab">
+						<a href={docUrl} target="_blank" rel="noreferrer">
+							↗
+						</a>
+					</Button>
+				</div>
+			)}
 
 			{handler && (
 				<>

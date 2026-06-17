@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FX Compiled (.fxc) — Split/Second RE Wiki</title>
+<meta name="description" content="Crayon2 compiled-effect container (.fxc): RSX/Cg vertex + fragment microcode plus the named constant/sampler symbol table, paired 1:1 with every .model and .shaders.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="FX Compiled (.fxc)" data-category="Formats · Geometry & Render">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>FX Compiled (.fxc)</h1>
+<p>The <code>.fxc</code> ("FX compiled") file is the <strong>compiled shader microcode</strong> half of the Crayon2
+material system. It holds the RSX vertex- and fragment-program binaries — the "clean shader" the
+<a href="format-shaders.html">.shaders</a> register-block sets patch — together with the named constant/sampler
+symbol table that says where each uniform lives. It sits beside the renderable's <a href="format-model.html">.model</a>
+and is paired <strong>exactly 1:1</strong> with its <a href="format-shaders.html">.shaders</a> twin (2357 of each on disk;
+there are slightly more <code>.model</code> files, 2425, since some meshes share a material set).</p>
+
+<div class="infobox"><div class="ib-title">.fxc</div><table>
+  <tr><th>Category</th><td>Geometry &amp; render</td></tr>
+  <tr><th>System</th><td>Crayon2 compiled effects</td></tr>
+  <tr><th>Contents</th><td>RSX vertex + fragment microcode</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Magic</th><td><code>00 46 58 43</code> "\0FXC"</td></tr>
+  <tr><th>Pairs with</th><td>.model + .shaders (1:1 with .shaders)</td></tr>
+  <tr><th>Count</th><td>2357 files (matches .shaders)</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span> header · <span class="badge raw">Opaque</span> microcode</td></tr>
+</table></div>
+
+<h2>Where it sits</h2>
+<p>The loader resolves three sibling paths for every body — <em>"can't find model,fxc or shaders for single body
+instance %s"</em> (eboot_strings.txt). The <code>.fxc</code> supplies the SPURS shader patcher's first DMA input,
+<code>info.mCleanShader</code> (see <a href="format-shaders.html">.shaders</a> for the full patch-job listing). In
+other words: <code>.fxc</code> = the program binary; <code>.shaders</code> = the relocation/patch table that maps engine
+uniform names onto the program's registers. The master copy of <em>every</em> combo is
+<code>global_shader_combos/global_shader_combos.fxc</code> (2.27 MB, 263 combos) — the übershader database referenced
+directly in the EBOOT as <code>data|global_shader_combos/global_shader_combos.fxc</code>.</p>
+
+<h2>Header (0x14 bytes + name)</h2>
+<p>The header mirrors the <a href="format-shaders.html">.shaders</a> header field-for-field, which is how the two are
+matched. All integers are big-endian.</p>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x0</td><td>0x4</td><td>char[4]</td><td>magic</td><td><code>"\0FXC"</code> (<code>00 46 58 43</code> — leading NUL byte). Constant across all 2357 samples (vehicle, wheel, env <code>materials.fxc</code>, global DB).</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>uint32_t</td><td>version</td><td><code>1</code> in every observed file. Format version.</td></tr>
+<tr><td>0x8</td><td>0x4</td><td>uint32_t</td><td>combo_count</td><td>Number of compiled shader/material combos. Verified <strong>equal to the count field of the paired <code>.shaders</code></strong> (Musclecar_01 = 23, _WheelBack = 9, global DB = 263).</td></tr>
+<tr><td>0xC</td><td>0x4</td><td>uint32_t</td><td>name_len</td><td>Length of the set-name string incl. terminator (<code>0x0B</code> = 11 here).</td></tr>
+<tr><td>0x10</td><td>name_len</td><td>char[]</td><td>set_name</td><td>The set-level CRC, e.g. <code>"0xe4249692"</code>. <strong>Byte-identical to the name in the paired <code>.shaders</code></strong> — this string is the join key between the .fxc and .shaders twins.</td></tr>
+</tbody>
+</table>
+
+<h3>Hex excerpt — header (Musclecar_01.fxc vs its .shaders)</h3>
+<pre class="hex">.fxc     000000  00 46 58 43 00 00 00 01 00 00 00 17 00 00 00 0b   .FXC  ......  ....   magic; ver=1; count=0x17(23); name_len=0x0B
+.fxc     000010  30 78 65 34 32 34 39 36 39 32 00 00              0xe4249692....       set_name "0xe4249692"
+.shaders 000000  53 48 44 52 00 00 00 06 00 00 00 17 00 00 00 0b   SHDR  ......  ....   same count 0x17; same name follows
+.shaders 000010  30 78 65 34 32 34 39 36 39 32 00 00              0xe4249692....       set_name "0xe4249692" (identical)</pre>
+
+<h2>Per-combo body</h2>
+<p>After the header, the file lays out <code>combo_count</code> compiled combos back-to-back. Each combo begins with a
+small <strong>constant/symbol table</strong> (a list of named uniforms with their register slots), then the
+<strong>RSX microcode</strong> for the vertex and fragment stages, terminated by an <code>"END"</code> tag. There is no
+top-level offset table; the constant table for combo <em>n</em> is what lets the patcher find combo <em>n</em>'s
+registers without walking the binary.</p>
+
+<h3>Constant / symbol table</h3>
+<p>Each combo opens with a <code>u32</code> symbol count followed by that many symbol records. Names seen at the head of a
+combo include the global engine uniforms <code>Trans</code>, <code>TransViewProj</code>, <code>NormalTrans</code>,
+<code>WorldCameraPos</code>, <code>WorldCameraRight</code>, <code>WorldCameraFront</code>, <code>WorldCameraUp</code>,
+<code>anim_frame_count</code>, <code>cloudshadow_Cloud_Shadow_MatU</code>/<code>MatV</code>,
+<code>lightscattering_*</code>, <code>shadowheightmap_*</code>, and the material-specific
+<code>VehiclePaintAndDamage_scrapePlane*</code> / <code>scrapeLevels*</code> set. Each record is roughly
+<code>{ several u32 metadata words; u32 strlen; char[] name }</code> and is <strong>immediately followed by the hardware
+register name it maps to</strong> — the constant-register tokens <code>C19</code>, <code>C20</code>, <code>C21</code>, …
+(e.g. <code>WorldCameraPos</code>→<code>C19</code>, <code>WorldCameraRight</code>→<code>C20</code>). The exact width of the
+metadata word group varies between the first entry and the rest, so it is left <span class="badge partial">Partial</span>.
+These are the same symbol names the <a href="format-shaders.html">.shaders</a> register blocks reference — confirming the
+two files describe one program from two angles.</p>
+
+<h3>RSX microcode</h3>
+<p>The vertex program declares its inputs by Cg attribute semantic — <code>ATTR0</code> →
+<code>i.position_half_float_0</code>, <code>ATTR1</code> → <code>i.half_float_0</code>, <code>ATTR2/3</code> → further
+half-float streams (matching the half-float vertex layout used by the <a href="format-model.html">.model</a>). Sampler
+bindings appear as <code>TEXUNIT0…</code> and output semantics as <code>COLOR0</code>. The bulk of each combo is then
+16-byte (4-word) NV40/RSX <strong>fragment-program instruction words</strong> — the recurring
+<code>04 18 00 00 0c b8 00 00 10 06 ff ff ff ff …</code> pattern is the opcode/dst/src encoding of RSX fragment
+microcode. The whole file is closed by the ASCII tag <code>"END"</code>.</p>
+
+<h3>Hex excerpt — fragment microcode + tail (Musclecar_01.fxc)</h3>
+<pre class="hex">004680  00 00 00 00 00 00 00 00 00 00 04 18 00 00 0c b8   ................   RSX fragment instr: 04 18 / 0c b8 …
+004690  00 00 10 06 ff ff ff ff 00 00 13 8e 00 00 00 00   ................   …10 06 / ffffffff (const-mask) …
+0046a0  00 00 00 00 00 00 00 00 00 00 10 01 ff ff ff ff   ................   next 16-byte instruction word
+…
+044500  65 69 67 68 74 6d 61 70 00 43 4f 4c 4f 52 30 00   eightmap.COLOR0.   "…heightmap"; output sem "COLOR0"
+044510  6d 61 69 6e 2e 63 6f 6c 6f 72 00 00 00 00 00 00   main.color......   entry point "main.color"
+044560  00 45 4e 44                                       .END               file terminator "END"</pre>
+
+<div class="warn">The RSX microcode itself is platform GPU bytecode (NV40/RSX fragment + vertex programs). Decoding
+individual opcodes is out of scope and marked <span class="badge raw">Opaque</span>; the container framing
+(header, per-combo symbol tables, the <code>ATTR*/TEXUNIT*/COLOR0/END</code> markers) is the documented part.</div>
+
+<h2>.fxc vs .shaders — division of labour</h2>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>—</td><td>—</td><td>file</td><td>.fxc</td><td>Compiled microcode ("clean shader") + symbol table. Microcode slots are <em>full</em>.</td></tr>
+<tr><td>—</td><td>—</td><td>file</td><td>.shaders</td><td>Register-block / patch tables only. Microcode <code>SDRS…SDRE</code> slots are <em>empty</em> (length 0).</td></tr>
+</tbody>
+</table>
+<p>Because the count and the set-name string are identical between the pair, you can validate a dump by checking those
+two fields agree. The übershader pair <code>global_shader_combos.{fxc,shaders}</code> (CRC <code>0xdfe85d60</code>,
+263 combos) is the authoritative library every per-car set is sliced from.</p>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="format-shaders.html">Shaders (.shaders / .shaderinst)</a> — the register-block / instance twin of this file.</li>
+<li><a href="format-model.html">Model (.model)</a> — geometry + half-float vertex streams the microcode consumes.</li>
+<li><a href="format-textures.html">Textures (.textures)</a> — the maps bound to the <code>TEXUNIT*</code> samplers.</li>
+<li><a href="engine-rendering.html">Rendering Pipeline</a> — Crayon2, deferred G-Buffer, SPU shader patching.</li>
+<li><a href="data-globalregs.html">Global Registry</a> — <code>global_shader_context</code> and default render config.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

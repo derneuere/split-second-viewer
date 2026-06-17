@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rigid Bodies (.hkRBs / .hkRBXs / .hkHBXs) — Split/Second RE Wiki</title>
+<meta name="description" content="The three environment rigid-body packfiles: destructible furniture/props (.hkRBs), respot boxes (.hkRBXs) and handling-modifier boxes (.hkHBXs) — Havok 5.5 packfiles with Black Rock export user-data.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Rigid Bodies (.hkRBs / .hkRBXs / .hkHBXs)" data-category="Formats · Physics (Havok)">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Rigid Bodies (.hkRBs / .hkRBXs / .hkHBXs)</h1>
+<p>Three closely-related <a href="format-havok.html">Havok 5.5 packfiles</a> carry the environment's
+rigid bodies, and the suffix tells you <em>which kind</em>. <code>.hkRBs</code> is the destructible
+furniture / smashable-prop set; <code>.hkRBXs</code> ("RB&nbsp;eXtra") holds the invisible
+<strong>respot boxes</strong>; <code>.hkHBXs</code> ("Handling-Box eXtra") holds the
+<strong>handling-modifier boxes</strong>. All three are ordinary packfiles whose root container wraps
+<code>hkpRigidBody</code> objects with Black Rock's custom <em>export user-data</em>, and all three ship
+with XML twins (<code>.hkRBsXml</code>, <code>.hkRBXsXml</code>, <code>.hkHBXsXml</code>).</p>
+
+<div class="infobox"><div class="ib-title">.hkRBs / .hkRBXs / .hkHBXs</div><table>
+  <tr><th>Category</th><td>Environment rigid bodies</td></tr>
+  <tr><th>Container</th><td><a href="format-havok.html">Havok 5.5.0-r1 packfile</a></td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Magic</th><td><code>57 E0 E0 57</code></td></tr>
+  <tr><th>Root class</th><td><code>hkRootLevelContainer</code></td></tr>
+  <tr><th>Body class</th><td><code>hkpRigidBody</code> (sig <code>0x3224de76</code>)</td></tr>
+  <tr><th>XML twins</th><td>one per file</td></tr>
+  <tr><th>Counts</th><td>19 RBs · 10 RBXs · 1 HBXs</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>The three suffixes at a glance</h2>
+<p>The EBOOT loads all three from explicit path templates, which also reveal where each lives:</p>
+<pre class="hex">environment|Subtracks/%s/%s.hkRBs      &larr; per-subtrack, beside .hkPPs
+environment|Physics/%s.hkRBXs          &larr; per-level
+environment|Physics/%s.hkHBXs          &larr; per-level</pre>
+<table class="struct">
+<thead><tr><th>Suffix</th><th>Meaning</th><th>Holds</th><th>Root variants</th></tr></thead>
+<tbody>
+<tr><td><code>.hkRBs</code></td><td>Rigid Bodies</td><td>Destructible furniture, smashable fences, signs, crates…</td><td>4</td></tr>
+<tr><td><code>.hkRBXs</code></td><td>Rigid Body eXtra (respot boxes)</td><td>Box volumes that detect crashes &amp; trigger respotting</td><td>3</td></tr>
+<tr><td><code>.hkHBXs</code></td><td>Handling-Box eXtra</td><td>Box volumes that limit speed / override surface material</td><td>3</td></tr>
+</tbody>
+</table>
+<div class="note">"RBXs / HBXs" are <strong>not</strong> hinge bodies. Despite the cluster-hint guess of
+"rigid / extra / hinge", the actual data shows the <code>X</code> stands for the auxiliary
+<em>eXport user-data</em> box volumes (respot &amp; handling). Hinge/ragdoll constraints
+(<code>hkpHingeConstraintData</code>, <code>hkpRagdollConstraintData</code>) do exist in the engine, but
+they live <em>inside</em> the relevant systems — there is no dedicated hinge-body file extension in the
+shipped data.</div>
+
+<h2>Shared container header</h2>
+<p>All three are the same Havok packfile as everything else in the
+<a href="format-havok.html">Havok cluster</a>: a constant <code>57 E0 E0 57</code> header, the
+<code>Havok-5.5.0-r1</code> version string, and the <code>__classnames__ / __types__ / __data__</code>
+sections. Bytes <code>0x00–0x25</code> are byte-identical to <a href="format-phys.html">.phys</a> and
+<a href="format-hkpps.html">.hkPPs</a>; the only varying header field is the Havok
+<code>contentsClassNameSectionOffset</code> at <code>0x24</code> (a 16-bit-sized value, so only the word
+at <code>0x26–0x27</code> changes). It is a class-name section offset, not a data/file size — the byte
+at <code>0x22</code> is always <code>00</code>.</p>
+
+<pre class="hex">000000  57 e0 e0 57 10 c0 c0 10 00 00 00 1a 00 00 00 05   W..W............   magic + userTag + version(5)
+000010  04 00 01 01 00 00 00 03 00 00 00 02 00 00 00 00   ................   layoutRules · numSections=3
+000020  00 00 00 00 00 00 01 9b 48 61 76 6f 6b 2d 35 2e   .......Havok-5.   0x24: contentsClassNameSectionOffset=0x19b
+000030  35 2e 30 2d 72 31 00 ff ff ff ff ff ff ff ff ff   5.0-r1..........   contentsVersion string @ 0x28
+0000d0  38 77 1f 8e 09 68 6b 43 6c 61 73 73 ... 09 43 6f   8w...hkClass..Co   ...CompoundBody_UD
+000110  6d 70 6f 75 6e 64 42 6f 64 79 5f 55 44 ...         mpoundBody_UD      &larr; classnames table</pre>
+<p class="muted">Header + start of <code>__classnames__</code> from
+<code>Downtown/Subtracks/A/Downtown.hkRBs</code> (verified bytes). The custom class name
+<code>CompoundBody_UD</code> appears in the classnames table — a fast fingerprint for an
+<code>.hkRBs</code>.</p>
+
+<h2>.hkRBs — destructible furniture &amp; props</h2>
+<p>This is the file most people mean by "the rigid bodies". The
+<code>hkpPhysicsData</code> holds one <code>hkpPhysicsSystem</code> per object instance — Downtown&nbsp;A
+has 20 systems with names like <code>wooden_crate_large</code>. Four root variants are present:</p>
+<table class="struct">
+<thead><tr><th>className</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td><code>hkpPhysicsData</code></td><td>The systems (one named <code>hkpPhysicsSystem</code> per prop) and their <code>hkpRigidBody</code>+shape.</td></tr>
+<tr><td><code>HavokFurnitureObjectExportUserData</code></td><td>Marks the static "furniture" body the props rest on (<code>furnitureBody</code> ref).</td></tr>
+<tr><td><code>SingleBody_UDContainer</code></td><td>Array of <code>SingleBody_UD</code> — one per single-piece destructible.</td></tr>
+<tr><td><code>CompoundBody_UDContainer</code></td><td>Array of <code>CompoundBody_UD</code> — one per multi-piece destructible.</td></tr>
+</tbody>
+</table>
+
+<h3>SingleBody_UD record</h3>
+<p>Each single-body record names a destructible instance and lists its physics body IDs. Confirmed from
+the XML twin:</p>
+<table class="struct">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>type</code></td><td>enum</td><td>Always <code>SBUD_EXPORT_TYPE</code>.</td></tr>
+<tr><td><code>family</code></td><td>uint32_t</td><td>Material/behaviour family (0,1,2 seen) — drives breakoff &amp; debris.</td></tr>
+<tr><td><code>breakability</code></td><td>uint32_t</td><td>How easily it shatters (0–3 seen; 0 = solid, 3 = fragile).</td></tr>
+<tr><td><code>instanceName</code></td><td>string</td><td>e.g. <code>wooden_crate_large</code>, <code>smashable_Fence_double_04_c</code>, <code>sign_small_01</code>.</td></tr>
+<tr><td><code>shapeKey</code></td><td>int32_t</td><td>Havok shape key for the body within the shared shape.</td></tr>
+<tr><td><code>bodyIds[]</code></td><td>uint32_t[]</td><td>Hashed IDs of the constituent broken pieces.</td></tr>
+<tr><td><code>bodyParentIds[]</code></td><td>uint32_t[]</td><td>Parent ID per piece (<code>0xFFFFFFFF</code> = root / no parent).</td></tr>
+</tbody>
+</table>
+<pre class="hex">&lt;hkobject name="#0562" class="SingleBody_UD"&gt;
+  &lt;hkparam name="type"&gt;SBUD_EXPORT_TYPE&lt;/hkparam&gt;
+  &lt;hkparam name="family"&gt;2&lt;/hkparam&gt;
+  &lt;hkparam name="breakability"&gt;3&lt;/hkparam&gt;
+  &lt;hkparam name="instanceName"&gt;wooden_crate_large&lt;/hkparam&gt;
+  &lt;hkparam name="bodyIds" numelements="7"&gt; 926042105 3729908428 … 6921164 &lt;/hkparam&gt;
+  &lt;hkparam name="bodyParentIds" numelements="7"&gt; 4294967295 … 4294967295 &lt;/hkparam&gt;
+&lt;/hkobject&gt;</pre>
+
+<h3>CompoundBody_UD record</h3>
+<p>Compound bodies are props made of several jointed pieces (e.g. <code>smashable_Fence_double_04_b</code>,
+<code>smashable_Fence_02</code>). They add a <code>numBodiesInSystem</code> count and store
+<code>breakabilities[]</code> / <code>families[]</code> <em>per piece</em>:</p>
+<table class="struct">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>type</code></td><td>enum</td><td>Always <code>CUD_EXPORT_TYPE</code>.</td></tr>
+<tr><td><code>instanceName</code></td><td>string</td><td>Instance name of the compound prop.</td></tr>
+<tr><td><code>numBodiesInSystem</code></td><td>uint32_t</td><td>Piece count in this compound.</td></tr>
+<tr><td><code>breakabilities[]</code></td><td>uint32_t[]</td><td>Per-piece breakability.</td></tr>
+<tr><td><code>families[]</code></td><td>uint32_t[]</td><td>Per-piece family.</td></tr>
+<tr><td><code>bodyIds[]</code> / <code>bodyParentIds[]</code></td><td>uint32_t[]</td><td>Piece IDs and parent links.</td></tr>
+<tr><td><code>shapeKey</code></td><td>int32_t</td><td>Shape key into the shared compound shape.</td></tr>
+</tbody>
+</table>
+<p>These two record types are exactly the <code>SingleBody_UD</code> / <code>CompoundBody_UD</code> classes
+the EBOOT references, and the engine's debug menu has matching <code>all.SingleBodies</code> /
+<code>all.CompoundBodies</code> resource managers plus "make furniture shape debris on load" tuning. This
+is Split/Second's smashable-scenery system, distinct from the powerplay-driven
+<a href="format-mcl.html">.mcl</a> prop collision.</p>
+
+<h2>.hkRBXs — respot boxes</h2>
+<p>Tiny by comparison (Downtown is 33&nbsp;KB). The root container exposes <strong>3</strong> variants:
+<code>hkpPhysicsData</code> (a single system named <code>respotBoxes_system</code>),
+<code>HavokRespotBoxExportUserDataContainer</code> and <code>HavokRespotBoxSystemExportUserData</code>.
+Each rigid body is an <code>hkpBvShape</code> wrapping an <code>hkpBoxShape</code> (an oriented box, e.g.
+<code>halfExtents (177.2 2.0 48.1 …)</code>) placed along the track. The user-data is minimal:</p>
+<table class="struct">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>type</code></td><td>enum</td><td><code>RESPOT_BOX_TYPE</code>.</td></tr>
+<tr><td><code>rigidBody</code></td><td>ref</td><td>The box body this entry annotates.</td></tr>
+<tr><td><code>forceCrash</code></td><td>bool</td><td>If <code>true</code>, entering the box counts as a crash and respots the car.</td></tr>
+</tbody>
+</table>
+<p>These drive the <a href="system-difficulty.html">respot / teleport</a> logic — the EBOOT class
+<code>cInstantRespotBox</code> and the "RespotBoxes/Debug Render" debug toggle confirm the use.</p>
+
+<h2>.hkHBXs — handling-modifier boxes</h2>
+<p>Same shape (box volumes, 3 root variants), but the user-data describes how a car's handling changes
+inside the volume. Only Powerplant ships one (33&nbsp;KB). The system is named
+<code>handlingModifierBoxes_system</code> and each <code>HandlingModifierBoxExportUserData</code> carries:</p>
+<table class="struct">
+<thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>type</code></td><td>enum</td><td><code>HANDLING_MOD_BOX_TYPE</code>.</td></tr>
+<tr><td><code>rigidBody</code></td><td>ref</td><td>The box body this entry annotates.</td></tr>
+<tr><td><code>limitSpeed</code></td><td>bool</td><td>Whether the box caps the car's speed.</td></tr>
+<tr><td><code>speedLimit</code></td><td>float32_t</td><td>The cap (e.g. 95.0, 85.0).</td></tr>
+<tr><td><code>overrideMaterial</code></td><td>uint32_t</td><td>Surface-material index forced while inside (e.g. 4).</td></tr>
+</tbody>
+</table>
+<pre class="hex">&lt;hkobject class="HandlingModifierBoxExportUserData"&gt;
+  &lt;hkparam name="type"&gt;HANDLING_MOD_BOX_TYPE&lt;/hkparam&gt;
+  &lt;hkparam name="rigidBody"&gt;#0065&lt;/hkparam&gt;
+  &lt;hkparam name="limitSpeed"&gt;true&lt;/hkparam&gt;
+  &lt;hkparam name="speedLimit"&gt;95.000000&lt;/hkparam&gt;
+  &lt;hkparam name="overrideMaterial"&gt;4&lt;/hkparam&gt;
+&lt;/hkobject&gt;</pre>
+<p>The EBOOT's "Handling Modifier Boxes" / "physics handlingboxes" debug groups and the
+<code>HandlingModifierBoxExportUserDataContainer</code> class match exactly. These are the off-track /
+slow-zone volumes that gently nudge handling without an explicit collision.</p>
+
+<h2>Confidence</h2>
+<p><span class="badge ok">Confirmed</span> — every record field above is read directly from the matching
+XML twin and cross-checked against EBOOT class names and load paths. The suffix meanings are derived
+from the data, not assumed. Exact in-packfile byte offsets of each user-data struct are
+<span class="badge partial">Partial</span> (they follow the <code>__types__</code> reflection but were
+confirmed via XML, not by hand-parsing the binary).</p>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-havok.html">Havok Packfiles</a> — shared header &amp; section layout</li>
+  <li><a href="format-hkpps.html">Physics Packs (.hkPPs)</a> — the big per-subtrack pack that ships alongside <code>.hkRBs</code></li>
+  <li><a href="format-hkcoll.html">Collision (.hkColl / .mainColl)</a> — static collision meshes</li>
+  <li><a href="format-mcl.html">Mesh Collision (.mcl)</a> — powerplay / prop collision</li>
+  <li><a href="system-difficulty.html">Difficulty &amp; Race Director</a> — respot / teleport behaviour (.hkRBXs)</li>
+  <li><a href="system-tracks.html">Tracks &amp; Levels</a> — subtracks &amp; environment pipeline</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

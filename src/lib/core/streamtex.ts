@@ -10,8 +10,8 @@
 // registry (acyclic rule).
 
 import {
-	decodeBcnSurface,
-	decodeArgb8888Surface,
+	decodeSurface,
+	mipChainSize,
 	type ParsedTextures,
 	type TextureDescriptor,
 	type DecodedTexture,
@@ -71,12 +71,7 @@ export function decodeStreamtexWithStub(
 	let cursor = 0;
 	for (const d of fullRes) {
 		const start = cursor;
-		let rgba: Uint8ClampedArray | null = null;
-		if (d.format === 'DXT1' || d.format === 'DXT5') {
-			rgba = decodeBcnSurface(payload, start, d.width, d.height, d.format);
-		} else if (d.format === 'A8R8G8B8') {
-			rgba = decodeArgb8888Surface(payload, start, d.width, d.height);
-		}
+		const { rgba, swizzled } = decodeSurface(payload, start, d);
 		out.push({
 			width: d.width,
 			height: d.height,
@@ -84,23 +79,13 @@ export function decodeStreamtexWithStub(
 			mips: d.mipCount,
 			rgba,
 			pixelStart: start,
+			name: d.name,
+			swizzled,
+			crc: d.crc,
 		});
 		// Advance by the full mip chain for this texture.
-		cursor += mipChainSizeOf(d);
+		cursor += mipChainSize(d.format, d.width, d.height, d.mipCount);
 		if (cursor >= payload.byteLength) break;
 	}
 	return out;
-}
-
-/** Full mip-chain byte size for a descriptor (block-aware). */
-function mipChainSizeOf(d: TextureDescriptor): number {
-	const bpb = d.format === 'DXT1' ? 8 : d.format === 'DXT5' ? 16 : 0;
-	let tot = 0;
-	for (let m = 0; m < d.mipCount; m++) {
-		const mw = Math.max(1, d.width >> m);
-		const mh = Math.max(1, d.height >> m);
-		if (bpb > 0) tot += Math.ceil(mw / 4) * Math.ceil(mh / 4) * bpb;
-		else if (d.format === 'A8R8G8B8') tot += mw * mh * 4;
-	}
-	return tot;
 }

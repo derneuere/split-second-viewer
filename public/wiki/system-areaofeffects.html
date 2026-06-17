@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Area of Effects & Handling — Split/Second RE Wiki</title>
+<meta name="description" content="How Split/Second explosions and powerplays apply forces to cars: the AreaOfEffects .params (Roll/Slowing/Spin impulses), per-target Self/Opponent/AI/AI-on-AI handling effects, and the effect-type profiles.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Area of Effects & Handling" data-category="Game Systems">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Area of Effects &amp; Handling</h1>
+<p>When a <a href="system-powerplay.html">powerplay</a> or scripted explosion goes off, the thing
+that actually shoves cars around is an <strong>Area of Effect</strong> (AoE). The AoE system applies
+physics impulses (Roll, Slowing, Spin) and timed handling penalties (loss of steering, powerslide,
+camera shake) to every car inside its radius — and crucially, it applies <em>different</em> effects
+depending on who you are relative to the blast: the player who fired it, the intended victim, an AI
+car, or an AI hit by another AI. All of it lives in three plaintext
+<a href="data-params.html">.params</a> files under <code>Deferred/AreaOfEffects/</code>, so this page
+is almost entirely <span class="badge ok">Confirmed</span> with real numbers.</p>
+
+<div class="infobox"><div class="ib-title">Area of Effects</div><table>
+  <tr><th>Category</th><td>Explosion / impulse force model</td></tr>
+  <tr><th>Data folder</th><td><code>Deferred/AreaOfEffects/</code></td></tr>
+  <tr><th>Files</th><td>3 (<code>EffectParams</code>, <code>GlobalParams</code>, <code>HandlingEffects</code>)</td></tr>
+  <tr><th>Impulse axes</th><td>Roll, Slowing, Spin</td></tr>
+  <tr><th>Effect profiles</th><td>7 named types</td></tr>
+  <tr><th>Targets</th><td>Self · Opponent · AI · AI-on-AI</td></tr>
+  <tr><th>Applied via</th><td>Timeline <code>AreaOfEffect</code> effect (Type 9)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>The three .params files</h2>
+<table>
+<tr><th>File</th><th>Root</th><th>What it controls</th></tr>
+<tr><td><code>GlobalParams.params</code></td><td><code>/AreaOfEffects/GlobalParameters</code></td><td>The base impulse magnitudes &amp; falloff every AoE scales from.</td></tr>
+<tr><td><code>HandlingEffects.params</code></td><td><code>/AreaOfEffects/Handling</code></td><td>The three impulse axes + four per-target handling-effect profiles.</td></tr>
+<tr><td><code>EffectParams.params</code></td><td><code>/AreaOfEffects/EffectParams</code></td><td>Seven named effect "recipes" that scale each subsystem (camera, handling, fire, props, crash) and toggle the danger zone.</td></tr>
+</table>
+
+<h2>Global parameters — the base force</h2>
+<p><code>GlobalParams.params</code> defines the baseline velocity/falloff an AoE imparts before any
+per-effect scaling. Verbatim:</p>
+
+<pre>/AreaOfEffects/GlobalParameters:
+    'a; Min Car Distance Factor'        = 0.75 (0.0, 1.0);
+    'b; Standard Velocity'              = 20.0 (0.0, 100.0);
+    'c; Standard Angular Velocity '     = 10.0 (0.0, 100.0);
+    'd; Standard Min force proportion ' = 0.2  (0.0, 1.0);
+    'e; Standard Up velocity multiplier ' = 1.0 (0.0, 10.0);</pre>
+
+<table>
+<tr><th>Param</th><th>Value</th><th>Meaning (interpretation)</th></tr>
+<tr><td>Min Car Distance Factor</td><td>0.75</td><td>Fraction of the radius below which a car is treated as "at the centre" for full force.</td></tr>
+<tr><td>Standard Velocity</td><td>20.0</td><td>Base linear velocity (m/s) imparted at full strength.</td></tr>
+<tr><td>Standard Angular Velocity</td><td>10.0</td><td>Base spin imparted at full strength.</td></tr>
+<tr><td>Standard Min force proportion</td><td>0.2</td><td>Floor — a car at the edge of the radius still gets ≥20% of the force.</td></tr>
+<tr><td>Standard Up velocity multiplier</td><td>1.0</td><td>Scales the upward (loft) component of the blast.</td></tr>
+</table>
+<div class="note">The "Min force proportion" of 0.2 means the falloff never reaches zero inside the
+radius — even a glancing blast nudges you, which is why AoE hits feel decisive rather than fizzling
+at the edges. <span class="badge theory">Theory</span> on the exact falloff curve; the magnitudes
+themselves are <span class="badge ok">Confirmed</span>.</div>
+
+<h2>The three impulse axes</h2>
+<p>At the bottom of <code>HandlingEffects.params</code>, the <code>/AreaOfEffects/Handling</code>
+group defines the three signed impulse magnitudes an AoE can apply, plus debug routing:</p>
+
+<pre>/AreaOfEffects/Handling:
+    'Test Forces on self temp hack' = false;
+    'a;Force Type'                  = false;
+    'b;Forced Effect Type'          = 'On Opponent';
+    'c; Vehicle Roll Impulse'    = 2000.0  (-10000.0, 10000.0);
+    'd; Vehicle Slowing Impulse' = 2000.0  (-50000.0, 50000.0);
+    'e; Vehicle Spin Impulse'    = 1500.0  (-50000.0, 50000.0);</pre>
+
+<table>
+<tr><th>Impulse</th><th>Value</th><th>Range</th><th>Effect on the car</th></tr>
+<tr><td>Vehicle Roll Impulse</td><td>2000.0</td><td>±10000</td><td>Rolls / tips the car about its forward axis.</td></tr>
+<tr><td>Vehicle Slowing Impulse</td><td>2000.0</td><td>±50000</td><td>Kills forward momentum (the "shove backwards").</td></tr>
+<tr><td>Vehicle Spin Impulse</td><td>1500.0</td><td>±50000</td><td>Yaws / spins the car about its vertical axis.</td></tr>
+</table>
+
+<p>The debug fields above let QA force every AoE to behave as one target type:
+<code>Force Type = true</code> plus <code>Forced Effect Type = 'On Opponent'</code> (other valid
+values map to the four profiles below), and <code>Test Forces on self temp hack</code> redirects the
+force onto the local car. Both are <code>false</code> in the shipping data.</p>
+
+<h2>Per-target handling effects</h2>
+<p>The same explosion is felt differently by different cars. <code>HandlingEffects.params</code>
+defines <strong>four handling-effect profiles</strong>, one per relationship to the blast. Each is a
+timed loss of control plus a crash-resistance factor:</p>
+
+<pre>/AreaOfEffects/Handling/HandlingEffect/Self Effect:
+    'Camera Shake Scale'      = 1.0  (0.0, 10.0);
+    'Crash Resistance Factor' = 0.5  (0.0, 1.0);
+    'Powerslide Time'         = 0.0  (0.0, 10.0);
+    'Steering Scale'          = 0.0  (0.0, 10.0);
+    'Steering Time'           = 0.0  (0.0, 10.0);</pre>
+
+<table>
+<tr><th>Profile</th><th>Camera Shake</th><th>Crash Resist</th><th>Powerslide&nbsp;Time</th><th>Steering Scale</th><th>Steering Time</th></tr>
+<tr><td><strong>Self Effect</strong><br>(the firer)</td><td>1.0</td><td>0.5</td><td>0.0</td><td>0.0</td><td>0.0</td></tr>
+<tr><td><strong>Opponent Effect</strong><br>(human victim)</td><td>1.0</td><td>0.75</td><td>0.5</td><td>0.0</td><td>0.0</td></tr>
+<tr><td><strong>AI Effect</strong><br>(player-on-AI)</td><td>0.0</td><td>0.85</td><td>5.0</td><td>1.0</td><td>3.0</td></tr>
+<tr><td><strong>AI On AI Effect</strong></td><td>0.0</td><td>0.2</td><td>2.0</td><td>1.0</td><td>0.5</td></tr>
+</table>
+
+<p>Reading the table:</p>
+<ul>
+  <li><strong>Crash Resistance Factor</strong> — higher = harder to wreck. The AI is tough when a
+  human hits it (0.85) but fragile when another AI hits it (0.2), which keeps the cinematic carnage
+  flowing in the pack without making the human's own kills feel cheap.</li>
+  <li><strong>Steering Scale / Steering Time</strong> are zero for both human profiles (the human
+  keeps steering control), but non-zero for AI (Scale 1.0, Time 3.0 s for player-on-AI) — the AI's
+  steering is deliberately wrenched so it visibly fishtails.</li>
+  <li><strong>Powerslide Time</strong> throws the target into a slide: 0.5 s for a human victim,
+  up to 5.0 s for an AI struck by the player.</li>
+  <li><strong>Camera Shake</strong> only matters for the camera-owning human cars (1.0); AI profiles
+  set it to 0.</li>
+</ul>
+
+<div class="tip">"Self Effect" exists because you can be caught in your own blast — the firer still
+gets shake (1.0) and a 0.5 crash-resistance, but keeps full steering. Whether you can actually wreck
+yourself is separately gated by <code>allow_self_kills</code> (see effect profiles below) and the
+mode flag <code>RaceSetup/Powerplays/Allow trigger even if own player could be a victim</code>.</div>
+
+<h2>Effect-type profiles (recipes)</h2>
+<p><code>EffectParams.params</code> defines <strong>seven named effect types</strong>. Each is a set
+of 0–1 proportions and scales that say "for this kind of detonation, how much of each subsystem do we
+apply?" — camera, handling slip/impulse, fire, props, crash — plus two booleans. A
+<a href="format-timeline.html">timeline</a>'s <code>AreaOfEffect</code> effect names one of these via
+<code>area_of_effect_type="…"</code>, then can override any field inline.</p>
+
+<table>
+<tr><th>Field</th><th>Controls</th></tr>
+<tr><td><code>camera_radius_proportion</code> / <code>camera_time_proportion</code></td><td>How much of the camera-effect radius / duration this type uses.</td></tr>
+<tr><td><code>camera_shake_scale</code> / <code>camera_shake_time</code></td><td>Shake intensity / duration (seconds).</td></tr>
+<tr><td><code>handling_slip_radius_proportion</code> / <code>…_time_proportion</code> / <code>handling_slip_scale</code></td><td>Reach, duration and strength of the loss-of-grip effect.</td></tr>
+<tr><td><code>handling_impulse_scale</code></td><td>Multiplier on the Roll/Slowing/Spin impulses above.</td></tr>
+<tr><td><code>fire_radius_proportion</code> / <code>fire_time_proportion</code> / <code>set_car_on_fire_time</code></td><td>Fire reach/duration and how long a hit car burns.</td></tr>
+<tr><td><code>prop_radius_proportion</code> / <code>prop_time_proportion</code> / <code>hit_props_scale</code></td><td>Reach/duration/strength applied to physics props (debris, barriers).</td></tr>
+<tr><td><code>crash_radius_proportion</code> / <code>crash_time_proportion</code></td><td>Reach/window in which the blast can force a wreck.</td></tr>
+<tr><td><code>allow_self_kills</code></td><td>May the firer be wrecked by it. (All ship <code>false</code>.)</td></tr>
+<tr><td><code>disable_danger_zone</code></td><td>Make the effect non-lethal spectacle (skips victim targeting).</td></tr>
+</table>
+
+<h3>The seven types at a glance</h3>
+<p>Selected confirmed values (Crash · Standard show the lethal cases; the rest are FX-only or
+prop-only):</p>
+
+<table>
+<tr><th>Effect type</th><th>shake&nbsp;scale&nbsp;/&nbsp;time</th><th>handling slip / impulse</th><th>crash radius / time</th><th>hit_props_scale</th><th>danger zone</th></tr>
+<tr><td><code>Crash</code></td><td>1.0 / 2.0</td><td>1.0 / 1.0</td><td>1.0 / 1.0</td><td>1.0</td><td>on</td></tr>
+<tr><td><code>Standard</code></td><td>1.0 / 2.0</td><td>1.0 / 1.0</td><td>0.6 / 0.5</td><td>1.0</td><td>on</td></tr>
+<tr><td><code>Standard_NonCrash</code></td><td>1.0 / 2.0</td><td>1.0 / 1.0</td><td>0.0 / 0.0</td><td>1.0</td><td>on</td></tr>
+<tr><td><code>NonFatalExplosion</code></td><td>0.0 / 0.0</td><td>0.0 / 0.0</td><td>0.0 / 0.0</td><td>1.0</td><td><strong>off</strong></td></tr>
+<tr><td><code>Visual_effects_only</code></td><td>1.0 / 2.0</td><td>0.0 / 0.0</td><td>0.0 / 0.0</td><td>0.0</td><td>on</td></tr>
+<tr><td><code>Wakeup_physics_props</code></td><td>0.0 / 0.0</td><td>0.0 / 0.0</td><td>0.0 / 0.0</td><td>0.0099999</td><td><strong>off</strong></td></tr>
+<tr><td><code>depth_charge</code></td><td>0.0 / 0.0</td><td>0.0 / 0.0</td><td>0.0 / 0.0</td><td>0.6499999</td><td><strong>off</strong></td></tr>
+</table>
+
+<p>The pattern is clear: <code>Crash</code> is the maximal lethal blast (full crash window),
+<code>Standard</code> tones the crash window down to 0.6 radius / 0.5 time so it still kills but with
+a tighter sweet spot, and the rest are deliberately defanged —
+<code>Visual_effects_only</code> keeps the camera shake but zeroes handling, crash and props;
+<code>Wakeup_physics_props</code> / <code>depth_charge</code> only nudge nearby physics props
+(<code>hit_props_scale</code> 0.01 / 0.65) and switch the danger zone off entirely. Note that
+<code>NonFatalExplosion</code>, <code>Wakeup_physics_props</code> and <code>depth_charge</code> are
+the three profiles that set <code>disable_danger_zone = true</code>, and every profile ships with
+<code>allow_self_kills = false</code>.</p>
+
+<pre>/AreaOfEffects/EffectParams/Standard:
+    'f; camera_shake_scale'              = 1.0;
+    'g; camera_shake_time'              = 2.0;
+    'j; handling_slip_scale'            = 1.0;
+    'k; handling_impulse_scale'         = 1.0;
+    'r; crash_radius_proportion'        = 0.6;
+    's; crash_time_proportion'          = 0.5;
+    't; allow_self_kills'               = false;
+    'u; disable_danger_zone'            = false;</pre>
+
+<h2>How a timeline invokes an AoE</h2>
+<p>The link between a powerplay and these numbers is the timeline. Inside a
+<code>Powerplays/Timelines/*_T.xml</code>, an effect with <code>Effect_Name="AreaOfEffect"</code> and
+<code>Effect_Type="9"</code> names a type and may override individual fields. From
+<code>CarExplode_1_T.xml</code>:</p>
+
+<pre>&lt;TimeLine_Effect Effect_Name="AreaOfEffect" Effect_Type="9"
+   area_of_effect_type="Standard"
+   camera_shake_scale="1.0" camera_shake_time="2.0"
+   handling_slip_radius_proportion="1.0" handling_impulse_scale="1.0"
+   crash_radius_proportion="0.5" crash_time_proportion="0.0"
+   track_damage_radius_proportion="1.0" track_damage_intensity="1.0"
+   allow_self_kills="false" disable_danger_zone="false" allow_player_kills="false"&gt;
+  &lt;Effect_Transform&gt; &lt;Row0 X="50" .../&gt; ... &lt;/Effect_Transform&gt;
+  &lt;Effect_Timer Timer_Start="0.0" Timer_End="2.04" Effect_Stretch="1.0"/&gt;
+&lt;/TimeLine_Effect&gt;</pre>
+
+<p>Three things to notice: the <code>Effect_Transform</code> scales the AoE box (here 50&nbsp;units on
+each axis — the radius), the <code>Effect_Timer</code> gives the active window
+(0&nbsp;→&nbsp;2.04&nbsp;s), and the timeline adds fields not in the base profile —
+<code>track_damage_*</code> (cosmetic track scorching) and <code>allow_player_kills</code>. Across the
+106 timelines in the build the AoE type usage is 14&nbsp;×&nbsp;<code>Standard</code>,
+11&nbsp;×&nbsp;<code>custom_type</code> (fully inline-tuned), 1&nbsp;×&nbsp;<code>Wakeup_physics_props</code>.</p>
+
+<h2>The crash decision &amp; intensity</h2>
+<p>Being inside the crash radius/time window doesn't always wreck you — the
+<a href="system-gamemodes.html">game mode</a> decides. <code>RaceSetup/Powerplays/AreaOfEffect</code>
+in each mode carries <code>Instant crashes enabled</code> (true in ChampRace) and an
+<code>Always kill</code> override. For modes using accumulated damage, an intensity model is provided:</p>
+
+<pre>/RaceSetup/Logic/AreaOfEffectKills:
+    Enabled                  = false;
+    IntensityPerAOEHit       = 0.6  (0.0, 2.0);
+    IntensityDecayRate       = 0.5  (0.0, 5.0);
+    MaxIntensityBeforeCrash  = 2.0  (0.0, 10.0);</pre>
+
+<p>Here each AoE hit adds 0.6 intensity, decaying at 0.5/s; reaching 2.0 forces the crash — so ~4
+quick hits, or fewer if they land in a burst. The post-crash recovery is driven by
+<code>RaceSetupStatic/Logic/Victim</code> (<code>Area of Effect Crash Timer = 3.0 s</code>) and the
+mode's <code>RaceSetup/WreckSequence</code> (<code>Wreck time 3.0 s</code>, AI 2.0 s,
+post-crash rolling restart 70 mph). The <a href="system-difficulty.html">Respot / Catchup</a> system
+then re-introduces wrecked cars.</p>
+
+<div class="warn">Several damage paths feed the same crash bookkeeping —
+<code>Hitbox Crash Timer</code> (direct vehicle contact) vs. <code>Area of Effect Crash Timer</code>
+(blast) are tracked separately (both 3.0 s in this build). The exact priority when both fire in the
+same frame is not pinned down here. <span class="badge partial">Partial</span></div>
+
+<h2>Where the targets come from</h2>
+<p>Which of the four handling profiles a given car receives is decided by the
+<a href="system-powerplay.html">powerplay controller</a> from the firer/victim relationship and the
+danger-zone test, not by the AoE data itself. The AoE files supply the magnitudes; the powerplay
+system supplies the routing (Self / Opponent / AI / AI-on-AI) and whether the danger zone is even
+consulted (<code>disable_danger_zone</code>). The two systems are therefore best read together — see
+the <a href="system-powerplay.html">Powerplay System</a> page for the targeting and trigger side.</p>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="system-powerplay.html">Powerplay System</a> — the mechanic these forces serve.</li>
+  <li><a href="format-timeline.html">Timelines (.timelineInfo)</a> — the <code>AreaOfEffect</code> effect (Type 9) carrier.</li>
+  <li><a href="format-powerplays.html">Powerplays (.powerplays)</a> &amp; <a href="format-triggers.html">Triggers (.triggers)</a>.</li>
+  <li><a href="data-catnip.html">Catnip Entity System</a> — particle <code>.cat</code> effects played alongside the AoE.</li>
+  <li><a href="system-cameras.html">Cameras &amp; Director</a> — camera shake &amp; takedown sequences.</li>
+  <li><a href="system-difficulty.html">Difficulty &amp; Race Director</a> — respot/wreck recovery after a kill.</li>
+  <li><a href="system-gamemodes.html">Game Modes</a> — per-mode crash &amp; AoE-kill toggles.</li>
+  <li><a href="data-params.html">.params Tuning System</a> — the file format quoted throughout.</li>
+  <li><a href="engine-overview.html">Engine Architecture</a> — where Catnip, the physics layer and the gameplay systems sit.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

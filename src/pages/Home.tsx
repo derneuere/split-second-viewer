@@ -4,7 +4,8 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FolderOpen, Package, UploadCloud } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { BookOpen, FolderOpen, Package, UploadCloud } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useWorkspace, findStreamTwin } from '@/context/WorkspaceContext';
@@ -117,10 +118,34 @@ export function Home() {
 				</CardContent>
 			</Card>
 
+			<Card className="border-border">
+				<CardContent className="flex items-center gap-4 p-6">
+					<BookOpen className="h-8 w-8 shrink-0 text-accent" />
+					<div className="flex-1">
+						<p className="font-medium">Reverse-Engineering Wiki</p>
+						<p className="text-sm text-muted-foreground">
+							The bundled Split/Second RE reference (devkit{' '}
+							<code className="text-accent">NPXX00575</code>): engine internals, every
+							binary file format, and the game systems. Each decoded resource links to its
+							format page from the Inspector.
+						</p>
+					</div>
+					<Button asChild variant="outline">
+						<Link to="/docs">
+							<BookOpen className="mr-1" /> Open Docs
+						</Link>
+					</Button>
+				</CardContent>
+			</Card>
+
 			<div className="text-xs text-muted-foreground">
 				Architecture: a registry-first, UI-agnostic core (handlers + .ark parser)
 				exercised headlessly by the CLI (<code>npm run ark</code>) and vitest. See{' '}
-				<code>README.md</code> and the Split/Second RE wiki for format details.
+				<code>README.md</code> and the{' '}
+				<Link to="/docs" className="text-accent underline">
+					Split/Second RE wiki
+				</Link>{' '}
+				for format details.
 			</div>
 		</div>
 	);

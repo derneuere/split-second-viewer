@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Game Modes — Split/Second RE Wiki</title>
+<meta name="description" content="Every Split/Second game mode and its real configuration, decoded from the GameLogic/GameModes/*.params tuning files of the NPXX00575 devkit build.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Game Modes" data-category="Game Systems">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Game Modes</h1>
+<p>Split/Second is built on a single, enormous race-setup schema. Every game mode — Race, Elimination,
+Survival, Detonator, and the boss modes — is the <em>same</em> <code>/RaceSetup</code> registry tree with
+different switches flipped. There is no separate "mode" code path: a mode is just a
+<a href="data-params.html">.params</a> file under <code>GameLogic/GameModes/</code> that enables one of a
+handful of "End Conditions", picks a scoring profile, and tunes the power-bar / scoring economy. This page
+documents each shipped mode with the <strong>real configured values</strong> read from the
+<code>NPXX00575</code> devkit build.</p>
+
+<div class="infobox"><div class="ib-title">GameLogic/GameModes</div><table>
+  <tr><th>Category</th><td>Game logic / mode config</td></tr>
+  <tr><th>Format</th><td>plaintext <a href="data-params.html">.params</a></td></tr>
+  <tr><th>Root section</th><td><code>/RaceSetup</code></td></tr>
+  <tr><th>Files</th><td>22 <code>.params</code></td></tr>
+  <tr><th>Registry roots</th><td><code>RaceSetup</code> · <code>RaceSetupStatic</code> · <code>RaceSetupOverlay</code></td></tr>
+  <tr><th>Engine name strings</th><td><code>TEXT_GAMEMODE_NAME_*</code></td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>How a mode is defined</h2>
+<p>Each mode file opens with <code>!directory: /RaceSetup</code> and then sets dozens of grouped sections.
+The same skeleton appears in every file; what differs is which switches are <code>true</code>. The most
+important groups are:</p>
+<ul>
+  <li><code>/RaceSetup/Cameras → 'Game Mode Name'</code> — the internal mode tag (e.g. <code>Elimination</code>,
+      <code>Demolition</code>, <code>TimeTrial</code>, <code>Helicopter</code>).</li>
+  <li><code>/RaceSetup/AI → 'Difficulty parameters file'</code> — which AI difficulty profile to load
+      (<code>Elimination</code>, <code>Demolition</code>, <code>Champ</code>, <code>'001Default'</code> …),
+      handed to the <a href="system-ai.html">SSAI</a> system.</li>
+  <li><code>/RaceSetup/Logic/EndGame</code> — a set of mutually-exclusive <em>End Condition</em> booleans
+      (Laps, Elimination, Countdown, Lives, Wrecks, Last&nbsp;x&nbsp;Num&nbsp;Player, Nemesis&nbsp;Destroyed,
+      Tug-Of-War) that decide when the race terminates.</li>
+  <li><code>/RaceSetup/Scoring → 'Scoring GameMode Used'</code> — the scoring profile name reported to
+      <a href="system-scoring.html">scoring</a> / telemetry.</li>
+  <li><code>/RaceSetup/Powerbar</code> and <code>/RaceSetup/Scoring/*</code> — the power and points economy.</li>
+  <li><code>/RaceSetup/Nemesis</code> — for boss modes, the wave roster
+      (<code>Selection0…Selection23</code>) referencing <a href="system-nemesis.html">Nemesis templates</a>.</li>
+</ul>
+
+<div class="note">The eboot exposes one localisation key per mode:
+<code>TEXT_GAMEMODE_NAME_RACE</code>, <code>_ELIMINATION</code>, <code>_DEMOLITION</code>,
+<code>_TIMETRIAL</code>, <code>_HELICOPTER</code>, <code>_HELICOPTERMULTI</code>,
+<code>_NEMESIS</code>, <code>_NEMESISMULTI</code> (plus the generic <code>TEXT_GAMEMODE_NAME_%s</code> /
+<code>_%s_HELP</code>). These are the eight <em>player-facing</em> modes; the other <code>.params</code> files
+are setup variants (Quick Race, Champ, Car Capture, Learning, Tutorial, Development).</div>
+
+<h2>Mode roster</h2>
+<p>All 22 files in <code>GameLogic/GameModes/</code>, with size and the headline switches that distinguish them.
+The "Detonator" retail mode is internally <code>TimeTrial</code> (single hot-lap against the clock through
+live powerplays); "Survival" / "Air Strike" are the Helicopter modes.</p>
+
+<table>
+<tr><th>File</th><th>Size</th><th>Game Mode Name</th><th>End condition</th><th>Difficulty profile</th><th>Scoring profile</th></tr>
+<tr><td><code>QuickRace.params</code></td><td>33,991</td><td><em>(unset)</em></td><td>Laps (3)</td><td><code>001Default</code></td><td>Time Trial</td></tr>
+<tr><td><code>ChampRace.params</code></td><td>35,107</td><td><em>(unset)</em></td><td>Laps (3)</td><td><code>Champ</code></td><td>Time Trial</td></tr>
+<tr><td><code>Elimination.params</code></td><td>38,475</td><td><code>Elimination</code></td><td>Elimination + Last&nbsp;x&nbsp;Player</td><td><code>Elimination</code></td><td>Time Trial</td></tr>
+<tr><td><code>TimeTrial.params</code> <span class="badge ok">Detonator</span></td><td>44,587</td><td><code>TimeTrial</code></td><td>Laps (1, forced)</td><td>—</td><td>Time Trial</td></tr>
+<tr><td><code>Demolition.params</code></td><td>40,034</td><td><code>Demolition</code></td><td>Laps + Tug-Of-War</td><td><code>Demolition</code></td><td>Time Trial</td></tr>
+<tr><td><code>CarCapture1–4.params</code></td><td>16,669 ea.</td><td><code>CarCapture1…4</code></td><td>Laps</td><td><code>001Default</code></td><td>—</td></tr>
+<tr><td><code>HelicopterRevenge.params</code></td><td>21,703</td><td><code>Helicopter</code></td><td>Lives + Nemesis Destroyed</td><td>—</td><td>Chopper Revenge</td></tr>
+<tr><td><code>HelicopterSurvival.params</code></td><td>45,467</td><td><code>Helicopter</code></td><td>Lives + Nemesis Destroyed</td><td><em>(unset)</em></td><td>Chopper Survival</td></tr>
+<tr><td><code>Nemesis.params</code></td><td>45,167</td><td><code>Nemesis</code></td><td>Lives</td><td><code>Demolition</code></td><td>Nemesis Trucks</td></tr>
+<tr><td><code>NemesisMulti.params</code></td><td>23,712</td><td><code>Nemesis</code></td><td>Lives</td><td><code>Demolition</code></td><td>Nemesis Trucks</td></tr>
+<tr><td><code>NemesisSplitScreen.params</code></td><td>45,172</td><td><code>Nemesis</code></td><td>Lives</td><td><code>Demolition</code></td><td>Nemesis Trucks</td></tr>
+<tr><td><code>LearningAll.params</code></td><td>22,497</td><td><em>(empty)</em></td><td>Laps (2048)</td><td><em>(empty)</em></td><td>Time Trial</td></tr>
+<tr><td><code>LearningDrift.params</code></td><td>21,944</td><td><em>(empty)</em></td><td>Laps (2048)</td><td><em>(empty)</em></td><td>Time Trial</td></tr>
+<tr><td><code>LearningHazzards.params</code></td><td>22,508</td><td><em>(empty)</em></td><td>Laps (2048)</td><td><em>(empty)</em></td><td>Time Trial</td></tr>
+<tr><td><code>LearningJustRecord.params</code></td><td>22,470</td><td><em>(empty)</em></td><td>Laps (2048)</td><td><em>(empty)</em></td><td>Time Trial</td></tr>
+<tr><td><code>Tutorial.params</code></td><td>40,573</td><td><em>(empty)</em></td><td>Laps (3)</td><td><code>Demolition</code></td><td>Time Trial</td></tr>
+<tr><td><code>Development.params</code></td><td>16,587</td><td><em>(unset)</em></td><td>Laps</td><td><code>001Default</code></td><td>—</td></tr>
+<tr><td><code>UnlockVid.params</code></td><td>23,842</td><td><em>(empty)</em></td><td>Laps</td><td><code>001Default</code></td><td>Time Trial</td></tr>
+<tr><td><code>AISkillTests.params</code></td><td>23,130</td><td><em>(empty)</em></td><td>Laps</td><td><code>001Default</code></td><td>Time Trial</td></tr>
+</table>
+
+<div class="tip">"Learning" files are AI-recording sessions, not playable modes:
+<code>/RaceSetup/LDC → IsLearning = true</code> and <code>IsRecording = true</code>, with
+<code>'Number of Laps' = 2048</code> so the AI laps forever while the
+<a href="system-ai.html">LDC</a> driving tables are captured. Every other mode keeps both
+<code>false</code>.</div>
+
+<h2>The End-Game switchboard</h2>
+<p>The end of a race is decided by <code>/RaceSetup/Logic/EndGame</code>. Exactly one of the
+<code>End Condition *</code> booleans is normally <code>true</code>. This is the single most useful field for
+telling modes apart:</p>
+
+<table>
+<tr><th>End Condition</th><th>Used by</th><th>Meaning</th></tr>
+<tr><td><code>End Condition Laps</code></td><td>Race, Champ, Demolition, Detonator, Car Capture</td><td>Race ends after N laps (see <code>/RaceSetup/Logic/Laps</code>).</td></tr>
+<tr><td><code>End Condition Elimination</code></td><td>Elimination</td><td>Last-placed car is dropped on a timer; also sets <code>End Condition Last x Num Player = true</code>.</td></tr>
+<tr><td><code>End Condition Lives</code></td><td>Helicopter (Revenge/Survival), Nemesis</td><td>Race ends when the player runs out of lives.</td></tr>
+<tr><td><code>End Condition Countdown</code></td><td><em>(available, off by default)</em></td><td>Race ends when a shared countdown hits zero.</td></tr>
+<tr><td><code>End Condition Wrecks</code></td><td><em>(available, off by default)</em></td><td>Race ends after N wrecks (<code>Number_of_wrecks</code>).</td></tr>
+<tr><td><code>End Condition Tug-Of-War</code></td><td>Demolition</td><td>Score-based tug-of-war between teams/players.</td></tr>
+<tr><td><code>End Condition Nemesis Destroyed</code></td><td>Helicopter (Revenge/Survival)</td><td>Race ends when the boss vehicle is killed; both chopper modes set this <code>true</code> alongside <code>Lives</code>.</td></tr>
+<tr><td><code>End Condition Last x Num Player</code></td><td>Elimination</td><td>Ends when <code>'Num Players To End Race'</code> remain.</td></tr>
+</table>
+
+<h2>Race / Quick Race</h2>
+<p><code>QuickRace.params</code> is the canonical "everything on, nothing special" profile and a good baseline
+for the schema. Three laps, eight players, full powerplay system, scoring profile reported as
+<code>Time Trial</code>.</p>
+<pre>/RaceSetup/AI:
+	'Difficulty parameters file' = '001Default';
+/RaceSetup/FinishCondition:
+	Number_of_laps = 3 (0, 128);
+/RaceSetup/Logic/Laps:
+	Enabled = true;
+	'Number of Laps' = 3 (1, 2048);
+/RaceSetup/Players:
+	'Max players' = 8 (1, 8);
+/RaceSetup/Powerbar:
+	'Power required to activate level 1 (percentage)' = 33 (0, 100);
+	'Power required to activate level 2(percentage)' = 66 (0, 100);
+	'Power required to activate level 3(percentage)' = 100 (0, 100);</pre>
+<p>The three <a href="system-powerplay.html">powerplay</a> levels unlock at <strong>33% / 66% / 100%</strong>
+of the power bar — these thresholds are shared by virtually every mode. The Race profile fires the four
+"GameEvent" powerplays on intro / start / lap / end (<code>PA13_StartGloryMovie_P</code>,
+<code>PGE_Start_P</code>, <code>PGE_Lap_P</code>, <code>PGE_End_P</code>).</p>
+
+<h3>Champ Race</h3>
+<p><code>ChampRace.params</code> is the season/championship profile. It is identical to Quick Race apart from
+the difficulty file (<code>Champ</code>) and a tighter starting AI-skill band:</p>
+<pre>/RaceSetup/AI:
+	'Difficulty parameters file' = Champ;
+/RaceSetup/DCB/AI Skill:
+	'01;Initial Range Min Limit' = 0.4 (0.0, 1.0);
+	'02;Initial Range Max Limit' = 0.4 (0.0, 1.0);
+	'03;Final Range Min Limit' = 0.1 (0.0, 1.0);
+	'04;Final Range Max Limit' = 0.2 (0.0, 1.0);</pre>
+<p>It also tweaks the overall-rank ladder (<code>/RaceSetup/Logic/Ranking</code>): Rank 0 = Disqualified,
+Rank 1 = Distance Raced, Rank 2 = Total Race Time.</p>
+
+<h2>Elimination</h2>
+<p>The back-of-the-pack car is eliminated on a recurring timer. <code>Elimination.params</code> turns on the
+time-based eliminator and the danger-state HUD that drives the on-screen countdown:</p>
+<pre>/RaceSetup/Logic/Elimination/Time Based:
+	'Elimination Time 1' = 60.0 (0.0, 180.0);
+	'Elimination Time 2' = 20.0 (0.0, 180.0);
+	'Elimination Time 3' = 20.0 ... 'Elimination Time 7' = 20.0;
+	Enabled = true;
+/RaceSetup/Logic/DangerState:
+	Enabled = true;
+	'Use EliminationTimer' = true;
+/RaceSetup/Logic/EndGame:
+	'End Condition Elimination' = true;
+	'End Condition Last x Num Player' = true;</pre>
+<p>So the first elimination fires after <strong>60&nbsp;s</strong>, then every <strong>20&nbsp;s</strong>
+thereafter. The HUD lines are pre-wired to <code>ELIMINATION_TARGET_POSITION</code> and
+<code>ELIMINATION_TIMER</code> (both also appear as eboot format strings). A position-based eliminator exists
+too (<code>Position Based</code>: target 6th lap 1, 3rd lap 2, 1st lap 3) but ships disabled.</p>
+
+<h2>Detonator (TimeTrial)</h2>
+<p>The retail "Detonator" mode is internally <code>TimeTrial</code>: a single timed lap where the player
+detonates live <a href="system-powerplay.html">powerplays</a> against the clock. Its tell-tale switch is the
+forced single lap:</p>
+<pre>/RaceSetup/Cameras:
+	'Game Mode Name' = TimeTrial;
+/RaceSetup/Logic/Laps:
+	'Number of Laps' = 1 (1, 5);
+	'Override Default Number of Laps' = true;
+/RaceSetup/Logic/DangerState:
+	'Use EliminationTimer' = false;
+/RaceSetup/Scoring:
+	'Scoring GameMode Used' = 'Time Trial';</pre>
+<p>Because it is single-player vs. the environment, the elimination danger-state is off and the rolling start
+cruises at <strong>130&nbsp;mph</strong> (<code>/RaceSetup/Logic/RollingStart → 'Cruise Speed' = 130.0</code>).
+A <code>RaceScript</code> re-evaluation timer (<code>30.0&nbsp;s</code>) re-assigns the powerplay scripts as the
+single car progresses.</p>
+
+<h2>Demolition</h2>
+<p>A score battle in which players push drone cars into powerplays for points. Demolition is the only stock mode
+that turns on the <strong>Tug-Of-War</strong> end condition and enables the score side of the economy:</p>
+<pre>/RaceSetup/Cameras:
+	'Game Mode Name' = Demolition;
+/RaceSetup/Logic/EndGame:
+	'End Condition Laps' = true;
+	'End Condition Tug-Of-War' = true;
+/RaceSetup/Logic/Countdown:
+	'Initial Countdown' = 180.0 (0.0, 3600.0);
+/RaceSetup/Scoring/DemolitionWreck:
+	'Base Value (Level 1 PP)' = 1000.0;
+	'Base Value (Level 3 PP)' = 2000.0;
+	'Enabled (Score)' = true;</pre>
+<p>It loads the <code>Demolition</code> AI difficulty file and uses the per-level respotting ladder under
+<code>/RaceSetup/Logic/Respot</code> to keep target cars in front of the player (the 24-step
+<code>'N Initial distance from racing line'</code> table climbs from <strong>150&nbsp;m</strong> at level&nbsp;0 to
+<strong>2400&nbsp;m</strong> at level&nbsp;23); see the
+<a href="system-nemesis.html">Nemesis</a> page for the drone templates this respots.</p>
+
+<h2>Car Capture</h2>
+<p>Four near-identical 16,669-byte files (<code>CarCapture1–4.params</code>), one per car to be unlocked. They
+run the default difficulty profile and end on laps; their only meaningful per-file difference is the
+<code>'Game Mode Name'</code> tag (<code>CarCapture1</code>…<code>CarCapture4</code>). These back the
+single-player "capture the rival's car" challenges.</p>
+
+<h2>Helicopter (Survival &amp; Revenge)</h2>
+<p>The helicopter modes are handled in depth on the
+<a href="system-nemesis.html">Nemesis &amp; Helicopter Modes</a> page. From the game-mode side they share
+<code>'Game Mode Name' = Helicopter</code>, a <strong>60&nbsp;s initial countdown</strong>, the
+<strong>Lives</strong> end condition (with <code>End Condition Nemesis Destroyed</code> also set <code>true</code>),
+and distinct scoring profiles:</p>
+<table>
+<tr><th>Field</th><th>HelicopterRevenge</th><th>HelicopterSurvival</th></tr>
+<tr><td><code>'Initial Countdown'</code></td><td>60.0 s</td><td>60.0 s</td></tr>
+<tr><td><code>'End Condition Lives'</code></td><td>true</td><td>true</td></tr>
+<tr><td><code>'End Condition Nemesis Destroyed'</code></td><td>true</td><td>true</td></tr>
+<tr><td><code>'Scoring GameMode Used'</code></td><td><code>Chopper Revenge</code></td><td><code>Chopper Survival</code></td></tr>
+<tr><td>file size</td><td>21,703</td><td>45,467</td></tr>
+</table>
+
+<h2>Nemesis (boss truck)</h2>
+<p><code>Nemesis.params</code>, <code>NemesisMulti.params</code> and <code>NemesisSplitScreen.params</code> set up
+the boss-truck mode. They end on Lives, load the <code>Demolition</code> AI difficulty profile and report
+scoring as <code>Nemesis Trucks</code>, and fill the 24 wave slots
+(<code>/RaceSetup/Nemesis/Selection0…Selection23</code>) with template references — the single-player file
+points each slot at <code>TruckTemplate.params</code>, the multiplayer file at <code>TruckMultiplayer.params</code>,
+and the split-screen file at <code>TruckSplitScreen.params</code> (unused trailing slots are <code>None</code>):</p>
+<pre>/RaceSetup/Nemesis:
+	Selection0 = TruckTemplate.params;
+	Selection1 = TruckTemplate.params;
+	...
+	Selection23 = None;           <span class="dim"># 24 slots; unused tail = None</span></pre>
+<p>See <a href="system-nemesis.html">Nemesis &amp; Helicopter Modes</a> for the truck/helicopter component
+trees and the wave/level mechanics.</p>
+
+<h2>The power-bar &amp; scoring economy</h2>
+<p>Most of the difference between "fun" modes lives in <code>/RaceSetup/Scoring/*</code>, which controls how the
+power bar (and, when enabled, the score) is earned. The Quick Race values below are typical and are reused
+almost verbatim across modes:</p>
+<table>
+<tr><th>Action</th><th>Power per second</th><th>Notes</th></tr>
+<tr><td>Drafting</td><td>2.0 → 4.0</td><td>within 45 m, ±10° cone, ≥100 mph, ≥0.2 s</td></tr>
+<tr><td>Drifting</td><td>7.0 → 14.0</td><td>10°–90° slide angle; overtake bonus +8 power</td></tr>
+<tr><td>Jumping</td><td>5.0 → 10.0</td><td>combos enabled; overtake bonus +8 power</td></tr>
+<tr><td>Near Miss (environmental)</td><td>10.0 (per event)</td><td>≥70 mph, 0.1 s in box, 0.5 s cooldown</td></tr>
+<tr><td>Nudge victim into crash</td><td>66.67 (one-shot)</td><td><code>/RaceSetup/Logic/PowerBar/NudgeVictim</code></td></tr>
+<tr><td>Victim of a powerplay</td><td>16.67</td><td>award for being hit (disabled by default)</td></tr>
+</table>
+<p>The AI earns power on the same actions but through a parallel table in
+<code>GameLogic/GameplayParameters.params</code> (<code>AI Powerbar/Drafting|Drifting|Drive Fast|Jump</code>) —
+documented on the <a href="system-ai.html">AI (SSAI)</a> page.</p>
+
+<div class="warn">Many sub-systems exist in the schema but ship disabled in the stock modes —
+<code>SelfFiringPowerPlay</code>, <code>TugOfWar</code> (outside Demolition), <code>Lives</code> (outside
+boss/heli), the entire <code>Lessons</code> lesson-stage tree, and the <code>PrototypeHud</code> debug HUD.
+Their presence in every file is a schema artifact, not evidence the feature is active. Always check the
+<code>Enabled</code> flag of the specific sub-section.</div>
+
+<h2>Where modes are selected at runtime</h2>
+<p><code>directory.txt</code> lists all 22 mode files under a <code>:GAMEMODES</code> tag, telling the loader to
+make them available as a set. The eboot resolves the player-facing names through
+<code>TEXT_GAMEMODE_NAME_*</code> localisation keys, and net play replicates the chosen setup via the
+<code>cATVNetDOGameSetup</code> / <code>GameModeUpdater</code> duplicated objects
+(see <a href="engine-networking.html">Networking &amp; Online</a>).</p>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="system-nemesis.html">Nemesis &amp; Helicopter Modes</a> — the boss truck and helicopter modes in detail</li>
+  <li><a href="system-powerplay.html">Powerplay System</a> — power bar levels, triggers, danger zones</li>
+  <li><a href="system-ai.html">AI (SSAI)</a> — difficulty profiles, LDC tables, AI power bar</li>
+  <li><a href="system-difficulty.html">Difficulty &amp; Race Director</a> — catchup, respot, teleport</li>
+  <li><a href="system-scoring.html">Scoring &amp; Progression</a> — scoring profiles and unlocks</li>
+  <li><a href="data-params.html">.params Tuning System</a> — the text key/value format used here</li>
+  <li><a href="format-route.html">Route Data</a> — laps, checkpoints and the racing line modes ride on</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

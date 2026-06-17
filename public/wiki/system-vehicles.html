@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vehicles — Split/Second RE Wiki</title>
+<meta name="description" content="Split/Second's car system: the Musclecar/Supercar/Truck/Unique/Nemesis classes, VehicleDatabase.xml, paint palettes, the per-car file bundle, dynamic-part rigid bodies, surface damage and deformation.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Vehicles" data-category="Game Systems">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Vehicles</h1>
+<p>Every drivable car in Split/Second is a <strong>data-driven bundle of loose files</strong> rooted under
+<code>Deferred/Vehicles/</code>. A single master roster — <code>VehicleDatabase.xml</code> — names each car,
+points it at its physics, camera and audio data, and supplies the frontend "balance" stats. Each car then owns
+a folder of art and physics assets (model, Havok collision, deformation model, breakable dynamic parts), while
+its handling lives in three parallel <a href="data-params.html">.params</a> trees under
+<code>Vehicles/Handling/</code>. This page documents the roster, the file bundle, the paint/decal system and the
+damage/deformation pipeline, all sourced from the devkit build's plaintext data; for how the cars fit into the wider
+runtime see the <a href="engine-overview.html">engine architecture</a> overview.</p>
+
+<div class="infobox"><div class="ib-title">Vehicles subsystem</div><table>
+  <tr><th>Data root</th><td><code>Deferred/Vehicles/</code></td></tr>
+  <tr><th>Roster</th><td><code>VehicleDatabase.xml</code> (40 <code>&lt;Car&gt;</code> entries)</td></tr>
+  <tr><th>Classes</th><td>Musclecar · Supercar · Truck · Unique · Nemesis</td></tr>
+  <tr><th>Playable cars</th><td>39 (+1 AI-only Nemesis)</td></tr>
+  <tr><th>Body folders</th><td>42 (<code>Vehicles/Bodies/</code>)</td></tr>
+  <tr><th>Shared chassis</th><td>7 (<code>Vehicles/Chassis/</code>)</td></tr>
+  <tr><th>Paint palettes</th><td>40 cars × up to 9 each (<code>VehicleColors.params</code>)</td></tr>
+  <tr><th>Manager classes</th><td><code>cVehicleModelManager</code>, <code>cWheelModelManager</code>, <code>cVehicleShaderInterface</code></td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span> (plaintext data)</td></tr>
+</table></div>
+
+<h2>Vehicle classes</h2>
+<p>Cars are grouped into five families, distinguished by ID prefix in <code>VehicleDatabase.xml</code> and by the
+shared chassis they sit on. Black Rock framed the three core classes around the famous "rock–paper–scissors"
+balance — Trucks are heavy and strong, Supercars are fast and fragile, Musclecars sit in the middle with the best
+drift. The eboot exposes the class names as runtime constants (<code>NemesisTruck</code>, <code>Supercar</code>,
+<code>Supercar_player</code>, plus the boss modes <code>HELICOPTER</code> and <code>DEMOLITION</code>).</p>
+
+<table>
+<tr><th>Class</th><th>IDs</th><th>Chassis used</th><th>Character</th></tr>
+<tr><td><strong>Musclecar</strong></td><td><code>Musclecar_01</code>…<code>_15</code>, <code>Musclecar_Drone</code></td><td><code>Coupe</code></td><td>Balanced, high drift, mid speed</td></tr>
+<tr><td><strong>Supercar</strong></td><td><code>Supercar_01</code>…<code>_11</code></td><td><code>Supercar</code>, <code>Supercar_Low</code>, <code>Coupe</code></td><td>Top speed, low strength, tight grip</td></tr>
+<tr><td><strong>Truck</strong></td><td><code>Truck_01</code>…<code>_07</code>, <code>Truck_Demolition</code></td><td><code>Truck</code>, <code>Truck_FE</code></td><td>Heavy, strong, slow</td></tr>
+<tr><td><strong>Unique</strong></td><td><code>Unique_01</code>…<code>_04</code></td><td><code>Coupe</code>, <code>Supercar</code>, <code>Truck</code>, <code>Prototype</code></td><td>Reward/elite cars with extreme stat lines</td></tr>
+<tr><td><strong>Nemesis</strong></td><td><code>NemesisTruck01</code> (+ trailers)</td><td><code>NemesisTruck</code></td><td>AI-only boss truck; keyframed</td></tr>
+</table>
+
+<div class="note">The <code>Prototype</code> chassis is used by exactly one car: <code>Unique_04</code>, whose stat
+line in the roster is the most extreme in the game — <code>Speed="10" Drift="1" Strength="1"</code> and
+<code>PlayerSkillLevel="1.0"</code>. <code>Musclecar_Drone</code> is the pack-filler AI car (it borrows
+<code>Musclecar_01</code>'s body/physics but its own low-skill AI profile); the dedicated <code>Truck_Demolition</code>
+and the <code>DEMOLITION</code>/<code>HELICOPTER</code> tags drive the boss <a href="system-nemesis.html">Nemesis &amp; Heli modes</a>.</div>
+
+<h2>VehicleDatabase.xml — the master roster</h2>
+<p><code>Vehicles/VehicleDatabase.xml</code> is the single source of truth for which cars exist. It is a flat list of
+<code>&lt;Car&gt;</code> elements under a <code>&lt;Root FileVersion="1.0"&gt;</code>. Each element wires the car to
+its handling, cameras, audio and frontend presentation. The attribute names are confirmed against the eboot's XML
+parser strings (<code>HumanPhysicsFile</code>, <code>AIPhysicsFile</code>, <code>ChaseCamFile</code>,
+<code>BumperCamFile</code>, <code>BonnetCamFile</code>, <code>AudioFile</code>, <code>DevonName</code>,
+<code>Strength</code>, <code>ActionScriptImage</code>, <code>DCBModifier</code>, <code>PlayerSkillLevel</code>,
+<code>Locked</code>, <code>Player</code>).</p>
+
+<pre>&lt;Car ID="Musclecar_01" HumanPhysicsFile="Musclecar_01" AIPhysicsFile="AIMusclecar_01"
+     ChaseCamFile="MuscleChase" BumperCamFile="DefaultBumper" BonnetCamFile="DefaultBonnet"
+     Lives="3" ActionScriptimage="11" Locked="false" DCBModifier="0"
+     PlayerSkillLevel="0.2" AudioFile="Truck_03" Speed="2" Drift="4" Strength="4"/&gt;</pre>
+
+<h3>Attributes</h3>
+<table>
+<tr><th>Attribute</th><th>Meaning</th><th>Example values</th></tr>
+<tr><td><code>ID</code></td><td>Unique car key; also the body-folder and most file names</td><td><code>Supercar_08</code></td></tr>
+<tr><td><code>HumanPhysicsFile</code></td><td>Handling config used when a human drives</td><td><code>Musclecar_01</code></td></tr>
+<tr><td><code>AIPhysicsFile</code></td><td>AI handling config (the <code>AI*</code> variants)</td><td><code>AIMusclecar_03</code></td></tr>
+<tr><td><code>ChaseCamFile</code> / <code>BumperCamFile</code> / <code>BonnetCamFile</code></td><td>Camera rigs from <code>Vehicles/Cameras/Cameras.xml</code></td><td><code>SupercarChase</code>, <code>DefaultBumper</code></td></tr>
+<tr><td><code>AudioFile</code></td><td>Engine/sound profile key (see audio mapping below)</td><td><code>Hypercar_04</code></td></tr>
+<tr><td><code>Lives</code></td><td>Hits before destruction in life-based modes</td><td><code>3</code></td></tr>
+<tr><td><code>Speed</code> / <code>Drift</code> / <code>Strength</code></td><td>Frontend "balance bar" stats (0–10) shown in the car select UI</td><td><code>Speed="9" Drift="4" Strength="2"</code></td></tr>
+<tr><td><code>PlayerSkillLevel</code></td><td>Suggested skill 0.0–1.0; gates progression unlocks</td><td><code>0.2</code> … <code>1.0</code></td></tr>
+<tr><td><code>ActionScriptimage</code></td><td>Scaleform <a href="format-gfx.html">GFx</a> thumbnail index for the frontend</td><td><code>1</code>…<code>13</code></td></tr>
+<tr><td><code>DCBModifier</code></td><td>Per-car "Driver Career Bonus" credit modifier (telemetry: <code>mVehicleDCBModifier</code>)</td><td><code>0</code>, <code>06</code></td></tr>
+<tr><td><code>Locked</code></td><td>Whether the car starts locked in the frontend</td><td><code>false</code></td></tr>
+<tr><td><code>Player</code></td><td>If <code>false</code>, AI-only (Nemesis)</td><td><code>false</code></td></tr>
+</table>
+
+<div class="tip">Several roster slots <em>re-use</em> another car's physics: <code>Supercar_10</code> and
+<code>Supercar_11</code> both point <code>HumanPhysicsFile="Supercar_09"</code>; <code>Truck_05</code>/<code>_07</code>
+borrow <code>Truck_04</code> and <code>Truck_06</code> borrows <code>Truck_01</code>. These are visual/audio re-skins
+sharing the underlying handling. That is why there are 42 body folders but fewer distinct
+<code>Vehicles/Handling/Configs/*.params</code> files.</div>
+
+<h3>Frontend balance stats (selected roster)</h3>
+<p>The <code>Speed</code>/<code>Drift</code>/<code>Strength</code> triple is what the player sees as bars on the car
+select screen. The extremes neatly illustrate the class fantasy:</p>
+<table>
+<tr><th>Car</th><th>Class</th><th>Speed</th><th>Drift</th><th>Strength</th><th>Skill</th><th>Audio</th></tr>
+<tr><td><code>Musclecar_01</code></td><td>Muscle</td><td>2</td><td>4</td><td>4</td><td>0.2</td><td>Truck_03</td></tr>
+<tr><td><code>Musclecar_09</code></td><td>Muscle</td><td>7</td><td>10</td><td>5</td><td>1.0</td><td>Muscle_18</td></tr>
+<tr><td><code>Supercar_08</code></td><td>Super</td><td>9</td><td>4</td><td>2</td><td>1.0</td><td>Truck_08</td></tr>
+<tr><td><code>Truck_01</code></td><td>Truck</td><td>5</td><td>6</td><td>9</td><td>0.8</td><td>Truck_06</td></tr>
+<tr><td><code>Truck_03</code></td><td>Truck</td><td>1</td><td>2</td><td>7</td><td>0.2</td><td>Hypercar_03</td></tr>
+<tr><td><code>Unique_01</code></td><td>Unique</td><td>7</td><td>10</td><td>5</td><td>1.0</td><td>Truck_03</td></tr>
+<tr><td><code>Unique_03</code></td><td>Unique</td><td>6</td><td>6</td><td>10</td><td>1.0</td><td>Muscle_14</td></tr>
+<tr><td><code>Unique_04</code></td><td>Unique</td><td>10</td><td>1</td><td>1</td><td>1.0</td><td>Supercar_10</td></tr>
+</table>
+
+<div class="note">The <code>AudioFile</code> key is a <em>sound bank</em> name, not the car's class — it is how the
+audio team mapped each model onto a recorded engine. The eboot lists the real reference vehicles behind those keys,
+e.g. <code>Muscle_03_Bullitt</code>, <code>Hypercar_04_AudiR8_v4</code>, <code>Hypercar_03_Skyline_v3</code>,
+<code>Supercar_07_Ferrari_v4</code>, <code>Supercar_10_R32</code>, <code>Truck_07_Jaguar_v4</code>,
+<code>Truck_08_Maserati_v4</code>. See the <a href="engine-audio.html">Audio Engine</a> and
+<a href="format-fev.html">FMOD events</a> pages.</div>
+
+<h2>The per-car file bundle</h2>
+<p>Each playable car lives in <code>Vehicles/Bodies/&lt;ID&gt;/</code>. A typical bundle
+(<code>Musclecar_01</code>) contains the body mesh + collision + deformation + breakable parts, plus the three wheel
+models and the paint/damage textures. Sizes below are from the devkit build:</p>
+
+<table>
+<tr><th>File</th><th>~Size</th><th>Format</th><th>Purpose</th></tr>
+<tr><td><code>&lt;ID&gt;.model</code></td><td>1.3 MB</td><td><a href="format-model.html">Crayon2 model</a></td><td>Visible body mesh + renderables</td></tr>
+<tr><td><code>&lt;ID&gt;.phys</code></td><td>62 KB</td><td><a href="format-phys.html">Havok 5.5 packfile</a></td><td>Driving-model rigid body &amp; wheels</td></tr>
+<tr><td><code>&lt;ID&gt;.mainColl</code></td><td>5 KB</td><td><a href="format-hkcoll.html">Havok 5.5 packfile</a></td><td>Body collision shape</td></tr>
+<tr><td><code>&lt;ID&gt;.deform</code></td><td>31 KB</td><td><a href="format-deform.html">DFM (custom)</a></td><td>Mesh deformation model</td></tr>
+<tr><td><code>&lt;ID&gt;.parts</code></td><td>2.3 KB</td><td>Custom big-endian</td><td>Part hierarchy / attach transforms</td></tr>
+<tr><td><code>&lt;ID&gt;_dynamicParts.params</code></td><td>text</td><td><a href="data-params.html">.params</a></td><td>Breakable-part rigid bodies &amp; hinges</td></tr>
+<tr><td><code>SurfaceDamage.params</code></td><td>text</td><td><a href="data-params.html">.params</a></td><td>Dirt/scrape damage-plane geometry</td></tr>
+<tr><td><code>&lt;ID&gt;.fxc / .shaders / .shaderinst</code></td><td>varies</td><td><a href="format-fxc.html">FXC</a> / <a href="format-shaders.html">shaders</a></td><td>Material set for the body</td></tr>
+<tr><td><code>&lt;ID&gt;.textures / .low.textures</code></td><td>481 KB</td><td><a href="format-textures.html">textures</a></td><td>Body texture set (+ low-LOD)</td></tr>
+<tr><td><code>&lt;ID&gt;_bodyPaint.textures</code></td><td>1.4 MB</td><td><a href="format-textures.html">textures</a></td><td>Paint/colour mask layer</td></tr>
+<tr><td><code>&lt;ID&gt;_damageMap.textures</code></td><td>1.4 MB</td><td><a href="format-textures.html">textures</a></td><td>Accumulated surface-damage map</td></tr>
+<tr><td><code>&lt;ID&gt;_Wheel{Front,Back}.*</code></td><td>~98 KB ea.</td><td>model/shaders/textures</td><td>Two wheel meshes (front &amp; back)</td></tr>
+<tr><td><code>ChassisName.txt</code></td><td>1 line</td><td>text</td><td>Names the shared chassis (e.g. <code>Coupe</code>)</td></tr>
+</table>
+
+<p>The loader paths are visible in the eboot, e.g.
+<code>Resident(noassert)|Vehicles/Bodies/%s/SurfaceDamage.params</code>,
+<code>Vehicles/Bodies/%s/%s_dynamicParts.params</code>,
+<code>Vehicles/Bodies/%s/%s_damageMap</code>,
+<code>Vehicles/Bodies/%s/%s.mainColl</code> and
+<code>Vehicles/Frontend/Bodies/%s/ChassisName.txt</code> (a second copy for the frontend car viewer).</p>
+
+<h3>Shared chassis</h3>
+<p>Bodies are visual shells; the rolling chassis underneath is shared. <code>ChassisName.txt</code> in each body
+folder names which of the seven entries in <code>Vehicles/Chassis/</code> to mount. A chassis folder
+(e.g. <code>Coupe/</code>) holds its own <code>.model</code>, <code>.deform</code>, shaders and textures. Verified
+mapping for every body:</p>
+
+<table>
+<tr><th>Chassis</th><th>Used by</th></tr>
+<tr><td><code>Coupe</code></td><td>all Musclecars + <code>Musclecar_Drone</code>, <code>Supercar_03</code>, <code>Unique_01</code></td></tr>
+<tr><td><code>Supercar</code></td><td><code>Supercar_02/04/06/07/09/10/11</code>, <code>Unique_02</code></td></tr>
+<tr><td><code>Supercar_Low</code></td><td><code>Supercar_01/05/08</code></td></tr>
+<tr><td><code>Truck</code></td><td><code>Truck_01/03/04/05/06/07</code>, <code>Unique_03</code></td></tr>
+<tr><td><code>Truck_FE</code></td><td><code>Truck_02</code>, <code>Truck_Demolition</code></td></tr>
+<tr><td><code>Prototype</code></td><td><code>Unique_04</code> only</td></tr>
+<tr><td><code>NemesisTruck</code></td><td><code>NemesisTruck01</code></td></tr>
+</table>
+
+<div class="warn">The <strong>Nemesis truck breaks the standard bundle</strong>. <code>Bodies/NemesisTruck01/</code>
+has <em>no</em> <code>.phys</code>, <code>.deform</code>, <code>.mainColl</code> or <code>_dynamicParts.params</code>.
+Instead it ships an <code>.rdata</code> + <code>.xml</code> pair (eboot:
+<code>Vehicles/Bodies/%s/%s.rData</code>, <code>%s.xml</code>) and its physics live in
+<code>GameLogic/Nemesis/NemesisTruckPhysics.params</code> with a dedicated debug tree
+(<code>MGF/NemesisTruckPhysics/…</code>) and class <code>cNemesisTruckAIComponent</code> /
+<code>NemesisTruckInstance</code>. Its articulated trailers are separate bodies
+(<code>NemTruck1Trai1</code>, <code>NemTruck1Trai2</code>) joined by ragdoll-style constraints. See
+<a href="system-nemesis.html">Nemesis &amp; Heli Modes</a>.</div>
+
+<h2>Paint &amp; colour palettes</h2>
+<p><code>Vehicles/VehicleColors.params</code> (≈5,160 lines) defines the selectable paint jobs. It is one
+<a href="data-params.html">.params</a> file with a group per palette under
+<code>/Vehicles/ColorPalettes/&lt;ID&gt;/&lt;NN&gt;</code>. Forty cars are present (every roster entry except the
+two Nemesis trailers), with up to nine palettes each (<code>00</code>–<code>08</code>;
+<code>Musclecar_01</code> has nine). Each palette is a three-layer car-paint model — a base
+<strong>Paint Color</strong>, a <strong>Flake Color</strong> (metallic sparkle) and a <strong>Lacquer Color</strong>
+(clear-coat tint) — each an RGB triple in the 0–1 range, consumed by the
+<a href="format-shaders.html">vehicle paint shader</a> via the <code>_bodyPaint</code> texture mask.</p>
+
+<pre>/Vehicles/ColorPalettes/Musclecar_01/01:
+    '@Paint Color'   = ':Paint Color:color:'Paint Color_r' 'Paint Color_g' 'Paint Color_b' ';
+    'Paint Color_r'  = 0.4117647 (0.0, 1.0);   ; a deep red base
+    'Paint Color_g'  = 0.0666666 (0.0, 1.0);
+    'Paint Color_b'  = 0.0666666 (0.0, 1.0);
+    'Flake Color_r'  = 0.92549  (0.0, 1.0);    ; gold-ish metallic flake
+    'Flake Color_g'  = 0.38431  (0.0, 1.0);
+    'Flake Color_b'  = 0.05882  (0.0, 1.0);
+    'Lacquer Color_r'= 0.074509 (0.0, 1.0);    ; near-black clear coat
+    'Lacquer Color_g'= 0.023529 (0.0, 1.0);
+    'Lacquer Color_b'= 0.023529 (0.0, 1.0);</pre>
+
+<p>The <code>'@…'</code> lines are editor metadata describing how the three component sliders compose into a colour
+swatch (the <code>:Name:color:…</code> form is the tuning tool's colour-picker hint).</p>
+
+<h3>Decals &amp; achievement liveries</h3>
+<p>Cars also carry <strong>composited decal liveries</strong> driven by
+<code>Vehicles/Compositing/AchievementsDatabase.params</code> with the shared <code>Stickers.textures</code> sheet
+and <code>GameCompositingInfo.params</code>. Each achievement maps to a progression of decal textures applied to the
+body, e.g. <code>Achievement_00 "Triple Trouble"</code> uses <code>Decal_70</code>/<code>Red_Dot</code>, and
+<code>Achievement_01 "Power Up"</code> cycles <code>Decal_141</code>/<code>Green_Dot</code>/<code>Red_Dot</code> across
+its stages. The runtime manager is the <em>Vehicle Compositor</em> (eboot directory
+<code>/VehicleCompositor/Achievements</code>).</p>
+
+<h2>Handling &amp; physics configuration</h2>
+<p>A car's drive feel is <em>not</em> in the Havok <code>.phys</code> file alone — that supplies the rigid body and
+collision; the tuning lives in three parallel <a href="data-params.html">.params</a> trees under
+<code>Vehicles/Handling/</code>, all selected by the <code>HumanPhysicsFile</code>/<code>AIPhysicsFile</code> keys
+from the database (loader path <code>Vehicles/Handling/Configs/</code>):</p>
+
+<table>
+<tr><th>Tree</th><th>Contents</th><th>Granularity</th></tr>
+<tr><td><code>Handling/Configs/</code></td><td>The full driving model: engine, brakes, drift, steering, suspension, weight transfer, collision response, crash states, nudge behaviour, per-surface friction</td><td>One file per car (+ <code>AI*</code> variants, <code>Default.params</code>)</td></tr>
+<tr><td><code>Handling/Havok/</code></td><td>The editor "star rating" stats + ride heights, CoM and suspension hardpoints fed into the Havok rig</td><td>One file per car</td></tr>
+<tr><td><code>Handling/Tuning/</code></td><td><code>DefaultTuning.params</code>: the engine/gearbox <em>upgrade matrix</em> (Engine 0–4 × Level 0–3)</td><td>Shared default</td></tr>
+</table>
+
+<h3>The driving-model config (Handling/Configs)</h3>
+<p>Each <code>Configs/&lt;ID&gt;.params</code> is a deep tree of curves and scalars. A few load-bearing values from
+<code>Musclecar_01.params</code>:</p>
+<table>
+<tr><th>Group</th><th>Key</th><th>Value</th></tr>
+<tr><td>Chassis</td><td><code>000;Mass</code></td><td>1600.0 kg</td></tr>
+<tr><td>Chassis</td><td><code>002;COM.y</code> / <code>003;COM.z</code></td><td>0.2 / 0.2 m</td></tr>
+<tr><td>Engine</td><td><code>005;RearWheelPower</code> / <code>006;FrontWheelPower</code></td><td>1.0 / 0.0 (RWD)</td></tr>
+<tr><td>Brake</td><td><code>002;HandBrakeAccel</code></td><td>250 mph/s</td></tr>
+<tr><td>Steering</td><td><code>001;MaxSteeringAngle(deg)</code></td><td>50°</td></tr>
+<tr><td>Front Wheels</td><td><code>004;LatAdhesiveLimit</code></td><td>0.85</td></tr>
+<tr><td>Suspension/FrontAxle</td><td><code>004;WheelRadius</code></td><td>0.37 m</td></tr>
+<tr><td>AeroDynamics</td><td><code>000;…Downforce…_Speed MPHMax</code></td><td>160 mph</td></tr>
+</table>
+<p>Most parameters are <strong>response curves</strong> stored as 10- or 20-entry arrays plus a scale and a max,
+e.g. drift counter-steering, grip-vs-slip, suspension force-vs-extension and engine
+<code>AccelerationVsSpeed</code>. There are also <code>CrashState/*</code> blocks (HeadOn, ForwardFlip,
+BackwardFlip, YawThenRoll, Drone takedown, Crushed…) that script the cinematic post-crash motion, and a full
+<code>HandlingModifiers/SurfaceMaterials/*</code> table (cobbles, concrete, dirt, metal, sand, track, water, wood,
+wet variants) giving per-surface friction/drag — the hook for the wet-track and dirt sections of each level.</p>
+
+<h3>The Havok stat file (Handling/Havok)</h3>
+<p><code>Handling/Havok/&lt;ID&gt;.params</code> is short and editor-oriented — the 0–10 "stars" plus the geometry the
+Havok rig needs:</p>
+<pre>/Vehicles/Handling/Musclecar_01:
+    '000;Acceleration'          = 6  (0, 10);
+    '001;Speed'                 = 8  (0, 10);
+    '002;Handling'              = 6  (0, 10);
+    '003;Drifting'              = 10 (0, 10);
+    '004;Strength'              = 0  (0, 10);
+    '005;FrontRideHeightOffset' = -0.4851562 (-1.5, 1.5);
+    '006;RearRideHeightOffset'  = -0.3656249 (-1.5, 1.5);
+    '007;BodyHeightOffset'      = 0.815625   (-1.5, 1.5);
+    '010;CentreOfMass.y'        = 0.615625;
+    '012;HardPoint_FrontAxle.x' = 0.8;   '014;HardPoint_FrontAxle.z' = 1.36;
+    '016;HardPoint_RearAxle.y'  = 0.815625; '017;HardPoint_RearAxle.z' = -1.59;</pre>
+
+<h3>The upgrade matrix (DefaultTuning)</h3>
+<p><code>Handling/Tuning/DefaultTuning.params</code> defines five engine families (<code>Engine0</code>–<code>Engine4</code>),
+each with four upgrade <code>Level0</code>–<code>Level3</code>. Every level carries an
+<code>AccelerationStatBase</code>/<code>SpeedStatBase</code>, a <code>BoostMaximumSpeed</code>, a
+<code>DriveTorqueVsRpm</code> curve, a <code>ChangeUpRpm</code>, gear ratios, and three sprocket presets
+(<code>Long</code>/<code>Short</code>/<code>Standard</code>) plus three brake presets. The acceleration base climbs
+with level — for <code>Engine0</code>: 8 → 18 → 28 → 38 — and boost top speed rises 92 → 96 → 102 → 109 mph,
+illustrating the season-mode progression.</p>
+
+<h2>Dynamic parts (breakables)</h2>
+<p><code>&lt;ID&gt;_dynamicParts.params</code> defines every part that can break off or flex on impact, as a set of
+<strong>Havok rigid bodies</strong> and <strong>constraints</strong> hung off the body. For
+<code>Musclecar_01</code> there are <strong>44 rigid bodies and 16 constraints</strong> across these named parts:</p>
+<p><code>BODY · BOOT · BUMPER_F · CHASSIS_CABIN/FRONT/REAR · DISC_{F,B}{L,R} · DOOR_{L,R}(+_MIRROR,_WINDOW) ·
+ENGINE · EXHAUST_{L,R} · HOOD · HUB_{F,B}{L,R} · &gt;LIGHT_{F,B}{L,R} · RADIATOR · SPOILER_B ·
+TYRE_{F,B}{L,R} · WHEEL_{F,B}{L,R} · WING_F{L,R} · WISHBONE_{F,B}{L,R}</code> (44 named parts total)</p>
+
+<p>Every part has a <code>Rigid body</code> block (Mass, Friction 0.5, Restitution 0.4, Angular damping 0.05,
+Allowed penetration −1.0); hinged parts add a <code>Constraint1</code> (single-axis: min/max angle, friction
+torque, Tau factor) and doors add a two-axis <code>Constraint2</code>. The masses encode what the part "feels"
+like when it tears loose:</p>
+<pre>/Vehicles/DynamicParts/Musclecar_01/BODY/Rigid body:
+    Mass = 1000.0 (0.1, 1000.0);     ; the shell
+/Vehicles/DynamicParts/Musclecar_01/ENGINE/Rigid body:
+    Mass = 200.0;
+/Vehicles/DynamicParts/Musclecar_01/DOOR_L/Rigid body:
+    Mass = 25.0;
+/Vehicles/DynamicParts/Musclecar_01/DOOR_L/Constraint1:
+    'Maximum angle' = 85.0 (-180.0, 180.0);  'Minimum angle' = 0.0;  'Tau factor' = 0.5;</pre>
+<p>The runtime managers are <code>DynamicParts RB Data Mgr</code> and <code>DynamicParts Constr Data Mgr</code>;
+the eboot also exposes a dev/crash sandbox (<code>Vehicles/DynamicParts/Dev/Reset</code>,
+<code>Vehicles/DynamicParts/Crash activation/*</code>). The part list maps onto the
+<code>.parts</code> hierarchy (a custom big-endian binary holding part IDs and 4×4 attach transforms) and the
+<a href="format-deform.html">.deform</a> mesh-deformation model — together they make a Split/Second car shed panels
+and crumple. <code>Unique_04</code> (Prototype) and the Nemesis truck have no
+<code>_dynamicParts.params</code>, so they do not shed standard panels.</p>
+
+<h2>Surface damage &amp; deformation</h2>
+<p>Two systems progressively dirty and crumple the car:</p>
+<h3>Surface damage planes</h3>
+<p><code>Bodies/&lt;ID&gt;/SurfaceDamage.params</code> defines five oriented <strong>damage planes</strong>
+(Front/Back/Left/Right/Upper, each with azimuth, zenith and distance) bounding where dirt and scrape marks
+accumulate on the <code>_damageMap</code> texture. For <code>Musclecar_01</code> the front/back planes sit 1.9 m
+out, the sides 0.75 m, and the upper plane 0.825 m at an 86.5° zenith (there is no lower/underside plane):</p>
+<pre>/Vehicles/SurfaceDamage/Musclecar_01/DamagePlanes:
+    'Front - azimuth angle' = 0.0;   'Front - distance' = 1.8999999;
+    'Left - azimuth angle'  = 90.0;  'Left - distance'  = 0.75;
+    'Upper - zenith angle'  = 86.5;  'Upper - distance' = 0.8249999;</pre>
+<p>The shared rates live in <code>Vehicles/Generic/SurfaceDamageCommon.params</code>, split into
+<code>Standard</code> (gradual driving wear) and <code>Crash</code> (impact) profiles for both <em>Dirt</em> and
+<em>Scrapes</em> — e.g. crash dirt has an <code>Increase rate</code> of 0.1 up to a <code>Maximum level</code> of
+0.8, while standard scrapes only add 0.001875 per contact. The eboot exposes the
+<em>Surface damage database</em> and a <code>Vehicles/Surface damage render vehicle</code> dev toggle.</p>
+<h3>Deformation (.deform)</h3>
+<p>The geometric crumpling is the <a href="format-deform.html">.deform</a> file — a custom
+<code>DFM\x02</code> container (magic <code>44 46 4D 02</code>, big-endian, ~31 KB for a car). It stores the
+vertex-deformation model the physics drives when the car is hit. Unlike <code>.phys</code>/<code>.mainColl</code>
+it is <em>not</em> a Havok packfile, so it is Black Rock's own format.</p>
+
+<h2>How a car loads (data flow)</h2>
+<p>Putting it together, when a car is spawned the engine:</p>
+<ol>
+<li>Reads the <code>&lt;Car&gt;</code> entry from <code>VehicleDatabase.xml</code>.</li>
+<li>Loads the visible mesh <code>Bodies/&lt;ID&gt;/&lt;ID&gt;.model</code> and the two wheel models, plus shaders,
+textures and the <code>_bodyPaint</code>/<code>_damageMap</code> layers (managers <code>cVehicleModelManager</code>,
+<code>cWheelModelManager</code>, <code>cVehicleShaderInterface</code>).</li>
+<li>Mounts the shared chassis named by <code>ChassisName.txt</code>.</li>
+<li>Loads the <a href="format-phys.html">.phys</a> rigid body + <a href="format-hkcoll.html">.mainColl</a> shape,
+then applies the handling tree selected by <code>HumanPhysicsFile</code>/<code>AIPhysicsFile</code>.</li>
+<li>Builds the breakable rig from <code>_dynamicParts.params</code> + <code>.parts</code> + <a href="format-deform.html">.deform</a>.</li>
+<li>Applies a paint palette from <code>VehicleColors.params</code> and any composited decals.</li>
+<li>Binds cameras (<code>Cameras.xml</code>) and the <code>AudioFile</code> engine bank.</li>
+</ol>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="engine-overview.html">Engine Architecture</a> — where the vehicle subsystem sits in the Black Rock engine</li>
+<li><a href="format-phys.html">Vehicle Physics (.phys)</a> — the per-car Havok rigid body</li>
+<li><a href="format-hkcoll.html">Collision (.hkColl/.mainColl)</a> — vehicle collision shapes</li>
+<li><a href="format-deform.html">Deformation (.deform)</a> — the DFM crumple model</li>
+<li><a href="format-havok.html">Havok Packfiles</a> — magic <code>0x57E0E057</code>, version "Havok-5.5.0-r1"</li>
+<li><a href="format-model.html">Model (.model)</a> — Crayon2 body/wheel meshes</li>
+<li><a href="format-textures.html">Textures (.textures)</a> — body, paint and damage-map layers</li>
+<li><a href="data-params.html">.params Tuning System</a> — the text format used for all handling/colour data</li>
+<li><a href="system-ai.html">AI (SSAI)</a> — the <code>AIPhysicsFile</code> variants and pack behaviour</li>
+<li><a href="system-cameras.html">Cameras &amp; Director</a> — the chase/bumper/bonnet rigs</li>
+<li><a href="system-nemesis.html">Nemesis &amp; Heli Modes</a> — the keyframed boss vehicles</li>
+<li><a href="engine-audio.html">Audio Engine</a> — the <code>AudioFile</code> engine banks</li>
+<li><a href="system-areaofeffects.html">Area of Effects</a> — explosion forces that drive crash states</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

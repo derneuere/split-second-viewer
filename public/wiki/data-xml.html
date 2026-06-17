@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XML Conventions — Split/Second RE Wiki</title>
+<meta name="description" content="Where Split/Second uses XML — VehicleDatabase, Season, Cameras, audio triggers, collision timelines and the Havok *Xml tagfile twins — and the common element/attribute patterns.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="XML Conventions" data-category="Data &amp; Config">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>XML Conventions</h1>
+<p>
+Alongside the <a href="data-params.html">.params</a> tuning files, Split/Second uses <strong>XML</strong> for
+the data that is naturally hierarchical or list-shaped: vehicle and season databases, the camera graph,
+per-locale audio triggers, collision/breakable timelines, and the Havok <code>*Xml</code> tagfile twins. Two
+distinct dialects exist. The bulk are <strong>Black Rock's in-house XML</strong> &mdash; a tiny, attribute-heavy
+format always rooted in <code>&lt;Root FileVersion="…"&gt;</code>. The rest are <strong>Havok 5.5 tagfiles</strong>,
+which are the middleware's own XML serialization and document the binary class layout. This page covers where
+each is used and the element patterns you will see.
+</p>
+
+<div class="infobox"><div class="ib-title">In-house XML</div><table>
+  <tr><th>Category</th><td>Hierarchical text config</td></tr>
+  <tr><th>Encoding</th><td>ASCII; usually no <code>&lt;?xml?&gt;</code> prolog</td></tr>
+  <tr><th>Root element</th><td><code>&lt;Root FileVersion="…"&gt;</code></td></tr>
+  <tr><th>Data style</th><td>Attributes on elements</td></tr>
+  <tr><th>Comments</th><td>Standard <code>&lt;!-- … --&gt;</code></td></tr>
+  <tr><th>Total XML</th><td>~680 <code>.xml</code> + 70 Havok <code>*Xml</code></td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>Two dialects</h2>
+<table>
+<tr><th>Dialect</th><th>Root</th><th>Files</th><th>Notes</th></tr>
+<tr><td>In-house XML</td><td><code>&lt;Root FileVersion="x"&gt;</code></td><td><code>.xml</code></td><td>Authored by tools; attribute-driven; <code>FileVersion</code> is per-schema</td></tr>
+<tr><td>Havok tagfile</td><td><code>&lt;hkpackfile&gt;</code></td><td><code>.hkCollXml</code>, <code>.hkPPsXml</code>, <code>.hkRBsXml</code></td><td>Havok's serializer; <span class="badge raw">Opaque</span> middleware schema</td></tr>
+</table>
+
+<h2>In-house XML: the <code>&lt;Root&gt;</code> pattern</h2>
+<p>
+Every in-house file starts with a single <code>&lt;Root&gt;</code> element carrying a
+<code>FileVersion</code> attribute. The version is a per-schema number, not a global one &mdash; databases use
+<code>"1.0"</code> while the newer camera/collision schemas use a float like <code>"0.1000000"</code> or
+<code>"0.0000000"</code>. Data is carried almost entirely on <strong>attributes</strong>; element nesting
+expresses ownership. Three structural styles recur:
+</p>
+
+<h3>1. Flat record list (databases)</h3>
+<p>
+<code>Vehicles/VehicleDatabase.xml</code> is one <code>&lt;Car&gt;</code> element per vehicle, all attributes,
+no children. This drives <a href="system-vehicles.html">Vehicles</a> and links each car to its
+<a href="format-phys.html">.phys</a> handling files, audio bank and cameras:
+</p>
+<pre>&lt;Root FileVersion="1.0"&gt;
+ &lt;Car ID="Musclecar_01" HumanPhysicsFile="Musclecar_01" AIPhysicsFile="AIMusclecar_01"
+      ChaseCamFile="MuscleChase" BumperCamFile="DefaultBumper" BonnetCamFile="DefaultBonnet"
+      Lives="3" ActionScriptimage="11" Locked="false" DCBModifier="0" PlayerSkillLevel="0.2"
+      AudioFile="Truck_03" Speed="2" Drift="4" Strength="4"/&gt;
+ ...
+ &lt;Car ID="NemesisTruck01" HumanPhysicsFile="NemesisTruck01" AIPhysicsFile="NemesisTruck01"
+      ChaseCamFile="TruckChase" Lives="3" Player="false" .../&gt;
+ &lt;!-- This is how you comment out an entry. --&gt;
+&lt;/Root&gt;</pre>
+<p>
+Note the real conventions on show: the <code>Speed</code>/<code>Drift</code>/<code>Strength</code> 1&ndash;10 star
+ratings, the <code>PlayerSkillLevel</code> 0&ndash;1 difficulty gate, the <code>AIPhysicsFile</code> pointing at a
+separate AI handling variant (e.g. <code>AISupercar_04</code>), and the standing <code>&lt;!-- comment out --&gt;</code>
+idiom designers used to disable rows.
+</p>
+
+<h3>2. Nested containers (season / scoring trees)</h3>
+<p>
+<code>Season/Season.xml</code> nests <code>&lt;Event&gt;</code> and <code>&lt;UnlockableCar&gt;</code> inside each
+<code>&lt;Episode&gt;</code>, building the single-player progression consumed by
+<a href="system-scoring.html">Scoring &amp; Progression</a>:
+</p>
+<pre>&lt;Episode Number="1" ScoreToUnlockFinale="16" VehicleSkillLimit="0.2"&gt;
+  &lt;Event GameMode="QuickRace" Track="Downtown"        SubTrack="A" Variation="2" DCBModifier="0.5"/&gt;
+  &lt;Event GameMode="TimeTrial" Track="Downtown"        SubTrack="C" Variation="1" DCBModifier="0.5"/&gt;
+  &lt;Event GameMode="QuickRace" Track="docks"           SubTrack="B" Variation="2" DCBModifier="0.5"/&gt;
+  &lt;UnlockableCar Name = "musclecar_03" /&gt;
+&lt;/Episode&gt;</pre>
+<p>
+The file even ships with a long comment documenting its own schema (the three ways to declare allowed cars:
+<code>&lt;Car Name="…"/&gt;</code>, <code>&lt;Car Type="…"/&gt;</code>, or omit for "all unlocked"). The
+<code>GameMode</code>, <code>Track</code> and <code>SubTrack</code> values are the same identifiers used across
+<a href="system-gamemodes.html">Game Modes</a> and <a href="system-tracks.html">Tracks</a>.
+</p>
+
+<h3>3. Manifest that points at .params (cameras)</h3>
+<p>
+The <a href="system-cameras.html">camera</a> system is the clearest example of XML and
+<a href="data-params.html">.params</a> working together. A locale ships a trio &mdash;
+<code>Cameras.xml</code>, <code>CameraGroups.xml</code>, <code>CameraSplines.xml</code> (~65 of each in the
+build). <code>Cameras.xml</code> is a manifest: each <code>&lt;Camera&gt;</code> declares a type and a
+<code>Data="…params"</code> leaf file holding its tunable values, and nests <code>&lt;Behavior&gt;</code>
+children that do the same:
+</p>
+<pre>&lt;Root FileVersion="0.1000000" BatchedLoad="true"&gt;
+   &lt;Camera Type="FixedToSubjectCamera" Name="1229362827.9" Data="1229362827.9.params" FriendlyName=""&gt;
+      &lt;Behavior Type="TrackHeightBehavior" Name="1238751163.0" Data="1238751163.0.params"/&gt;
+      &lt;Behavior Type="LookAtBehavior"      Name="1232986167.2" Data="1232986167.2.params"/&gt;
+   &lt;/Camera&gt;
+&lt;/Root&gt;</pre>
+<p>
+<code>CameraGroups.xml</code> then references cameras by <code>Name</code> to build named selection sets
+(e.g. <code>&lt;Group Name="Gyro Cams (Subject Velocity) Ahead"&gt;</code> &rarr;
+<code>&lt;Camera Name="1229362827.9"/&gt;</code>), and <code>CameraSplines.xml</code> stores the actual rail
+geometry as nested <code>&lt;Spline&gt;</code> &rarr; <code>&lt;Control_Point&gt;</code> &rarr;
+<code>&lt;Transform&gt;</code> rows.
+</p>
+<div class="tip">
+Those numeric <code>Name</code>/<code>ID</code> values (<code>1229362827.9</code>, <code>2639553593</code>)
+are tool-generated GUIDs &mdash; a timestamp-plus-counter or hash. They are stable handles for cross-referencing
+between the three camera files, not anything the player ever sees.
+</div>
+
+<h3>Transform rows</h3>
+<p>
+Wherever XML carries a 3D placement it uses a <code>&lt;Transform&gt;</code> (or bare
+<code>transform="…"</code> attribute) of four rows. <code>Row0..Row2</code> are the 3&times;3 orientation/scale
+basis and <code>Row3</code> is the translation &mdash; a standard 4&times;3 affine matrix:
+</p>
+<pre>&lt;Transform&gt;
+   &lt;Row0 X="1.0000000" Y="0.0000000" Z="0.0000000"/&gt;
+   &lt;Row1 X="0.0000000" Y="0.9865719" Z="0.1633275"/&gt;
+   &lt;Row2 X="0.0000000" Y="-0.1633275" Z="0.9865719"/&gt;
+   &lt;Row3 X="-0.0075565" Y="1.3200014" Z="-5.6494946"/&gt;  &lt;!-- translation --&gt;
+&lt;/Transform&gt;</pre>
+
+<h2>Audio &amp; Tonic XML</h2>
+<p>
+Per-locale audio data lives under <code>Audio/Locales/&lt;level&gt;/</code> as the quartet
+<code>*_Audio.xml</code>, <code>*_Audio_Ambient.xml</code>, <code>*_Audio_Reverb.xml</code>,
+<code>*_Audio_Swooshes.xml</code> (24 files total). The reverb files are lists of
+<code>&lt;AudioTrigger&gt;</code> boxes, each a placement plus a dense set of mix attributes that drive the
+<a href="engine-audio.html">LLAudio2</a> reverb/dynamic-mixer system:
+</p>
+<pre>&lt;AudioTrigger id="712004398" label="Garage 1" type="Box"
+   transform="43.318,0.000,4.954, 0.000,25.231,0.000, -12.146,0.000,130.751, -757.406,-5.208,107.989"
+   reverb_type="HALL" reverb_wet_mix="0.700000"
+   dynamic_mixer_preset="LESS_AMBIENCE" dynamic_mixer_gain="1.0000000"
+   falloff_x="0.100000" falloff_y="0.000000" falloff_z="0.290000" falloff_response="Linear"
+   activate_at_startup="true" sound_name=""/&gt;</pre>
+<p>
+Here <code>reverb_type</code> is an enum drawn from a fixed set seen across the docks file &mdash;
+<code>HALL</code>, <code>OVERHEAD</code>, <code>LARGE_TANK</code>, <code>SMALL_TANK</code> &mdash; and
+<code>dynamic_mixer_preset</code> selects a named mixer snapshot (<code>LESS_AMBIENCE</code>). The
+<code>transform</code> packs the 4&times;3 matrix into one comma-separated attribute rather than nested rows.
+The separate <code>Audio/Tonic/</code> tree (55 files: <code>_CarSpecific</code>, <code>_CarTypeSpecific</code>,
+<code>_StateEngine</code>) configures the per-car engine-sound state machine &mdash; see
+<a href="format-tonic.html">Tonic</a>.
+</p>
+
+<h2>Collision timelines (<code>*_collision_tl.xml</code>)</h2>
+<p>
+Each level ships a <code>&lt;level&gt;_collision_tl.xml</code> (10 in the build, one per locale incl. the
+<code>nem_*</code> variants), loaded via the eboot path <code>%s_collision_tl.xml</code>. It maps breakable
+props to their <a href="data-catnip.html">Catnip</a> collision timelines &mdash;
+<code>&lt;object&gt;</code> &rarr; <code>&lt;timeline&gt;</code> &rarr; <code>&lt;transform&gt;</code> &mdash; with
+flags such as <code>singleUse</code>, <code>hideComponentOnBreakOff</code> and
+<code>collisionMagnitude</code> that decide how the object reacts when hit:
+</p>
+<pre>&lt;object name="propane_cylinder_custom"&gt;
+   &lt;timeline name="docks_propane_cylinder_T" activateOnInitialCollision="false"
+             hideComponentOnBreakOff="true" singleUse="true" collisionMagnitude="50"
+             useContactTransform="false"&gt;
+      &lt;transform&gt; &lt;Row0 .../&gt; &lt;Row1 .../&gt; &lt;Row2 .../&gt; &lt;Row3 .../&gt; &lt;/transform&gt;
+   &lt;/timeline&gt;
+&lt;/object&gt;
+&lt;object name="crate_custom"/&gt;            &lt;!-- object with no timeline --&gt;</pre>
+
+<h2>Havok tagfile twins</h2>
+<p>
+The remaining XML are Havok's own serializer output. The level physics files
+<a href="format-hkcoll.html">.hkColl</a>, <a href="format-hkpps.html">.hkPPs</a> and
+<a href="format-hkrbs.html">.hkRBs</a> each have an XML twin (<code>.hkCollXml</code>, <code>.hkPPsXml</code>,
+<code>.hkRBsXml</code> &mdash; 32 / 19 / 19 files). These are <strong>not</strong> in-house XML; they begin with
+a real prolog and the Havok packfile root, and version-stamp <code>Havok-5.5.0-r1</code>:
+</p>
+<pre>&lt;?xml version="1.0" encoding="ascii"?&gt;
+&lt;hkpackfile classversion="5" contentsversion="Havok-5.5.0-r1"&gt;
+	&lt;!-- Skipped hkpShape at address 0000000012740100 --&gt;
+	...</pre>
+<p>
+They serialize the same object graph as the binary <a href="format-havok.html">Havok packfile</a> (classes such
+as <code>hkpRigidBody</code>, <code>hkpShape</code>, <code>hkpStorageExtendedMeshShape</code>), so the twin
+effectively documents the binary class layout. The schema is Havok's, not Black Rock's &mdash; treat its internals
+as <span class="badge raw">Opaque</span> middleware and consult the
+<a href="format-havok.html">Havok Packfiles</a> page.
+</p>
+<div class="warn">
+Do not parse a <code>.hkPPsXml</code> with the in-house <code>&lt;Root&gt;</code> assumptions. The two dialects
+share the <code>.xml</code>-family extension but nothing else: different root, different prolog, different
+authoring tool.
+</div>
+
+<h2>XML usage at a glance</h2>
+<table>
+<tr><th>File(s)</th><th>Count</th><th>Root / shape</th><th>System</th></tr>
+<tr><td><code>Vehicles/VehicleDatabase.xml</code></td><td>1</td><td><code>&lt;Root&gt;</code> &rarr; <code>&lt;Car&gt;</code> list</td><td><a href="system-vehicles.html">Vehicles</a></td></tr>
+<tr><td><code>Season/Season.xml</code></td><td>1</td><td><code>&lt;Episode&gt;</code> &rarr; <code>&lt;Event&gt;</code></td><td><a href="system-scoring.html">Scoring</a></td></tr>
+<tr><td><code>Cameras.xml</code> / <code>CameraGroups.xml</code> / <code>CameraSplines.xml</code></td><td>~65 each</td><td><code>&lt;Camera&gt;</code> + <code>Data=</code> .params</td><td><a href="system-cameras.html">Cameras</a></td></tr>
+<tr><td><code>*_Audio*.xml</code></td><td>24</td><td><code>&lt;AudioTrigger&gt;</code> boxes</td><td><a href="engine-audio.html">Audio</a></td></tr>
+<tr><td><code>Audio/Tonic/*.xml</code></td><td>55</td><td>engine state machine</td><td><a href="format-tonic.html">Tonic</a></td></tr>
+<tr><td><code>*_collision_tl.xml</code></td><td>10</td><td><code>&lt;object&gt;</code> &rarr; <code>&lt;timeline&gt;</code></td><td><a href="data-catnip.html">Catnip</a></td></tr>
+<tr><td><code>Vehicles/Bodies/*/*.xml</code></td><td>3</td><td><code>&lt;NODE_FACTORY&gt;</code> tree</td><td><a href="system-nemesis.html">Nemesis</a> truck rigs</td></tr>
+<tr><td><code>.hkCollXml</code> / <code>.hkPPsXml</code> / <code>.hkRBsXml</code></td><td>32 / 19 / 19</td><td><code>&lt;hkpackfile&gt;</code></td><td><a href="format-havok.html">Havok</a></td></tr>
+</table>
+
+<h2>Open questions</h2>
+<ul>
+<li>Whether the runtime ships its own XML parser or reuses one (no parser class name surfaced in the eboot
+strings examined).</li>
+<li>The full enum sets for audio attributes (<code>reverb_type</code>, <code>dynamic_mixer_preset</code>,
+<code>falloff_response</code>) &mdash; only the values seen in the docks locale are listed here.</li>
+<li>The <code>&lt;NODE_FACTORY&gt;</code> body schema (Nemesis truck/trailer rigs) is only partially sampled.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="data-params.html">.params Tuning System</a> &mdash; the text layer XML manifests point at</li>
+<li><a href="data-globalregs.html">Global Registry</a> &mdash; the binary register database</li>
+<li><a href="format-havok.html">Havok Packfiles</a> and <a href="format-hkpps.html">Physics Packs</a> / <a href="format-hkcoll.html">Collision</a> / <a href="format-hkrbs.html">Rigid Bodies</a> &mdash; the binary partners of the <code>*Xml</code> twins</li>
+<li><a href="system-vehicles.html">Vehicles</a>, <a href="system-cameras.html">Cameras &amp; Director</a>, <a href="system-scoring.html">Scoring &amp; Progression</a> &mdash; consumers of the in-house XML databases</li>
+<li><a href="engine-audio.html">Audio Engine</a> and <a href="data-catnip.html">Catnip Entity System</a></li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

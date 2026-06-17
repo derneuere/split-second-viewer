@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio Engine — Split/Second RE Wiki</title>
+<meta name="description" content="LLAudio2 — Black Rock's wrapper over FMOD Ex 4.28 — with the DynamicMixer, Reverb/DirectionalReverb managers, EventManager/SoundBankManager pools, the Tonic granular engine synth, and the .fsb/.fev/.tonic data on disk.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Audio Engine" data-category="Engine &amp; Tech">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Audio Engine</h1>
+<p>Split/Second's audio runs through <strong>LLAudio2</strong> — Black Rock Studio's in-house wrapper
+around <a href="engine-middleware.html">FMOD Ex 4.28.00</a> and its Event System. LLAudio2 adds a
+data-driven mixing layer (the <strong>DynamicMixer</strong>), reverb-zone management, pooled event and
+sound-bank managers, and a completely bespoke <strong>granular engine synthesizer</strong> called
+<strong>Tonic</strong> that generates car engine audio in real time. Nearly all of this is
+configured from plaintext XML on disk, so the values below are quoted directly from the game data.</p>
+
+<div class="infobox"><div class="ib-title">Audio Engine</div><table>
+  <tr><th>Wrapper</th><td>LLAudio2 (in-house)</td></tr>
+  <tr><th>Backend</th><td>FMOD Ex 4.28.00 + Event System</td></tr>
+  <tr><th>Source</th><td><code>libs/Audio/Wrappers/LLAudio2</code></td></tr>
+  <tr><th>Banks</th><td><a href="format-fsb.html">.fsb</a> (magic <code>FSB4</code>)</td></tr>
+  <tr><th>Events</th><td><a href="format-fev.html">.fev</a> (magic <code>FEV1</code>)</td></tr>
+  <tr><th>Engine synth</th><td><a href="format-tonic.html">.tonic / .tonic2</a></td></tr>
+  <tr><th>Mixer groups</th><td>15 (see below)</td></tr>
+  <tr><th>Config</th><td><code>Audio/XML/*.xml</code></td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<div class="note">The audio system was built in its own branch
+(<code>C:/Projects/SplitSecond/ss_audio_dev/Code/contrib/FmodEx/42800/…</code>). The <code>42800</code>
+directory name is the FMOD Ex version — <strong>4.28.00</strong>. The wrapper proper lives in the main
+tree at <code>c:/Projects/proj_1/ws_0/Code/libs/Audio/Wrappers/LLAudio2/</code>.</div>
+
+<h2>Architecture: LLAudio2 over FMOD Ex</h2>
+<p>Gameplay code never touches FMOD directly. It talks to LLAudio2, which manages a set of
+sub-systems, each updated once per frame from <code>LLAudio2::Update</code>. The update order is
+visible in the profiler markers:</p>
+<table>
+  <tr><th>Order</th><th>Sub-update</th><th>Manager / source file</th></tr>
+  <tr><td>1</td><td><code>EventSystem_Update</code></td><td>FMOD Event System tick</td></tr>
+  <tr><td>2</td><td><code>EventManager_PreUpdate</code> → <code>EventManager_Update</code></td><td><code>EventManager/EventManager.cpp</code></td></tr>
+  <tr><td>3</td><td><code>GroupManager_Update</code></td><td><code>GroupManager/GroupManager.cpp</code></td></tr>
+  <tr><td>4</td><td><code>LiveUpdateManager_Update</code></td><td>FMOD Designer live auditioning</td></tr>
+  <tr><td>5</td><td><code>ReverbManager_Update</code></td><td><code>ReverbManager/ReverbManager.cpp</code></td></tr>
+  <tr><td>6</td><td><code>NetworkManager_Update</code></td><td>Network audio link (see below)</td></tr>
+</table>
+<p>Underneath these sit four pools that own the FMOD handles and recycle them to keep allocation off
+the hot path:</p>
+<ul>
+  <li><b>SoundBankManager</b> — loads <a href="format-fsb.html">.fsb</a> banks into fixed-size slots
+      (<code>SoundBankSlot.cpp</code>, <code>SoundBankPool.cpp</code>). Logs
+      <code>SoundBank [%s] is larger than slot size [%d &gt; %d]</code> when a bank overflows its slot.</li>
+  <li><b>EventManager</b> — owns <code>EventPool</code> / <code>EventInstance</code> /
+      <code>EventChannels</code> and streams event data via <code>EventMemoryStream</code>. Tracks live
+      events under <code>/EventManager/PlayingEvents/%s/{State,ChannelsPlaying,PositionMS,LengthMS,Audibility}</code>.
+      When it runs out it "steals" the least-audible instance (<code>EventInstance [%s] Stolen</code>).</li>
+  <li><b>GroupManager</b> — the 15 mixer <em>channel groups</em> (volume / pitch / reverb send / DSP
+      slots), driven by the DynamicMixer.</li>
+  <li><b>DSPPool</b> — recycles FMOD &amp; custom DSP effect instances into the per-group slots
+      (<code>DSPPool.cpp</code>).</li>
+</ul>
+<div class="tip">A custom FMOD memory allocator and file-system callbacks
+(<code>Initialise/MemoryCallbacks.cpp</code>, <code>FileSystemCallbacks.cpp</code>) hand FMOD a
+dedicated heap so it never calls the OS allocator directly — the audio system reports
+<code>/AudioSystem/Allocator/%s/{Size,Used,Free,Alloc}</code> in the debug HUD.</div>
+
+<h2>On-disk data</h2>
+<p>The <code>Deferred/Audio/</code> tree holds <strong>73 <a href="format-fsb.html">.fsb</a> banks</strong>
+and <strong>73 matching <a href="format-fev.html">.fev</a> event projects</strong> (one .fev per .fsb),
+plus the XML config and the Tonic synth data. Verified magic bytes:</p>
+<pre class="hex">Menu.fsb  : 46 53 42 34  1c 00 00 00  ...   "FSB4"  (FMOD Sound Bank v4)
+Menu.fev  : 46 45 56 31  00 00 3a 00  ...   "FEV1"  (FMOD Event project v1)</pre>
+<p>Banks are grouped by purpose. A representative slice of the folder:</p>
+<table>
+  <tr><th>Folder</th><th>Banks</th><th>Contents</th></tr>
+  <tr><td><code>Music/</code></td><td>Music.fsb (157&nbsp;MB), DemoMusic, MusicLooped</td><td>Streamed music score</td></tr>
+  <tr><td><code>Speech/</code></td><td>Speech.fsb (single ~2&nbsp;MB bank in this build)</td><td>Voice-over / commentary</td></tr>
+  <tr><td><code>Locales/&lt;level&gt;/</code></td><td>airport, docks, downtown, graveyard, nem, nem_downtown, powerplant</td><td>Per-track ambience + streamed variants</td></tr>
+  <tr><td><code>Vehicles/CPU/</code> &amp; <code>Generic/</code></td><td>Hypercar_03 … Truck_09 (+ named, e.g. <code>Hypercar_03_Skyline_v3</code>)</td><td>Car sample sets</td></tr>
+  <tr><td><code>Collision/ · Scrapes/ · Swooshes/ · Surface/</code></td><td>impact, scrape, near-miss whoosh, road-surface banks</td><td>Driving SFX</td></tr>
+  <tr><td><code>GenericPowerPlays/ · Particles/</code></td><td>powerplay + particle event banks</td><td><a href="system-powerplay.html">Powerplay</a> / FX audio</td></tr>
+  <tr><td><code>Menu/ · Global/ · Debug/</code></td><td>Menu, Global_Streamed, ReverbAndGroups, Debug</td><td>Frontend, global config, debug tones</td></tr>
+</table>
+<div class="note">Most folders carry a parallel <code>DEBUG_*.fsb/.fev</code> pair (e.g.
+<code>DEBUG_Collision</code>, <code>DEBUG_Surface</code>, <code>DEBUG_particles</code>) for QA tone
+testing — a hallmark of this devkit build. The frontend loads locale banks lazily; the EBOOT marks
+them <code>(noassert)|Audio/Locales/%s/%s.fev</code> so a missing locale is non-fatal.</div>
+<div class="warn">The engine <em>supports</em> localized voice-over: the EBOOT contains per-language
+speech paths <code>Audio/Speech/{English,Dutch,French,German,Italian,Spanish}/Speech.fsb</code>.
+This particular devkit build, however, ships only a single flat <code>Audio/Speech/Speech.fsb</code>
+(~2&nbsp;MB) with no language sub-folders, and the EBOOT also carries a fallback
+<code>(noassert)|Audio/Speech/Speech</code> path. So the six-language layout is the retail/runtime
+scheme, not what is present on disk here.</div>
+
+<h2>DynamicMixer</h2>
+<p>The DynamicMixer (<code>libs/Audio/Controllers/DynamicMixer/</code>) is the heart of the mix. It is
+configured entirely by <code>Audio/XML/DynamicMixer.xml</code> (110&nbsp;KB of XML) and applies
+priority-ordered <em>stacks</em> and transient <em>presets</em> on top of the static channel groups.
+It mixes <strong>15 audio groups</strong>:</p>
+<table>
+  <tr><th>Group</th><th>Role</th><th>Group</th><th>Role</th></tr>
+  <tr><td>Master</td><td>final bus + VolumeMeter</td><td>Spot_Ambience</td><td>positional ambience</td></tr>
+  <tr><td>Music</td><td>streamed score (LP/HP/EQ)</td><td>Ambience</td><td>level ambience bed</td></tr>
+  <tr><td>PlayerEngine</td><td>player car (Tonic)</td><td>Particles</td><td>FX particle audio</td></tr>
+  <tr><td>CPUEngine</td><td>AI cars</td><td>HyperReal</td><td>"hyperreal" stylised mix</td></tr>
+  <tr><td>Powerplays</td><td>powerplay events (LP+Flanger)</td><td>Speech</td><td>voice / commentary</td></tr>
+  <tr><td>Surfaces</td><td>road / tyre surface</td><td>Collisions</td><td>impacts</td></tr>
+  <tr><td>Swooshes</td><td>near-miss whooshes</td><td>ReverbSubmix</td><td>reverb return bus</td></tr>
+  <tr><td>HUD</td><td>UI / menu SFX</td><td></td><td></td></tr>
+</table>
+
+<h3>Per-group DSP chains</h3>
+<p>Each group has <strong>7 DSP slots</strong> (slot 7 is reserved for <code>BlackRock_VolumeMeter</code>).
+The chains are declared in the <code>&lt;AudioGroups&gt;</code> block. Real examples from
+<code>DynamicMixer.xml</code>:</p>
+<pre class="hex">&lt;Music&gt;       FMod_Lowpass, FMod_Highpass, …, BlackRock_FrequencyFilter, BlackRock_VolumeMeter
+&lt;PlayerEngine&gt; FMod_Lowpass, …, BlackRock_FrequencyMeter, BlackRock_VolumeMeter
+&lt;Powerplays&gt;  FMod_Lowpass, BlackRock_Flanger, …, BlackRock_VolumeMeter
+&lt;Master&gt;      (6× Empty), BlackRock_VolumeMeter</pre>
+<p>The DSP palette mixes stock FMOD effects with custom Black Rock ones. The FMOD effects compiled in
+include: Lowpass, Highpass, Compressor, Distortion, SFXReverb, ParamEQ, Lowpass Simple, ITLowpass,
+Echo, ITEcho, Flange, Chorus, Normalise, PitchShift and Oscillator. Custom DSPs seen in the XML are
+<code>BlackRock_VolumeMeter</code>, <code>BlackRock_FrequencyFilter</code>,
+<code>BlackRock_FrequencyMeter</code>, <code>BlackRock_Flanger</code> and <code>BlackRock_Reverb</code>.</p>
+
+<h3>Stacks (global mix states)</h3>
+<p>Stacks are priority-ordered global mood layers — only the relevant ones blend in, each with a
+<code>&lt;Transition Time="…" Curve="…"/&gt;</code>. The <code>&lt;Stacks&gt;</code> block holds
+eight of them: <code>Frontend</code> (priority 10), <code>Game</code> (priority 0),
+<code>GamePaused</code> / <code>GameResults</code> (7), <code>GameCrashCam</code> /
+<code>GameRubberNeckCam</code> / <code>GamePowerPlayTakeDownCam</code> (5) and
+<code>GameHudSlowDownTime</code> (3). When in the frontend, for instance, the mixer ducks almost
+everything to silence and leaves Music up:</p>
+<pre class="hex">&lt;Frontend Priority="10"&gt;
+  &lt;Music&gt;       Volume = -10 dB &lt;/Music&gt;
+  &lt;HUD&gt;         Volume = -14 dB &lt;/HUD&gt;
+  &lt;PlayerEngine, CPUEngine, Swooshes, Surfaces, …&gt; Volume = -60 dB (effectively off)
+&lt;/Frontend&gt;</pre>
+<p>In-world acoustics and one-off events are not stacks but <strong>presets</strong> (see below), e.g.
+<code>TUNNEL_ENTER</code>/<code>TUNNEL</code> (filter the music to <strong>1857&nbsp;Hz</strong> on
+its low-pass Slot2 and duck ambience −10&nbsp;dB), <code>LANDING_PLANE</code>, <code>Tonic</code>
+(I3DL2 reverb on PlayerEngine), and a <code>ReverbPreset</code> preset that selects the named
+<code>DangerZone</code> reverb (<code>Blend="1"</code>) during powerplays.</p>
+
+<h3>Presets (transient one-shots)</h3>
+<p>Presets are short-lived ducking/focus reactions to game events, tagged with one of three named
+priorities (<code>HIGH</code>=0, <code>MEDIUM</code>=128, <code>LOW</code>=256; lower wins). Most use
+<code>MEDIUM</code>, with the loud stingers on <code>HIGH</code>. Real preset names from the file:</p>
+<ul>
+  <li><code>SOLO_HYPERREAL</code>, <code>FOCUS_HYPERREAL</code>, <code>FOCUS_HYPERREAL2</code> — duck
+      everything but the hyperreal layer for a cinematic moment.</li>
+  <li><code>FOCUS_RUMBLE</code>, <code>FOCUS_POWERPLAY</code>, <code>POWERPLAY_GENERIC_EXPLOSION</code>,
+      <code>POWERPLAY_TRUCK_HYPERREAL</code> — <a href="system-powerplay.html">powerplay</a> stingers.</li>
+  <li><code>EXPLOSION</code>, <code>DEBRIS</code> — impact ducking, triggered from the particle system.</li>
+</ul>
+<p>The <a href="format-emitter.html">particle audio</a> bindings in <code>Audio/XML/Particles.xml</code>
+hook particles to FMOD events <em>and</em> to these mixer presets. For example the
+<code>explosion</code> particle plays <code>particles/particles/explosion</code> and fires the
+<code>EXPLOSION</code> mix preset; <code>fire</code> (hyperreal) fires <code>FIRE</code>;
+<code>debris</code> fires <code>DEBRIS</code> — each with a <code>mix_preset_speed_mix</code> so the
+ducking scales with car speed.</p>
+
+<h2>Reverb &amp; DirectionalReverb</h2>
+<p>LLAudio2 has two reverb managers:
+<code>ReverbManager.cpp</code> and <code>DirectionalReverbManager.cpp</code>. Reverb is placed in the
+world as <strong>ReverbArea</strong> volumes (<code>Sphere</code> / <code>Box</code>) with a
+<code>ReverbPreset</code>, a <code>Transition</code> and a <code>Blend</code>; the runtime crossfades
+presets as the listener moves between zones. The full I3DL2 reverb parameter set is supported
+(EnvSize, EnvDiffusion, RoomHF/RoomLF, DecayTime, DecayHFRatio, Reflections, ReverbDelay,
+EchoTime/Depth, ModulationTime/Depth, AirAbsorptionHF, Density, Diffusion, …).</p>
+<p>Per-level reverb is authored in <code>Audio/Locales/&lt;level&gt;/&lt;level&gt;_Audio_Reverb.xml</code>
+as a list of <code>AudioTrigger</code> box volumes. Each names a reverb type and a wet mix, e.g. from
+<code>downtown_Audio_Reverb.xml</code>:</p>
+<table>
+  <tr><th>Trigger label</th><th>reverb_type</th><th>reverb_wet_mix</th></tr>
+  <tr><td>TUNNEL 1 / Heli_Tunnel</td><td>HALL</td><td>1.00</td></tr>
+  <tr><td>Terminal 1</td><td>HALL</td><td>0.70</td></tr>
+  <tr><td>Under Bridge 6</td><td>OVERHEAD</td><td>0.79</td></tr>
+  <tr><td>streets 1 / 3 / 4</td><td>OVERHEAD</td><td>0.50</td></tr>
+</table>
+<p>Triggers also carry a <code>dynamic_mixer_preset</code> hook, a 3-axis <code>falloff</code> and a
+<code>force_fmod_settings</code> flag, so the same authored volume can drive both reverb and a mixer
+state. The <code>PatchBay.xml</code> maps live game parameters (e.g. <code>Player Speed (0-200)</code>,
+<code>Trigger Proximity (0-1)</code>) onto FMOD event parameters through clamp/scale/response rows —
+this is how speed-reactive sounds like <code>Whoosh</code> and <code>Triggerzone</code> are wired.</p>
+
+<h2>Tonic — the granular engine synthesizer</h2>
+<p>The most distinctive part of the audio engine is <strong>Tonic</strong> (<code>Audio::Tonic</code>,
+runs as a SPURS job <code>JobTonic</code> with its own <code>TonicHeap</code>). Rather than looping
+recorded engine samples, Tonic <em>synthesizes</em> each car's engine in real time using
+<strong>granular synthesis</strong> (<code>SettingsUseTonicInput</code>,
+<code>SettingsTonicGrainWindow</code>). It is driven by the live physics state and a per-car
+<strong>state engine</strong> defined in XML.</p>
+
+<h3>Data layout</h3>
+<table>
+  <tr><th>Path</th><th>Contents</th></tr>
+  <tr><td><code>Tonic/_StateEngine/&lt;Car&gt;.xml</code></td><td>Per-car state-engine tuning (Hypercar_03, Muscle_*, Supercar_*, Truck_*)</td></tr>
+  <tr><td><code>Tonic/_CarTypeSpecific/*.xml</code></td><td>Per-class defaults: Engine_States, Hypercar_States, Muscle_States, Supercar_States, Truck_States</td></tr>
+  <tr><td><code>Tonic/_CarSpecific/&lt;Car&gt;_Specific.xml</code></td><td>Per-car overrides (~25 cars)</td></tr>
+  <tr><td><code>Tonic/_OutputFiles/&lt;Car&gt;.tonic / .tonic2</code></td><td>Compiled grain tables (24 cars × 2 = 48 files)</td></tr>
+  <tr><td><code>Tonic/Tonic.fsb / .fev</code></td><td>Tonic's own sample bank + events</td></tr>
+</table>
+<p>The compiled <a href="format-tonic.html">.tonic</a> files are big-endian binaries. The header of
+<code>Hypercar_03.tonic</code> begins with what look like count fields and a sample rate
+(<code>0x0000AC44</code> = <strong>44100&nbsp;Hz</strong>); the <code>.tonic2</code> twin uses a lower
+rate (<code>0x00005208</code> = 21000), suggesting two quality tiers of grain data:</p>
+<pre class="hex">Hypercar_03.tonic : 00 00 00 07 00 00 00 01 00 00 00 04 00 00 00 12
+                    00 00 ac 44 00 00 00 00 00 00 03 4d 00 00 00 02   &lt;- 0xAC44 = 44100 Hz</pre>
+
+<h3>What the state engine controls</h3>
+<p>The <code>_StateEngine</code> XML is remarkably detailed tuning — far beyond a normal sample set.
+Reading <code>Engine_States.xml</code> (FileVersion 3.00) shows Tonic models a complete drivetrain:</p>
+<ul>
+  <li><b>Aggression bands</b> — up to 4 bands (<code>SettingsAggressionBandCount=4</code>) that blend
+      exhaust/engine/thumper/boost volumes and the DSP filter settings by how hard the engine is
+      working (e.g. <code>SettingsExhaustVolume_1..4 = 0.6 → 1.0</code>).</li>
+  <li><b>A DSP voice chain</b> per band: low-pass (<code>SettingsLowPassFreq_=200</code>), band-pass
+      (<code>SettingsBandPassFreq_=1400</code>, with Wet/Q per band) and saturation
+      (<code>SettingsSaturationAmount_/Mix_</code>).</li>
+  <li><b>Simulated gearbox</b> — <code>SettingGearCount=4</code> with per-gear RPM entry/exit ranges,
+      time-in-gear randomisation, speed hints and per-gear aggression scaling
+      (e.g. 1st gear <code>RpmHighExit=5900</code>, <code>SpeedHint=30</code>).</li>
+  <li><b>One-shots</b> — Pop/backfire, gear up/down engage &amp; exit, enter/exit boost and a 16-step
+      <code>Thumper</code> sequencer, each with ducker gain/release and L/R/LFE speaker sends.</li>
+  <li><b>Per-camera mixes</b> — separate exhaust/engine/oneshot/rear/LPF/band-pass/saturation scalers
+      for Normal, Bumper and Bonnet cameras (<code>_Camera_1/2/3</code>), so the engine sounds
+      different from each viewpoint.</li>
+  <li><b>Rev limiter, skid, lost-gear</b> sub-states with their own RPM thresholds and timings.</li>
+</ul>
+<div class="tip">Because Tonic is parametric, the AI cars and the player share the same synth; the
+<code>PlayerEngine</code> and <code>CPUEngine</code> mixer groups simply route different Tonic
+instances. The Tonic mixer stack even applies its own I3DL2 reverb to the player engine
+(<code>Decay_time=1.5</code>, <code>Reflect_delay=0.01</code>, <code>Reverb_delay=0.015</code>).</div>
+
+<h2>Live auditioning &amp; debug</h2>
+<p>This devkit build keeps the full FMOD Designer live-update path. LLAudio2 exposes a network audio
+link (<code>Audio/LLAudio/Network/{NetworkAddress,NetworkPort,Connect}</code> and a
+<code>NetworkManager_Update</code>) so a sound designer's host PC can audition events on the running
+console; the <a href="engine-middleware.html">oscpack</a> (OSC/UDP) library is linked for this kind of
+tooling traffic. A rich debug HUD is wired to the <a href="data-globalregs.html">debug-menu</a> under
+<code>Audio/DebugHUD/DynamicMixer/…</code> (panel layout, per-DSP name colours, the active
+preset/instance/slot lists) and <code>Audio/Tonic/…</code> (car picker, multichannel speaker gains,
+grain window, "Playback Debug Capture" that dumps a WAV/RAW of the synth output). There is also a
+recorded command stream for deterministic replay: <code>Audio/Replay/audio_commands_recording.bin</code>.</p>
+
+<h2>A note on .lip files</h2>
+<p>Despite the nav summary, the <code>.lip</code> files in this build are <strong>not</strong> voice
+lip-sync. The only <code>.lip</code> files on disk live under
+<code>Environments/Levels/&lt;level&gt;/Event/RACING/TrackLogic/&lt;A-D&gt;/Track.lip</code> and are
+big-endian offset-table binaries holding track-logic / timeline data, not audio. See
+<a href="format-lip.html">Lip Sync (.lip)</a> for the byte layout. Voice-over ships as ordinary
+<a href="format-fsb.html">Speech.fsb</a> banks.</p>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="engine-middleware.html">Middleware Stack</a> — FMOD Ex 4.28 and the rest of the stack</li>
+  <li><a href="format-fsb.html">FMOD Sound Banks (.fsb)</a> · <a href="format-fev.html">FMOD Events (.fev)</a> — the bank/event byte formats</li>
+  <li><a href="format-tonic.html">Tonic (.tonic/.tonic2)</a> — compiled granular grain tables</li>
+  <li><a href="format-lip.html">Lip Sync (.lip)</a> — the track-logic .lip files (not audio)</li>
+  <li><a href="system-powerplay.html">Powerplay System</a> — what the FOCUS_*/EXPLOSION presets react to</li>
+  <li><a href="format-emitter.html">Emitters (.emitter*)</a> — particle-to-audio bindings</li>
+  <li><a href="data-globalregs.html">Global Registry</a> · <a href="data-params.html">.params Tuning System</a> — where the debug/audio knobs live</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

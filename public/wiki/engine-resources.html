@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Resources &amp; Streaming — Split/Second RE Wiki</title>
+<meta name="description" content="Split/Second's resource model: the Resident residency system, loader threads, .ark archives (Static/Stream), and sector-based geometry/texture streaming via .stream/.streamtex.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Resources &amp; Streaming" data-category="Engine &amp; Tech">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Resources &amp; Streaming</h1>
+<p>Split/Second has to keep a dense, fully-destructible city resident in a 256&nbsp;MB console while a
+race tears through it at speed. It does this with a two-tier resource model: a <b>Resident</b> set that
+is loaded up-front and pinned for the duration of a context, and a <b>sector streaming</b> system that
+continuously pages level geometry and textures in and out as the camera moves. Both are fed by
+background <b>loader threads</b> and (in the shipping configuration) packed into <b>.ark</b> archives.</p>
+
+<div class="infobox"><div class="ib-title">Resource system</div><table>
+  <tr><th>Category</th><td>Resource &amp; streaming</td></tr>
+  <tr><th>Tiers</th><td>Resident · Streamed</td></tr>
+  <tr><th>Archive</th><td><a href="format-ark.html">.ark</a> (Static + Stream)</td></tr>
+  <tr><th>Streamed geom</th><td><a href="format-streamtex.html">.stream</a> (per-sector / per-model)</td></tr>
+  <tr><th>Streamed tex</th><td><a href="format-streamtex.html">.streamtex</a></td></tr>
+  <tr><th>Loaders</th><td>Level + Front End loader threads</td></tr>
+  <tr><th>Disable flag</th><td><code>-noark</code></td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<div class="note">This is the <a href="build-layout.html">devkit/QA build</a>, so on disk everything is
+<b>loose</b> under <code>USRDIR/Deferred/</code> and the <code>.ark</code> archives are present but the
+game can be told to ignore them. The strings, debug paths and file names below are taken from
+<code>eboot_strings.txt</code> and from the data tree itself.</div>
+
+<h2>Two-tier residency: Resident vs. Streamed</h2>
+<p>Every load request is tagged with a <b>residency policy</b>, encoded right in the request string with
+a <code>Policy|Path</code> syntax. The dominant tag is <b><code>Resident</code></b>: load it now and
+keep it. A <code>(noassert)</code> qualifier means "it's fine if this is missing". Real examples from
+the EBOOT:</p>
+<pre class="hex">Resident|UI/HUD/Hud.gfx
+Resident|Scoring/Scoring.params
+Resident|Movies/FE_MM_Static.bik
+Resident(noassert)|AreaOfEffects/EffectParams.params
+Resident(noassert)|Environments/Levels/%s/Cameras/Cameras.xml
+Resident(noassert)|Vehicles/Bodies/%s/%s.rData</pre>
+<p>Other policy prefixes appear for non-pinned content — <code>environment|…</code>,
+<code>environment(noassert)|…</code>, <code>data|…</code> and <code>root|…</code> — which scope a
+resource to a load context (the whole environment, the root data folder, etc.) rather than pinning it
+for the entire session. The format generally is:</p>
+<table>
+  <tr><th>Token</th><th>Meaning</th></tr>
+  <tr><td><code>Resident</code></td><td>Load up-front, pin for the lifetime of the owning context</td></tr>
+  <tr><td><code>environment</code></td><td>Scoped to the current level / environment load</td></tr>
+  <tr><td><code>data</code> / <code>root</code></td><td>Scoped to the data-root / archive context</td></tr>
+  <tr><td><code>(noassert)</code></td><td>Suffix: do not assert/fail if the file is absent</td></tr>
+  <tr><td><code>%s</code></td><td>Runtime-substituted (level name, vehicle name, …)</td></tr>
+</table>
+<p>The Resident set is broad: HUD and frontend Scaleform (<a href="format-gfx.html">.gfx</a>), boot
+movies (<a href="format-bik.html">.bik</a>), the <a href="data-params.html">.params</a> tuning files
+for scoring / camera / AreaOfEffects, the global <a href="format-fxc.html">shader DB</a>, generic
+vehicle textures and shadows, and per-level camera/particle config. These never stream — they are the
+"always there" backbone the streaming system builds on.</p>
+
+<h2>Loader threads</h2>
+<p>Loading happens off the main thread. The QA build's profiler bucket names reveal a
+<b>main thread / loader thread</b> split for both the in-game and frontend contexts:</p>
+<table>
+  <tr><th>Thread / job</th><th>Role</th></tr>
+  <tr><td><code>Level (Loader Thread)</code></td><td>Streams &amp; loads level resources during a race</td></tr>
+  <tr><td><code>Front End (Loader Thread)</code></td><td>Loads frontend/menu resources</td></tr>
+  <tr><td><code>Level (Main Thread)</code> / <code>Front End (Main Thread)</code></td><td>Main-thread counterparts (commit/use)</td></tr>
+  <tr><td><code>LoaderThread</code> / <code>LoaderJob</code></td><td>The generic loader thread &amp; its work items</td></tr>
+  <tr><td><code>Loading Thread</code></td><td>The boot/install-time loader</td></tr>
+</table>
+<p>Loads are queued as <code>LoaderJob</code>s and serviced by <code>LoaderThread</code>, so the main
+thread issues a request and later finds the resource ready. PlayStation Store install/copy uses its own
+threads — <code>GameData_InstallThread</code> and <code>GameData_LoadThread</code> — which copy the
+shipping <code>.ark</code>s and report <i>"Total KBytes copied %d/%d"</i>.</p>
+
+<h2>.ark archives</h2>
+<p>For shipping, related resources are concatenated into <b>.ark</b> archives with a hashed
+table-of-contents at the front. The byte layout is documented on the
+<a href="format-ark.html">Archives (.ark)</a> page; here we cover the <i>role</i> they play. The
+loader looks up logical paths and, if archives are enabled, satisfies them from the matching
+<code>.ark</code> rather than from a loose file. Top-level archives referenced by the EBOOT:</p>
+<table>
+  <tr><th>Archive</th><th>Contents</th></tr>
+  <tr><td><code>Resident.ark</code></td><td>The Resident set (always-loaded core)</td></tr>
+  <tr><td><code>Frontend.ark</code></td><td>Frontend / menu resources</td></tr>
+  <tr><td><code>InGame1.ark</code>, <code>InGame2.ark</code>, <code>InGame3.ark</code></td><td>In-race resource pools</td></tr>
+  <tr><td><code>FrontendPowerplays.ark</code> / <code>%sPowerplays.ark</code></td><td>Powerplay assets (per-level)</td></tr>
+  <tr><td><code>Environments/Levels/%s.ark</code></td><td>Per-level bundle</td></tr>
+  <tr><td><code>Characters/RiderAnimations/animationNetwork/rider_%02d.ark</code></td><td>Per-rider animation set</td></tr>
+</table>
+
+<h3>Per-level Static and Stream archives</h3>
+<p>The big payoff is the level sector data, split into two archives per level under
+<code>Environments/Levels/&lt;Level&gt;/Sectors/</code>: a <b><code>.Static.ark</code></b> (low-LOD,
+always-present geometry that defines the level skeleton) and a much larger
+<b><code>.Stream.ark</code></b> (the high-detail mid/detail-LOD geometry and textures that page in by
+sector). On disk, all ten levels ship both — 20 <code>.ark</code> files in total. The size split tells
+the whole story:</p>
+<pre class="hex">Downtown.Static.ark    91,566,080 bytes  (~87 MB, low-LOD core)
+Downtown.Stream.ark   563,722,240 bytes (~538 MB, streamed detail)</pre>
+<p>The Stream archive is roughly <b>6×</b> the size of the Static one — i.e. the overwhelming majority
+of a level's art is paged in on demand and never all resident at once. The loader names these resource
+groups internally as <code>CityStatic</code> / <code>CityStaticOverlay</code> and <code>CityStream</code>
+/ <code>CityStreamOverlay</code>, keyed by subtrack + light-rig (e.g. <code>CityStream|%s_rig%d</code>).</p>
+
+<div class="tip">Archives are optional in this build. The data-stream/file system honours a
+<b><code>-noark</code></b> command-line flag: with it set, <i>"Archives disabled - remove -noark to
+enable them"</i> and the loader reads loose files straight from <code>USRDIR/Deferred/</code>; without
+it, <i>"Archives enabled - use -noark if you need to disable them"</i> and it pulls from
+<code>data|Resident.ark</code> etc. This is why the disk has both the loose tree and the archives.</div>
+
+<h2>Sector streaming</h2>
+<p>A level is partitioned into <b>sectors</b>. The <code>.sectorInfo</code> file
+(see <a href="format-sectors.html">Sectors</a>) describes the partition — for Downtown it is ~58&nbsp;KB
+describing the grid — and a per-subtrack <code>SectorVisibility.xml</code> precomputes which sectors are
+visible from which. At runtime the <b>Stream Manager</b> (a "data stream manager" with a staging buffer
+and a memory pool) decides, per frame, which sectors should be resident and queues their geometry and
+textures.</p>
+
+<h3>The streaming files</h3>
+<table>
+  <tr><th>File</th><th>Role</th></tr>
+  <tr><td><code>&lt;model&gt;.model.stream</code> / <code>…MD.model.stream</code></td><td>Streamed geometry payload (mid/detail LOD) for a sector or model — see <a href="format-streamtex.html">Streaming</a></td></tr>
+  <tr><td><code>&lt;name&gt;.streamtex</code></td><td>Streamed texture payload — see <a href="format-streamtex.html">Streaming</a></td></tr>
+  <tr><td><code>.sectorInfo</code></td><td>Sector partition / bounds (<a href="format-sectors.html">Sectors</a>)</td></tr>
+  <tr><td><code>SectorVisibility.xml</code></td><td>Precomputed sector-to-sector visibility</td></tr>
+  <tr><td><code>.Stream.ark</code> / <code>.Static.ark</code></td><td>The packed payload the stream manager reads from</td></tr>
+</table>
+<p>Streaming isn't limited to levels: the <b>frontend vehicle showroom</b> streams car bodies too. Each
+of the 39 frontend bodies under <code>Vehicles/Frontend/Bodies/&lt;Car&gt;/</code> ships a
+<code>&lt;Car&gt;.model.stream</code> + <code>&lt;Car&gt;.streamtex</code> pair (39 of each on disk),
+e.g. <code>Musclecar_01.model.stream</code> (~1.2&nbsp;MB) and <code>Musclecar_01.streamtex</code>
+(~3.1&nbsp;MB) — the high-res "hero" car detail is paged in only when you're looking at that car.</p>
+
+<h3>Size cap on streamed resources</h3>
+<p>There is a hard upper bound on a single streamable chunk. If a resource is larger than the stage
+buffer can handle in one shot, the loader refuses to stream it and logs:</p>
+<pre class="hex">Stream texture resource too big to stream: %s
+Stream model resource too big to stream: %s</pre>
+<p>So oversized textures/models have to be authored to fit the streaming budget (or be made Resident
+instead). <span class="badge theory">Theory</span> the bound is the configured stage-buffer size (see
+debug menu below).</p>
+
+<h2>LOD &amp; residency state</h2>
+<p>Sectors don't just stream in/out — they have a <b>residency state</b> reported by the QA build's
+sector HUD. The states track how far the sector's data has progressed:</p>
+<table>
+  <tr><th>State</th><th>Meaning</th></tr>
+  <tr><td><code>ONLY HIGH</code></td><td>Only the high (low-detail/static) LOD is present</td></tr>
+  <tr><td><code>Not Forced</code></td><td>No forced-LOD override active</td></tr>
+  <tr><td><code>Mapped</code></td><td>Resource mapped/available</td></tr>
+  <tr><td><code>Expanded</code></td><td>Fully expanded / detail resident</td></tr>
+</table>
+<p>The HUD shows per-sector <b>Geom Residency</b>, <b>Tex Residency</b>, <b>Priority</b> and
+<b>Visibility</b> columns, with queue-size buckets <code>128 (32k)</code>, <code>256 (128k)</code>,
+<code>512 (512k)</code>, <code>1024 (2048k)</code>. LOD selection by camera distance is driven by
+<code>CityLOD.params</code> per level. Default <code>Downtown/Params/CityLOD.params</code>:</p>
+<pre class="hex">/EnvironmentSS/LODs:
+    'a; High LOD Draw Dist'      = 150.0  (0.0, 1000.0);
+    'b; Mid LOD Draw Dist'       = 300.0  (0.0, 1000.0);
+    'c; Low LOD Draw Dist'       = 1500.0 (0.0, 2000.0);
+    'd; MaxNumSectorsRendered'   = 100    (0, 100);
+    'e; High LOD Fade Range'     = 30.0   (0.1, 500.0);
+    'f; Physics Objects Fade Range' = 20.0 (1.0, 100.0);</pre>
+<p>So in Downtown the high-detail mesh is drawn within 150&nbsp;m, mid-LOD out to 300&nbsp;m, low-LOD
+to 1500&nbsp;m, capped at 100 simultaneously-rendered sectors. The generic
+<code>Generic/Params/CityLOD.params</code> ships with all draw distances at 10000 and the cap at 1000 —
+i.e. an "everything visible" debug default that per-level files override.</p>
+
+<h2>Stream-manager tuning (debug menu)</h2>
+<p>The streaming budget and look-ahead are tunable live in the QA build under
+<code>Sectors/Streaming/…</code> (these are debug registers, not shipped <code>.params</code> files):</p>
+<table>
+  <tr><th>Debug parameter</th><th>Controls</th></tr>
+  <tr><td><code>c; Stage Buffer MB</code></td><td>Size of the streaming staging buffer</td></tr>
+  <tr><td><code>d; Memory Pool MB</code></td><td>Size of the streamed-resource memory pool</td></tr>
+  <tr><td><code>e; Max Sector Stream Dist</code></td><td>How far ahead sectors are kept resident</td></tr>
+  <tr><td><code>f; Geom Priority Offset</code> / <code>g; …Per View</code></td><td>Bias geometry vs. texture priority</td></tr>
+  <tr><td><code>h; Max queue size KB</code></td><td>Cap on outstanding stream requests</td></tr>
+  <tr><td><code>i; Look Ahead Dist</code> / <code>j; Look Ahead Damp</code> / <code>k; Look Ahead Reset Vel</code></td><td>Predictive pre-loading in the direction of travel</td></tr>
+  <tr><td><code>a; Disable geometry streaming</code> / <code>b; Disable texture streaming</code></td><td>Kill switches for debugging</td></tr>
+  <tr><td><code>Eject Stream Resources</code></td><td>Force-flush the streamed set</td></tr>
+</table>
+<p>The <b>look-ahead</b> registers are the key trick: the manager projects a stream position <i>ahead</i>
+of the camera along the velocity vector (damped, with a reset threshold) so that the geometry for where
+you're <i>about to be</i> is already paging in. Boot-time switches also exist —
+<code>game_setup/disable_sector_streaming</code>, <code>low_res_sector_textures</code> and
+<code>load_Sector_overlays</code> — and the stream manager reports its allocation at startup:
+<i>"Creating data stream manager: %dk stage buffer, %dk mem pool"</i>.</p>
+
+<div class="warn">"Stage Buffer MB" and "Memory Pool MB" are exposed as tunables in this QA build; the
+shipped default sizes live in the binary <code>default.global_regs</code> (see
+<a href="data-globalregs.html">Global Registry</a>) and the debug-menu defaults, not in any plaintext
+file, so exact MB figures are <span class="badge partial">Partial</span> here.</div>
+
+<h2>Resource accounting</h2>
+<p>The build ships with a full resource-stats system for tracking memory. It buckets every resource by
+<b>Category</b> / <b>Super Category</b> and can dump a CSV (<code>%srs-%s.csv</code>, written by
+<code>ResourceStatsCsv</code>) plus an on-screen <code>ResourceStats.gfx</code> overlay. Memory pools are
+labelled <code>GPU Local</code>, <code>GPU Main</code> and <code>System</code> — the RSX-visible vs.
+main-RAM split that the residency decisions ultimately have to respect.</p>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-ark.html">Archives (.ark)</a> — the byte layout of the Static/Stream archives.</li>
+  <li><a href="format-streamtex.html">Streaming (.stream/.streamtex)</a> — the streamed geometry/texture payload formats.</li>
+  <li><a href="format-sectors.html">Sectors (.sectorInfo)</a> — the sector partition this all keys off.</li>
+  <li><a href="format-model.html">Model (.model)</a> &amp; <a href="format-textures.html">Textures (.textures)</a> — the resident-side asset formats.</li>
+  <li><a href="engine-jobstream.html">Threading &amp; JobStream</a> — the thread model the loaders live in.</li>
+  <li><a href="engine-rendering.html">Rendering Pipeline</a> — what consumes the streamed sectors.</li>
+  <li><a href="system-tracks.html">Tracks &amp; Levels</a> — level pipeline, subtracks, light rigs.</li>
+  <li><a href="build-layout.html">Build &amp; File Layout</a> — the <code>USRDIR/Deferred</code> tree.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

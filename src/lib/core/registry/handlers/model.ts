@@ -1,19 +1,25 @@
 // .model / .model.stream registry handler — Crayon2 renderable geometry.
 //
-// Category: mesh. Read-only MVP (caps.write=false): faithfully decodes the
-// .model.stream high-LOD geometry (half-float positions + tri-strips) and a
-// base .model's header, bounds, and (where safely detectable) tri-strips.
+// Category: mesh. Read-only (caps.write=false). Decodes:
+//   * .model.stream — high-LOD half-float vertex stream + tri-strips (the
+//     MUST-RENDER car path), and
+//   * base .model   — the Crayon2 node tree's explicit vertex-buffer and
+//     index/draw-call section tables, yielding per-buffer submeshes
+//     (positions + unstripped triangle indices, plus float-format UVs). Covers
+//     cars, wheels, level backdrops, environment props and simple lights.
 // See src/lib/core/model.ts for the byte-layout notes & wiki references.
 
 import {
 	parseModel,
 	triangleCount,
+	vertexCount as modelVertexCount,
 	MODEL_MAGIC,
 	type ParsedModel,
 } from '../../model';
 import type { ResourceHandler } from '../handler';
 
-// Magic 02 00 00 08 stored big-endian.
+// Magic 02 00 00 08 stored big-endian (the standard variant; the skinned
+// variant 02 01 00 08 shares the first and last byte — both sniff via parseRaw).
 const MODEL_MAGIC_BYTES = new Uint8Array([0x02, 0x00, 0x00, 0x08]);
 
 function fmtBounds(m: ParsedModel): string {
@@ -29,8 +35,10 @@ export const modelHandler: ResourceHandler<ParsedModel> = {
 	description:
 		'Crayon2 renderable geometry. Decodes the .model.stream high-LOD vertex ' +
 		'stream (4 big-endian half-floats/16-byte stride) + 16-bit triangle ' +
-		'strips, and a base .model header/bounds/strips. Partial: per-section ' +
-		'vertex format and the node-tree section table are not yet resolved.',
+		'strips, AND a base .model via its node-tree vertex-buffer / draw-call ' +
+		'section tables -> per-buffer submeshes (positions + unstripped indices, ' +
+		'+UVs for float buffers). Skinned (02 01 00 08) variants and a few prop ' +
+		'layouts are decoded header-only (no section table) and flagged partial.',
 	category: 'Graphics', // viewport family: mesh
 	caps: { read: true, write: false },
 	extensions: ['.model', '.model.stream'],
@@ -40,14 +48,14 @@ export const modelHandler: ResourceHandler<ParsedModel> = {
 	parseRaw: (raw) => parseModel(raw),
 	describe: (m) => {
 		const tris = triangleCount(m);
-		const verts = m.meshes.reduce((s, mesh) => s + mesh.vertexCount, 0);
+		const verts = modelVertexCount(m);
 		if (m.kind === 'stream') {
 			return `model.stream: ${verts} verts, ${tris} tris, ${fmtBounds(m)}`;
 		}
-		const idx = m.meshes.reduce((s, mesh) => s + mesh.indices.length, 0);
+		const suffix = m.partial ? ' (partial)' : '';
 		return (
 			`model: ${m.nodeCount ?? '?'} nodes, magic 0x${(m.magic ?? MODEL_MAGIC).toString(16)}, ` +
-			`${tris} tris (${idx} indices), ${fmtBounds(m)}`
+			`${m.meshes.length} mesh(es), ${verts} verts, ${tris} tris, ${fmtBounds(m)}${suffix}`
 		);
 	},
 
@@ -57,6 +65,12 @@ export const modelHandler: ResourceHandler<ParsedModel> = {
 			expect: { parseOk: true },
 		},
 		{
+			// Base .model with full vertex/index section tables (car body, no stream).
+			file: 'Vehicles/Bodies/Musclecar_01/Musclecar_01.model',
+			expect: { parseOk: true },
+		},
+		{
+			// Simple float-format base .model (5x5 quad grid, P3+UV).
 			file: 'Environments/Levels/airport_test_03/ReflectionMap/Lights/PointLight.model',
 			expect: { parseOk: true },
 		},

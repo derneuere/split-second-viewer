@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Havok Packfiles — Split/Second RE Wiki</title>
+<meta name="description" content="The Havok 5.5.0 binary packfile container (magic 0x57E0E057) used by every Split/Second physics asset: header, sections, classname registry and XML twins.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Havok Packfiles" data-category="Formats · Physics (Havok)">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Havok Packfiles</h1>
+<p>Every physics asset in Split/Second is a <strong>Havok 5.5.0 binary packfile</strong> — the
+serialized, platform-native form of a Havok object graph. The container is identical regardless of
+what it carries (a vehicle rigid body, a level collision mesh, a deformable body), so this page is
+the reference that the other Havok-format pages link back to. The on-disk magic is
+<code>57&nbsp;E0&nbsp;E0&nbsp;57</code> and the embedded version banner is <code>Havok-5.5.0-r1</code>,
+matching the <code>contrib/Havok/Havok550</code> middleware noted in the
+<a href="engine-middleware.html">Middleware Stack</a>.</p>
+
+<div class="infobox"><div class="ib-title">Havok packfile</div><table>
+  <tr><th>Category</th><td>Physics container (Havok)</td></tr>
+  <tr><th>Middleware</th><td>Havok 5.5.0-r1</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3 PPC)</td></tr>
+  <tr><th>Magic</th><td><code>57 E0 E0 57</code></td></tr>
+  <tr><th>2nd magic</th><td><code>10 C0 C0 10</code></td></tr>
+  <tr><th>fileVersion</th><td><code>5</code> (constant)</td></tr>
+  <tr><th>Pointer size</th><td>4 bytes (ptr32)</td></tr>
+  <tr><th>Sections</th><td><code>__classnames__</code>, <code>__types__</code>, <code>__data__</code></td></tr>
+  <tr><th>Used by</th><td>.phys, .mainColl, .hkColl, .hkPPs, .hkRBs …</td></tr>
+  <tr><th>XML twin</th><td>sometimes (.hk*Xml)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<p>The format is not Black-Rock-specific: it is the stock Havok <em>packfile</em> serialization
+(<code>hkPackfileWriter</code>). What makes it self-documenting is that every packfile embeds its own
+<strong>class reflection</strong> — the names and member layouts of the Havok classes it contains —
+so the file can be parsed without the matching Havok SDK headers. Split/Second ships these files
+<em>loose</em> on disk in the QA build, which is what makes them readable here.</p>
+
+<div class="note">All multi-byte integers and floats are <strong>big-endian</strong>. Offsets in the
+tables below are byte offsets from the start of the file unless stated otherwise. Verified against
+<code>Vehicles/Bodies/Musclecar_01/Musclecar_01.phys</code> (62&nbsp;208 bytes) and
+<code>Musclecar_01.mainColl</code> (4&nbsp;992 bytes); the fixed packfile header is byte-for-byte
+identical between the two except for <code>userTag</code>, <code>contentsClassNameSectionOffset</code>
+(the root class name sits at a different position), and the per-file section sizes/fixup offsets.</div>
+
+<h2>File magic</h2>
+<p>A packfile opens with two 4-byte signatures. The first is the Havok packfile magic; the second is a
+secondary/check word. Both are constant across every Split/Second sample examined.</p>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x0</td><td>0x4</td><td>uint32_t</td><td>magic0</td><td><code>0x57E0E057</code> — Havok packfile signature.</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>uint32_t</td><td>magic1</td><td><code>0x10C0C010</code> — secondary signature / sanity word.</td></tr>
+</tbody>
+</table>
+
+<h2>Packfile header (<code>hkPackfileHeader</code>)</h2>
+<p>The fixed header follows the magic. Every field name below comes directly from the
+<code>hkPackfileHeader</code> reflection still present in the EBOOT string table
+(<code>eboot_strings.txt</code>), which lists, in order: <code>magic / userTag / fileVersion /
+layoutRules / numSections / contentsSectionIndex / contentsSectionOffset /
+contentsClassNameSectionIndex / contentsClassNameSectionOffset / contentsVersion</code>. The byte
+values below are from <code>Musclecar_01.phys</code>.</p>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x0</td><td>0x8</td><td>uint32_t[2]</td><td>magic</td><td>The two signatures above.</td></tr>
+<tr><td>0x8</td><td>0x4</td><td>int32_t</td><td>userTag</td><td>Application tag. <code>5</code> in <code>.phys</code>, <code>1</code> in <code>.mainColl</code> — the only header field that varies by asset type.</td></tr>
+<tr><td>0xC</td><td>0x4</td><td>int32_t</td><td>fileVersion</td><td>Packfile format version. <code>0x00000005</code> in every sample (Havok 5.x serialization).</td></tr>
+<tr><td>0x10</td><td>0x4</td><td>uint8_t[4]</td><td>layoutRules</td><td><code>04 00 01 01</code> = {bytesInPointer=4, littleEndian=0, reusePaddingOptimization=1, emptyBaseClassOptimization=1}. The <code>00</code> confirms big-endian; the <code>04</code> confirms 32-bit pointers.</td></tr>
+<tr><td>0x14</td><td>0x4</td><td>int32_t</td><td>numSections</td><td>Number of section headers that follow. <code>3</code> here — exactly matches the three section tags found at 0x40 / 0x70 / 0xA0.</td></tr>
+<tr><td>0x18</td><td>0x4</td><td>int32_t</td><td>contentsSectionIndex</td><td>Index of the section holding the top-level object. <code>2</code> = <code>__data__</code>.</td></tr>
+<tr><td>0x1C</td><td>0x4</td><td>int32_t</td><td>contentsSectionOffset</td><td>Byte offset within that section of the root object (<code>0</code> = first object).</td></tr>
+<tr><td>0x20</td><td>0x4</td><td>int32_t</td><td>contentsClassNameSectionIndex</td><td>Index of the section holding the root object's class name. <code>0</code> = <code>__classnames__</code>.</td></tr>
+<tr><td>0x24</td><td>0x4</td><td>int32_t</td><td>contentsClassNameSectionOffset</td><td>Offset within <code>__classnames__</code> of the root class name string. See verification below.</td></tr>
+<tr><td>0x28</td><td>var</td><td>char[]</td><td>contentsVersion</td><td>NUL-terminated version banner <code>Havok-5.5.0-r1</code>, padded with <code>0xFF</code> to the next 16-byte boundary, after which the section headers begin at 0x40.</td></tr>
+</tbody>
+</table>
+
+<div class="tip"><strong>How the root class is found.</strong> In <code>Musclecar_01.phys</code>,
+<code>contentsClassNameSectionOffset = 0xAC</code>. The <code>__classnames__</code> data starts at file
+offset <code>0xD0</code>, so the root class name sits at <code>0xD0 + 0xAC = 0x17C</code> — which is
+exactly the string <code>hkpPhysicsSystem</code>. In <code>Musclecar_01.mainColl</code> the same field
+is <code>0x4B</code> and resolves to <code>hkRootLevelContainer</code>. So the header tells you the
+top object's type purely by following two offsets.</div>
+
+<h2>Section headers (<code>hkPackfileSectionHeader</code>)</h2>
+<p>Immediately after the header come <code>numSections</code> section descriptors, each <strong>0x30
+(48) bytes</strong>: a 16-byte ASCII tag (NUL-padded), then a table of eight big-endian
+<code>uint32</code> fields describing where this section's data lives and where its relocation
+("fixup") tables are. Field names come from the EBOOT
+(<code>hkPackfileSectionHeader: sectionTag / nullByte / absoluteDataStart / localFixupsOffset /
+globalFixupsOffset / virtualFixupsOffset / exportsOffset / importsOffset / endOffset</code>). The
+0x30 stride is confirmed directly by the file: the three tags sit at <code>0x40</code>,
+<code>0x70</code> and <code>0xA0</code> — exactly 0x30 apart.</p>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>+0x00</td><td>0x10</td><td>char[16]</td><td>sectionTag</td><td>Section name, NUL-padded to 16 bytes: <code>__classnames__</code>, <code>__types__</code>, or <code>__data__</code>.</td></tr>
+<tr><td>+0x10</td><td>0x4</td><td>uint32_t</td><td>nullByte</td><td>Padding/sentinel word. Reads <code>0x000000FF</code> in every Split/Second sample (not <code>0x00000000</code>); its low byte is the "null terminator" the field name refers to.</td></tr>
+<tr><td>+0x14</td><td>0x4</td><td>uint32_t</td><td>absoluteDataStart</td><td><strong>Absolute file offset</strong> where this section's payload begins.</td></tr>
+<tr><td>+0x18</td><td>0x4</td><td>uint32_t</td><td>localFixupsOffset</td><td>Offset (relative to <code>absoluteDataStart</code>) of the local pointer-relocation table.</td></tr>
+<tr><td>+0x1C</td><td>0x4</td><td>uint32_t</td><td>globalFixupsOffset</td><td>Offset of the global (cross-section) fixup table.</td></tr>
+<tr><td>+0x20</td><td>0x4</td><td>uint32_t</td><td>virtualFixupsOffset</td><td>Offset of the virtual fixup table (binds objects to class-name entries — this is how each object knows its type).</td></tr>
+<tr><td>+0x24</td><td>0x4</td><td>uint32_t</td><td>exportsOffset</td><td>Offset of the named-export table (unused → equals <code>endOffset</code>).</td></tr>
+<tr><td>+0x28</td><td>0x4</td><td>uint32_t</td><td>importsOffset</td><td>Offset of the import table (unused → equals <code>endOffset</code>).</td></tr>
+<tr><td>+0x2C</td><td>0x4</td><td>uint32_t</td><td>endOffset</td><td>Total section length (relative to <code>absoluteDataStart</code>); marks the end of the section.</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>The offsets chain — and they check out.</strong> In
+<code>Musclecar_01.phys</code> the <code>__classnames__</code> section starts at <code>0xD0</code> with
+<code>endOffset = 0x3B0</code>, so it ends at <code>0xD0 + 0x3B0 = 0x480</code> — which is exactly the
+<code>absoluteDataStart</code> of <code>__types__</code>. And the <code>__data__</code> section has
+<code>absoluteDataStart = 0x51A0</code> with <code>endOffset = 0xA160</code>; their sum is
+<code>0xF300 = 62&nbsp;208</code>, the exact file size. The header math is internally consistent, which
+is how each field above was confirmed rather than guessed.</div>
+
+<h2>The three sections</h2>
+<h3><code>__classnames__</code> — the type registry</h3>
+<p>A flat list of every Havok class used in the file. Each entry is a <strong>4-byte type
+signature/hash</strong> followed by a single <code>0x09</code> separator byte and a NUL-terminated
+class name. The first names are always the reflection meta-classes (<code>hkClass</code>,
+<code>hkClassMember</code>, <code>hkClassEnum</code>, <code>hkClassEnumItem</code>), then the
+content classes. <code>Musclecar_01.phys</code> registers 41 classes; <code>Musclecar_01.mainColl</code>
+registers a much smaller set (just shapes + <code>hkRootLevelContainer</code>).</p>
+<pre class="hex"><span class="off">0000d0</span>  38 77 1f 8e 09 68 6b 43 6c 61 73 73 00 a5 24 0f  <span class="asc">8w...hkClass..$.</span>
+<span class="off">0000e0</span>  57 09 68 6b 43 6c 61 73 73 4d 65 6d 62 65 72 00  <span class="asc">W.hkClassMember.</span>
+<span class="off">0000f0</span>  8a 36 09 cf 09 68 6b 43 6c 61 73 73 45 6e 75 6d  <span class="asc">.6...hkClassEnum</span>
+<span class="off">000170</span>  74 69 76 69 74 79 00 1b 58 f0 ef 09 68 6b 70 50  <span class="asc">tivity..X...hkpP</span>
+<span class="off">000180</span>  68 79 73 69 63 73 53 79 73 74 65 6d 00 ...        <span class="asc">hysicsSystem.</span></pre>
+<p>Reading the first entry: <code>38 77 1F 8E</code> (signature) · <code>09</code> (separator) ·
+<code>"hkClass"</code> · <code>00</code>. The <code>hkpPhysicsSystem</code> name at <code>0x17C</code> is
+the one the header's <code>contentsClassNameSectionOffset</code> points at.</p>
+
+<h3><code>__types__</code> — class member layouts</h3>
+<p>The full reflected layout of each registered class: for every class, its members' names, types,
+offsets and sizes, plus enum definitions. This is what lets the runtime (and a reverse engineer) walk
+the binary objects field-by-field. It is where strings such as <code>friction</code>,
+<code>restitution</code>, <code>inertiaAndMassInv</code>, <code>MOTION_BOX_INERTIA</code> and the
+<code>CONSTRAINT_TYPE_*</code> enum live. Because the layout is embedded, the same parser handles any
+Havok packfile in the game.</p>
+
+<h3><code>__data__</code> — the object graph</h3>
+<p>The actual instance data: the constructed C++ objects (rigid bodies, shapes, motions, constraints)
+laid out in memory order, with pointers stored as file offsets and resolved at load time via the
+three fixup tables. This section is the per-asset payload and the only one whose size varies
+meaningfully between cars. For how it is interpreted as a vehicle, see
+<a href="format-phys.html">Vehicle Physics (.phys)</a>.</p>
+
+<h2>Fixups (pointer relocation)</h2>
+<p>Because objects reference each other by pointer, the packfile stores three relocation tables per
+section, located by the <code>*FixupsOffset</code> fields:</p>
+<table>
+<thead><tr><th>Table</th><th>Resolves</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>local</td><td>pointer → another object in the <em>same</em> section</td><td>(srcOffset, dstOffset) pairs.</td></tr>
+<tr><td>global</td><td>pointer → an object in <em>another</em> section</td><td>(srcOffset, sectionIndex, dstOffset).</td></tr>
+<tr><td>virtual</td><td>object → its class-name entry in <code>__classnames__</code></td><td>This is the "what type am I" binding; one per polymorphic object.</td></tr>
+</tbody>
+</table>
+<p>At load Havok rewrites the stored offsets into real PS3 addresses, so the on-disk graph is
+position-independent.</p>
+
+<h2>XML twins</h2>
+<p>Some Havok assets ship a companion <strong>XML serialization</strong> of the <em>same</em> object
+graph (the Havok tagfile/XML form), with extensions like <code>.hkCollXml</code>, <code>.hkPPsXml</code>,
+<code>.hkRBsXml</code>. Where present, the XML is effectively human-readable documentation of the binary
+class layout — <code>&lt;hkobject class="hkpRigidBody"&gt;</code>, <code>&lt;hkparam name="..."&gt;</code>
+and so on — and is the recommended way to learn what a binary field means.</p>
+<div class="warn"><strong>Not every packfile has a twin.</strong> The per-vehicle
+<code>.phys</code> files do <em>not</em> ship an <code>.physXml</code> — the directory next to
+<code>Musclecar_01.phys</code> contains no XML. For those, the embedded <code>__types__</code> registry
+is the only schema. Twins are more common for the level-side collision/physics packs
+(<a href="format-hkpps.html">.hkPPs</a>, <a href="format-hkrbs.html">.hkRBs</a>,
+<a href="format-hkcoll.html">.hkColl</a>).</div>
+
+<h2>Confidence</h2>
+<p><span class="badge ok">Confirmed</span> for the container itself: magic, the
+<code>hkPackfileHeader</code> and <code>hkPackfileSectionHeader</code> field layouts (cross-checked
+against EBOOT reflection strings <em>and</em> arithmetic that resolves to exact file sizes and section
+boundaries), the classname-entry encoding, and the section roles.
+<span class="badge partial">Partial</span> for the fine structure of the three fixup tables — their
+presence and offsets are confirmed, but exact per-entry tuple widths were not byte-traced here.</p>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="format-phys.html">Vehicle Physics (.phys)</a> — a worked example of a packfile carrying an <code>hkpPhysicsSystem</code>.</li>
+<li><a href="format-hkcoll.html">Collision (.hkColl/.mainColl)</a> — collision-mesh packfiles (<code>hkRootLevelContainer</code> root).</li>
+<li><a href="format-hkpps.html">Physics Packs (.hkPPs)</a> and <a href="format-hkrbs.html">Rigid Bodies (.hkRBs)</a> — packfiles that often ship XML twins.</li>
+<li><a href="format-deform.html">Deformation (.deform)</a> — damage/deformation models.</li>
+<li><a href="data-xml.html">XML Conventions</a> — where and why Havok tagfile XML is used.</li>
+<li><a href="engine-middleware.html">Middleware Stack</a> — Havok 5.5 in the wider engine.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

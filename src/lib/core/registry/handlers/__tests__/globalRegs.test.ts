@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { globalRegsHandler } from '../globalRegs';
-import { parseGlobalRegs } from '../../../globalRegs';
+import { parseGlobalRegs, writeGlobalRegs } from '../../../globalRegs';
 import { ssCtx } from '../../handler';
 import { hasSample, readSample } from '@/test/dataRoot';
 
@@ -55,6 +55,11 @@ describe('global_regs parser', () => {
 		expect(text).toContain('light_ambient');
 	});
 
+	it('byte-exact passthrough writer round-trips the inline doc', () => {
+		const out = writeGlobalRegs(parseGlobalRegs(INLINE));
+		expect(Array.from(out)).toEqual(Array.from(INLINE));
+	});
+
 	it.skipIf(!hasSample(REAL))('parses the REAL default.global_regs (512 regs)', () => {
 		const raw = readSample(REAL);
 		const m = globalRegsHandler.parseRaw(raw, ssCtx());
@@ -70,5 +75,15 @@ describe('global_regs parser', () => {
 		// Trailing register-value payload exists and is exposed.
 		expect(m.payloadLength).toBeGreaterThan(0);
 		expect(m.payloadOffset).toBeLessThan(raw.byteLength);
+	});
+
+	it.skipIf(!hasSample(REAL))('global_regs round-trips the real sample byte-for-byte', () => {
+		const raw = readSample(REAL);
+		const out = globalRegsHandler.writeRaw!(
+			globalRegsHandler.parseRaw(raw, ssCtx()),
+			ssCtx(),
+		);
+		expect(out.byteLength).toBe(raw.byteLength);
+		expect(Array.from(out)).toEqual(Array.from(raw));
 	});
 });

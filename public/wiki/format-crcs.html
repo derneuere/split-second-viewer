@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CRC Tables (.crcs / .tex.crcs) — Split/Second RE Wiki</title>
+<meta name="description" content="Tiny dependency lists: a flat array of big-endian 32-bit texture-name CRCs that link an asset (backdrop, prop, powerplay animation) to the textures it needs, matching the CRC keys in TEXS .textures and C2NM name tables.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="CRC Tables (.crcs / .tex.crcs)" data-category="Formats · Geometry &amp; Render">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>CRC Tables (.crcs / .tex.crcs)</h1>
+<p>A <code>.crcs</code> file is the simplest format in the game: a <strong>flat array of big-endian 32-bit
+CRCs</strong> and nothing else — no header, no magic, no count field. Each CRC is a texture-name hash that
+ties an asset (a level backdrop, a track-side prop, a powerplay animation) to the textures it depends on.
+The same 32-bit keys appear as the <code>crc</code> field of each <a href="format-textures.html">.textures</a>
+descriptor and in that file's <code>C2NM</code> name trailer, so a <code>.crcs</code> list is effectively a
+"textures required by this object" manifest.</p>
+
+<div class="infobox"><div class="ib-title">.crcs / .tex.crcs</div><table>
+  <tr><th>Category</th><td>Asset dependency list</td></tr>
+  <tr><th>Structure</th><td><code>uint32_t crc[N]</code></td></tr>
+  <tr><th>Magic</th><td>none</td></tr>
+  <tr><th>Element</th><td>4 bytes, big-endian</td></tr>
+  <tr><th>File size</th><td>exactly 4 × N (0–32 B observed)</td></tr>
+  <tr><th>Keys match</th><td><a href="format-textures.html">TEXS</a> descriptor / C2NM CRCs</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span> (layout) · <span class="badge partial">Partial</span> (CRC algorithm)</td></tr>
+</table></div>
+
+<h2>Overview</h2>
+<p>Two naming conventions exist for the same format:</p>
+<table>
+<tr><th>Extension</th><th>Typical location</th><th>Purpose</th></tr>
+<tr><td><code>X.texture.crcs</code></td><td><code>Environments/…/Backdrop/</code>, <code>Environments/Objects/TL_Instances/</code></td><td>Textures a backdrop or track-side instance references</td></tr>
+<tr><td><code>X.tex.crcs</code></td><td><code>Powerplays/Animations/…</code></td><td>Textures a powerplay animation prop references</td></tr>
+</table>
+<p>The eboot builds the backdrop path with <code>environment|Backdrop/%s_backdrop.texture.crcs</code>,
+confirming these are loaded per-level/per-object to resolve a texture working set before the matching
+<a href="format-textures.html">.textures</a> / <a href="format-streamtex.html">.streamtex</a> are paged in.</p>
+
+<h2>Structure</h2>
+<p>There is no header. The file is <code>fileSize / 4</code> consecutive big-endian <code>uint32</code> CRCs.
+This was confirmed by surveying many files: every size is a clean multiple of 4 (0, 20, 24, 32 bytes →
+0, 5, 6, 8 entries) and the bytes are plainly CRC-shaped (high entropy, no ASCII, no offset patterns).</p>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x00</td><td>0x4</td><td>uint32_t</td><td>crc[0]</td><td>First texture-name CRC (big-endian).</td></tr>
+<tr><td>0x04</td><td>0x4</td><td>uint32_t</td><td>crc[1]</td><td>Second CRC.</td></tr>
+<tr><td>…</td><td>0x4</td><td>uint32_t</td><td>crc[N-1]</td><td>Repeats to end of file; <code>N = fileSize / 4</code>.</td></tr>
+</table>
+<div class="note">An empty <code>.texture.crcs</code> (0 bytes, e.g. <code>Downtown_cl.texture.crcs</code>) is valid
+and means "this object references no streamed textures of its own."</div>
+
+<h2>Hex excerpts</h2>
+<p><strong>PG05_MultiBus_1_A.tex.crcs</strong> — 24 bytes, 6 CRCs (a powerplay bus animation):</p>
+<pre class="hex">000000  d0 ce 32 7f 50 47 24 d7 5d 8c eb 49 5e 5c 66 af   ..2.PG$.]..I^\f.
+000010  4e 57 28 9b 27 cb 57 86                            NW(.'.W.</pre>
+<p>= CRCs <code>d0ce327f</code>, <code>504724d7</code>, <code>5d8ceb49</code>, <code>5e5c66af</code>,
+<code>4e57289b</code>, <code>27cb5786</code>. Six 4-byte values, file size 24 = 6 × 4 exactly.</p>
+
+<p><strong>Downtown_backdrop.texture.crcs</strong> — 32 bytes, 8 CRCs:</p>
+<pre class="hex">000000  81 fa b9 58 33 78 5b c1 ba 0b 45 21 97 d0 22 d6   ...X3x[...E!..".
+000010  5d 8c eb 49 96 1b 9a 66 79 e6 2e ab b3 c1 fe 0d   ]..I...fy.......</pre>
+<p><strong>AA_tram_01.tex.crcs</strong> — 20 bytes, 5 CRCs:</p>
+<pre class="hex">000000  27 c7 fe a5 87 c3 09 16 5d 8c eb 49 50 57 2a d4   '.......]..IPW*.
+000010  d3 ca 0f 4b                                        ...K</pre>
+
+<h2>Shared CRCs &amp; the name link</h2>
+<p>The same CRC recurs across unrelated objects when they share a texture. <code>5d 8c eb 49</code> appears
+in the powerplay bus, the powerplay tram <em>and</em> the Downtown backdrop list above. That CRC resolves to
+a real name via the <code>C2NM</code> trailer of the level's <code>_po.textures</code>, which ends with:</p>
+<pre class="hex">2e3080  72 74 5f 6c 61 75 6e 63 68 65 72 5f 30 31 5d 8c   rt_launcher_01].
+2e3090  eb 49 00 00 00 14 63 75 62 65 6d 61 70 5f 47 65   ..I....cubemap_Ge
+2e30a0  6e 65 72 69 63 5f 73 77 61 70                      neric_swap</pre>
+<p><strong>Annotation:</strong> <code>5d 8c eb 49</code> = CRC, <code>00 00 00 14</code> = length 20,
+<code>"cubemap_Generic_swap"</code>. So that shared key is the generic reflection cube map every prop
+samples — exactly the kind of common dependency a CRC list exists to declare. This round-trip (a CRC in a
+<code>.crcs</code> list → the same CRC + name in a <code>C2NM</code> trailer → the same CRC in a TEXS
+descriptor) is what proves all three formats use one CRC namespace.</p>
+
+<h2>CRC algorithm</h2>
+<p>The exact hash is not yet pinned. The values are 32-bit and clearly name-derived (the same name yields the
+same CRC everywhere it occurs), consistent with the engine's generic <code>PackedRGBA</code>/asset-name
+hashing referenced in the eboot's Crayon2 code. Black Rock's engine elsewhere uses standard CRC-32; whether
+these are CRC-32 of the lowercase name, a custom polynomial, or a seeded variant is left
+<span class="badge partial">Partial</span> pending a brute-force match against the known
+<code>C2NM</code> name→CRC pairs (e.g. <code>"cubemap_Generic_swap"</code> → <code>0x5D8CEB49</code>,
+<code>"Musclecar_01"</code> → <code>0xB7B2A83B</code>).</p>
+
+<h2>How we know</h2>
+<ul>
+<li><strong>Flat uint32 array:</strong> every sampled file size is a multiple of 4 (0/20/24/32 B); contents are high-entropy with no ASCII/offset structure.</li>
+<li><strong>CRCs = texture names:</strong> each 4-byte value matches a <code>crc</code> field in a <a href="format-textures.html">TEXS</a> descriptor and a CRC in a <code>C2NM</code> name record.</li>
+<li><strong>Shared keys:</strong> <code>0x5D8CEB49</code> appears in three independent <code>.crcs</code> files and resolves to <code>"cubemap_Generic_swap"</code> in a <code>_po.textures</code> trailer.</li>
+<li><strong>Purpose:</strong> eboot path <code>environment|Backdrop/%s_backdrop.texture.crcs</code> shows they are loaded per object to declare a texture working set.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="format-textures.html">Textures (.textures)</a> — TEXS descriptors and the <code>C2NM</code> CRC→name trailer.</li>
+<li><a href="format-streamtex.html">Streaming (.stream / .streamtex)</a> — the streamed pixel payloads these CRCs help resolve.</li>
+<li><a href="format-names.html">Name Tables (.names)</a> — other string/CRC reference tables in the data tree.</li>
+<li><a href="data-catnip.html">Catnip Entity System</a> — powerplay animations whose props ship <code>.tex.crcs</code> lists.</li>
+<li><a href="engine-resources.html">Resources &amp; Streaming</a> — how dependency lists drive residency.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

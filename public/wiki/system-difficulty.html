@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Difficulty &amp; Race Director — Split/Second RE Wiki</title>
+<meta name="description" content="Split/Second's difficulty system: DifficultyModifiers presets, the Catchup rubber-band, Respotting and Teleporting that keep the AI pack cinematic, and the Season-mode DCB skill balancer.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Difficulty &amp; Race Director" data-category="Game Systems">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Difficulty &amp; Race Director</h1>
+<p>
+Split/Second keeps the AI pack tight and dramatic through a layer of "race director" systems that
+sit on top of the raw <a href="system-ai.html">SSAI</a> driving model. A <b>DifficultyModifiers</b>
+preset shapes how skilled each grid slot is and how aggressively they trigger
+<a href="system-powerplay.html">Powerplays</a>; a <b>Catchup</b> rubber-band quietly trims engine
+output; <b>Respotting</b> snaps stragglers and wrecks back into the action; and <b>Teleporting</b>
+is the last-resort tool for keeping cars on a valid route. In Season mode a separate
+<b>DCB</b> (Dynamic difficulty Balance) tunes per-player skill over time. Everything is plaintext
+<a href="data-params.html">.params</a>, so the numbers below are quoted directly from the shipped
+devkit files.
+</p>
+
+<div class="infobox"><div class="ib-title">Race Director</div><table>
+  <tr><th>Difficulty presets</th><td><code>GameLogic/DifficultyModifiers/</code></td></tr>
+  <tr><th>Preset count</th><td>6 files</td></tr>
+  <tr><th>Section header</th><td><code>/SSAI/DifficultySetting</code></td></tr>
+  <tr><th>Catch-up</th><td><code>GameLogic/Catchup.params</code></td></tr>
+  <tr><th>Respot / Teleport</th><td><code>GameplayParameters.params</code></td></tr>
+  <tr><th>Respot detail</th><td><code>RaceSetupStatic.params</code></td></tr>
+  <tr><th>Season balance</th><td>DCB (per-player)</td></tr>
+  <tr><th>Runtime classes</th><td><code>cRespotController</code></td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>Difficulty modifier presets</h2>
+<p>
+<code>GameLogic/DifficultyModifiers/</code> contains six preset files, each a
+<code>/SSAI/DifficultySetting</code> block selected per race via the
+<a href="system-gamemodes.html">race-setup</a> field
+<code>/RaceSetup/AI → 'Difficulty parameters file' = '001Default'</code>:
+</p>
+<table>
+<tr><th>File</th><th>Role</th></tr>
+<tr><td><code>000Hardest.params</code></td><td>Maxed pack — every chance forced, full powerbar gain</td></tr>
+<tr><td><code>001Default.params</code></td><td>Standard single-player race director</td></tr>
+<tr><td><code>002Hardest.params</code></td><td>Alternate hardest variant (per-player skill + speed/slide curves)</td></tr>
+<tr><td><code>Champ.params</code></td><td>Championship racing tuning</td></tr>
+<tr><td><code>Demolition.params</code></td><td>Demolition mode AI tuning</td></tr>
+<tr><td><code>Elimination.params</code></td><td>Elimination mode — front-loaded grid spacing</td></tr>
+</table>
+
+<h3>Grid spacing ("Drivers")</h3>
+<p>
+The <code>Drivers</code> section is the most visible rubber-band: a per-grid-slot
+<i>Initial Distance</i> / <i>Final Distance</i> pair (metres relative to the racing line / player)
+that the director lerps between over the race. In <code>001Default</code> the back markers start
+ahead and are reeled in toward the player by the finish — keeping the pack visually bunched:
+</p>
+<pre>/SSAI/DifficultySetting/Drivers:    (001Default)
+	Player 0  Initial 0      Final 0
+	Player 2  Initial 50     Final -275
+	Player 4  Initial 150    Final -125
+	Player 6  Initial 250    Final 25
+	Player 7  Initial 300    Final 100</pre>
+<p>
+The extremes show the design intent. <code>000Hardest</code> pins every slot at
+<code>Initial = Final = 1000</code> (the whole field permanently 1 km ahead — i.e. ruthless),
+<code>002Hardest</code> uses <code>10000</code> with an explicit per-player
+<code>Skill Factor = 1.0</code>, and <code>Elimination</code> front-loads the leaders far ahead
+(<code>Player 1 Initial 400 → Final 100</code>) while letting the tail drift back, so the bubble
+constantly churns.
+</p>
+
+<h3>Skill behaviour at the extremes</h3>
+<p>
+Each preset describes what an AI does at <b>skill 0</b> versus <b>skill 1</b>, blended by the
+pilot's <a href="system-ai.html">DriverSkill</a> and the live race director. The most telling
+block is the speed multiplier curve and the skill-0 handicaps. From <code>001Default</code>:
+</p>
+<pre>/SSAI/DifficultySetting/Driving:
+	'000;Speed multiplier' = [ 0.6 0.65 0.7 0.8 1.0 1.0 1.0 1.03 1.06 1.1 ];
+/SSAI/DifficultySetting/InternalParameters:
+	'Extra compensation when Skill == 0'              = 0.5;
+	'Look Ahead Multiplier when Skill == 0'           = 0.7;
+	'Maximum width percentage to offset from Racing Line' = 0.75;
+	'Speed Multiplier when Skill == 0'                = 2.0;</pre>
+<p>
+The 10-entry <i>Speed multiplier</i> array is a curve sampled by relative position: cars far behind
+get up to 1.1× speed, cars out front get throttled to 0.6×. A low-skill AI also gets a wider
+allowed racing-line offset (wanders more), shorter look-ahead (reacts late), and a larger speed
+multiplier — i.e. it is faster but sloppier, which reads as a believable weaker driver rather than
+an obviously slow one. Across presets the speed curve is shaped per mode:
+</p>
+<table>
+<tr><th>Preset</th><th>Speed multiplier curve (10 samples)</th></tr>
+<tr><td><code>001Default</code> / <code>Champ</code></td><td>0.6 · 0.65 · 0.7 · 0.8 · 1.0 · 1.0 · 1.0 · 1.03 · 1.06 · 1.1</td></tr>
+<tr><td><code>000Hardest</code> / <code>002Hardest</code></td><td>1.0 × 10 (flat — no handicap)</td></tr>
+<tr><td><code>Demolition</code></td><td>0.45 · 0.5 · 0.6 · 0.7 · 0.8 · 0.9 · 1.0 · 1.1 · 1.2 · 1.3</td></tr>
+<tr><td><code>Elimination</code></td><td>0.5 · 0.6 · 0.7 · 0.8 · 0.9 · 1.0 · 1.0 · 1.0 · 1.05 · 1.1</td></tr>
+</table>
+<p>
+<code>002Hardest</code> additionally carries skill-vs-curve arrays the others omit, e.g. a
+<i>Sliding compensation vs Skill</i> ramp that makes high-skill cars slide far less:
+</p>
+<pre>'007;Sliding compensation vs Skill' =
+	[ 2.0 1.7 1.4 1.2 0.9 0.7 0.55 0.475 0.375 0.4 ];</pre>
+
+<h3>Powerplay aggression by skill</h3>
+<p>
+The <code>Powerplays</code> / <code>Skills</code> section is where the director decides how often AI
+fires <a href="system-powerplay.html">Powerplays</a>, shortcuts and route-changers — and how the
+power bar fills. <code>001Default</code> exposes a full skill-0/skill-1 matrix; key values:
+</p>
+<table>
+<tr><th>Parameter (001Default)</th><th>Skill 0</th><th>Skill 1</th></tr>
+<tr><td>Shortcut chances</td><td>0.0</td><td>0.2</td></tr>
+<tr><td>Powerplay chances on player</td><td>0.0</td><td>0.3</td></tr>
+<tr><td>Route Changer near player</td><td>0.1</td><td>0.0</td></tr>
+<tr><td>Route Changer when player not near</td><td>0.0</td><td>0.2</td></tr>
+<tr><td>Cooldown after any AI Powerplay (s)</td><td>4.0</td><td>0.5</td></tr>
+<tr><td>AI powerbar gain multiplier</td><td>1.0</td><td>1.5</td></tr>
+</table>
+<p>
+So a "skilled" AI charges its bar 1.5× faster and is far more willing to drop hazards on the
+player, while a weak one mostly fires harmless route-changers near itself. <code>000Hardest</code>
+turns the dials to maximum — <code>Min/Max Shortcut chances = 1.0</code>,
+<code>Min/Max Powerplay chances = 1.0</code>, <code>AI powerbar gain multiplier = 2.0</code> at
+both ends — meaning a hazard on virtually every opportunity. Global per-lap modifiers sit alongside:
+</p>
+<pre>/SSAI/DifficultySetting/GlobalParameters:    (001Default)
+	'001;Chances of using a shortcut … per lap'              = 0.1;
+	'002;Chances of triggering a Powerplay on the player …'  = 0.18;
+	'003;Chances of triggering a Powerplay on the AI …'      = 0.12;
+	'004;Chances of triggering a Route Changer near player'  = 0.1;
+	'005;Chances of triggering a Route Changer far …'        = 0.05;
+/SSAI/DifficultySetting/RaceScript:
+	'000;Time to set the AI players a skill of 1 …'          = 6.0;</pre>
+<p>
+That last line is a classic cinematic touch: for the first 6 seconds of a race the whole field is
+forced to skill 1, so the pack launches cleanly and dramatically off the line. The engine also
+supports <i>faking</i> race results entirely — <code>SSAI/RaceScript/10;Fake race results
+according to race script</code>, with min/max distances to separate players when doing so.
+</p>
+
+<h2 id="catchup">Catchup (rubber-band)</h2>
+<p>
+<code>GameLogic/Catchup.params</code> is a small, separate engine-level rubber-band that trims a
+trailing car's drivetrain rather than its target speed. In the shipped devkit data it is
+<b>disabled</b> — every value is zero — but the structure documents exactly what it can do:
+</p>
+<pre>/Prototype/Catchup:
+	'Distance from back for full penalty' = 0.0 (0.0, 5000.0);
+	'Max torque gain'                     = 0.0 (0.0, 1.0);
+	'Max torque loss'                     = 0.0 (0.0, 1.0);
+	'Top speed gain'                      = 0.0 (0.0, 100.0);</pre>
+<table>
+<tr><th>Field</th><th>Effect</th></tr>
+<tr><td>Distance from back for full penalty</td><td>How far behind a car must be before the full effect applies (scaled by distance up to 5000 m)</td></tr>
+<tr><td>Max torque gain</td><td>Engine torque bonus given to a car that is behind</td></tr>
+<tr><td>Max torque loss</td><td>Torque penalty applied to a car that is ahead</td></tr>
+<tr><td>Top speed gain</td><td>Extra top speed (mph) granted to a trailing car</td></tr>
+</table>
+<div class="note">
+<b>Two rubber-bands.</b> Catchup is the <i>physics-level</i> band (torque / top speed). The
+<a href="#difficulty">DifficultySetting</a> "Drivers" distances and "Speed multiplier" curve are
+the <i>AI-level</i> band. Because Catchup ships at all-zero, Split/Second's pack-tightening on the
+default profile comes from the AI-level director and from respotting, not from secretly boosting a
+trailing car's engine. <span class="badge theory">Theory:</span> the all-zero shipping values plus
+the <code>/Prototype/</code> path suggest Catchup was an experimental feature largely superseded by
+the difficulty director.
+</div>
+
+<h2 id="respot">Respotting</h2>
+<p>
+<b>Respotting</b> is how Split/Second recovers a car that has wrecked, fallen too far behind, gone
+the wrong way, or been left off a valid route — it teleports the car back to a sensible spot on the
+track and resumes it at speed. The engine driver is <code>InGame::cRespotController</code> (EBOOT:
+<code>cRespotController::DoUpdate - player %i respot</code>). Top-level tuning is in
+<code>GameplayParameters.params</code>:
+</p>
+<pre>/GameplayParameters/Respotting:
+	'000;Max distance for respotting on correct route from route changer' = 500.0;
+	'001;Max delay when being respotted ahead due to obstacles, etc'      = 3.0;
+	'002;Max distance to scale delay when respotting ahead'               = 100.0;</pre>
+<p>
+The bulk of the behaviour, though, lives in <code>RaceSetupStatic.params</code> under
+<code>Logic/Respot</code> — a surprisingly rich set of rules whose whole purpose is to make respots
+invisible to the camera. Key blocks:
+</p>
+<table>
+<tr><th>Sub-system</th><th>Notable values</th></tr>
+<tr><td>Delay (visibility)</td><td>AI "Pop In/Pop Out Prevention" both <b>on</b>; max non-human respot delay <b>5.0 s</b>; +2.0 s extra for visibility</td></tr>
+<tr><td>NearPlayerDelay</td><td>Max delay <b>3.0 s</b>; min time-to-player <b>0.75 s</b>; near-player arc half-angle <b>30°</b></td></tr>
+<tr><td>TrackCurvature</td><td><code>CurvatureVsSpeed = [30 27 23 19 13 9 6 4 3 3]</code>; look-ahead weights at 10/50/100 m</td></tr>
+<tr><td>Velocity</td><td>Distance to respot at maximum speed: <b>100 m</b></td></tr>
+<tr><td>Wrong-way respot</td><td>Time before respot: <b>2.0 s</b></td></tr>
+</table>
+<p>
+The "Pop In / Pop Out Prevention" system delays a respot until the spot is off-camera, and the
+<code>Victim of Wreckage Condition</code> (max 2.5 s) keeps a wrecked AI visibly crashed for a
+beat before snapping it back. The EBOOT shows the controller logging
+<code>MoveRespotForwardForFairness()</code> — when an AI is respotted <i>ahead</i> it deliberately
+loses time so it doesn't gain an unfair advantage:
+</p>
+<pre>MoveRespotForwardForFairness() - We need to lose time, approximately
+	%.1f seconds, distance already forward = %.1f</pre>
+<p>
+The full respot transform (<code>RespotPosX/Y/Z</code>, <code>RespotLookX/Y/Z</code>,
+<code>RespotSpeed</code>, <code>SpreadDistanceWidth/Length</code>) is exposed on the QA debug menu
+under <code>Respot/…</code>, with a <code>Force Respot</code> cheat and a
+<code>RespotTest</code> page. The same respot machinery is what the
+<a href="system-ai.html#evolution">EvolutionConfig</a> harness uses to place test cars
+("Respot speed proportion to the max speed of the car").
+</p>
+
+<div class="warn">
+Respotting can fail. The EBOOT carries guards like <code>WARNING : trying to respot car outside of
+track</code> and <code>Respot position … has no collision … trying a previous node</code> — if the
+chosen node has no ground, the controller walks back along the route to find a valid one.
+</div>
+
+<h2 id="teleport">Teleporting</h2>
+<p>
+<b>Teleporting</b> is the harder cousin of respotting, used when a car is on a now-closed route or
+has wandered impossibly far from the scripted line. It is configured in
+<code>GameplayParameters.params</code>, and in the shipped data both conditional teleport modes are
+<b>disabled</b> by default:
+</p>
+<pre>/GameplayParameters/Teleporting:
+	'000;Teleport distance behind the player' = 100.0;
+	'001;Teleport distance ahead the player'  = 200.0;
+
+/GameplayParameters/Teleporting/Closed Routes:
+	'000;Enable' = false;
+	'001;Time limit to teleport'        = 2.5;
+	'002;Distance limit to opened route' = 100.0;
+
+/GameplayParameters/Teleporting/Far from scripted distance:
+	'000;Enable' = false;
+	'001;Time limit to teleport'         = 2.5;
+	'002;Offset distance to perform teleport' = 1000.0;
+	'003;Player distance check'          = 1000.0;</pre>
+<table>
+<tr><th>Mode</th><th>Trigger</th><th>Window</th><th>Shipped</th></tr>
+<tr><td>Behind / ahead window</td><td>Always — bounds where a teleport may place a car</td><td>100 m back / 200 m ahead</td><td>active</td></tr>
+<tr><td>Closed Routes</td><td>Car stuck on a route that has closed</td><td>2.5 s / within 100 m of an open route</td><td>disabled</td></tr>
+<tr><td>Far from scripted distance</td><td>Car &gt; 1000 m off the scripted line</td><td>2.5 s</td><td>disabled</td></tr>
+</table>
+<p>
+With the conditional modes off, default races lean on respotting (which is gentler and camera-aware)
+and only fall through to teleport bounds in extreme cases. The 100 m-behind / 200 m-ahead window is
+the same "keep the pack on screen" budget the difficulty <a href="#difficulty">Drivers</a> spacing
+works within.
+</p>
+
+<h2 id="difficulty">Season-mode DCB (Dynamic Balance)</h2>
+<p>
+Separate from the per-race presets, the campaign uses a <b>DCB</b> ("Dynamic difficulty Balance")
+value that adapts to how the player performs over a Season. The EBOOT exposes a
+<code>Season Mode DCB Updater</code> and a HUD debug page, and the static ranges live in
+<code>RaceSetupStatic.params</code>:
+</p>
+<pre>/RaceSetupStatic/DCB/AI Skill:
+	'01;Range Min Limit' = 0.3 (0.0, 1.0);
+	'02;Range Max Limit' = 0.3 (0.0, 1.0);
+/RaceSetupStatic/DCB/Difficulty Choice:
+	'01;Easy'   = 0.2;
+	'02;Medium' = 0.5;
+	'03;Hard'   = 0.8;</pre>
+<p>
+The player's DCB is a 0–1 number combining a base player profile with per-event, per-track and
+per-vehicle modifiers (the EBOOT prints <code>Player DCB = %.3f</code>, <code>Event DCB
+Modifier</code>, <code>Track DCB Modifier</code>, <code>Vehicle DCB Modifier</code>). After each
+event the updater nudges it by leaderboard position
+(<code>Leaderboard position: %d, DCB increment: %.3f</code>) and maps it onto AI skill and onto a
+target score for the medal thresholds (per-mode <code>Score at worst DCB</code> / <code>Score
+Range</code> for Time Trial, Demolition, Nemesis Truck, Chopper Revenge/Survival). The
+<i>Difficulty Choice</i> values (0.2 / 0.5 / 0.8) are the Easy/Medium/Hard seed points the player
+selects.
+</p>
+
+<div class="tip">
+The three difficulty layers stack: the player's <b>DCB</b> picks how skilled opponents are over the
+Season, the per-race <b>DifficultyModifiers</b> preset shapes spacing and Powerplay aggression
+within a race, and <b>Respot/Teleport</b> keep the resulting pack physically on screen. The
+physics-level <a href="#catchup">Catchup</a> band is available but off by default.
+</div>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="system-ai.html">AI (SSAI)</a> — the LDC driving model and DriverSkill the director steers</li>
+  <li><a href="system-powerplay.html">Powerplay System</a> — the hazards / route-changers difficulty aggression controls</li>
+  <li><a href="system-gamemodes.html">Game Modes</a> — where a difficulty file is chosen per race</li>
+  <li><a href="system-scoring.html">Scoring &amp; Progression</a> — Season medals and the DCB score targets</li>
+  <li><a href="system-vehicles.html">Vehicles</a> — the cars and pilots being balanced</li>
+  <li><a href="data-params.html">.params Tuning System</a> — the plaintext format used by every file here</li>
+  <li><a href="system-nemesis.html">Nemesis &amp; Heli Modes</a> — boss modes with their own respot/DCB tuning</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

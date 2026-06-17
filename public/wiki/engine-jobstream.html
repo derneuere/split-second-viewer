@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Threading &amp; JobStream — Split/Second RE Wiki</title>
+<meta name="description" content="Split/Second's SPURS-based JobStream job system: main thread vs loader threads, the Job Manager, SPU job chains and Sony Edge geometry processing.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Threading &amp; JobStream" data-category="Engine &amp; Tech">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Threading &amp; JobStream</h1>
+<p>Split/Second spreads work across the PS3's PPU threads and its six available SPUs using an
+in-house job system called <strong>JobStream</strong> (<code>libs/System/JobStream</code>), layered
+directly on Sony's <strong>SPURS</strong> runtime. A small number of PPU threads — a main/game
+thread plus dedicated <em>loader</em> threads — drive gameplay and submit <strong>SPU job
+chains</strong> for the heavy parallel work: deferred <a href="engine-rendering.html">lighting
+(SPULight)</a>, shader patching, geometry decompression (Sony Edge) and Havok physics. Everything
+below is taken from the assert/source strings in <code>EBOOT.BIN</code> (QA debug build NPXX00575).</p>
+
+<div class="infobox"><div class="ib-title">JobStream</div><table>
+  <tr><th>Path</th><td><code>libs/System/JobStream/Spurs</code></td></tr>
+  <tr><th>Backend</th><td>Sony SPURS (<code>cellSpurs*</code>)</td></tr>
+  <tr><th>Unit</th><td>SPU job chain (<code>CellSpursJob128</code>)</td></tr>
+  <tr><th>Key classes</th><td><code>cJobScheduler</code>, <code>cJobThread</code>, <code>cJobManager</code></td></tr>
+  <tr><th>Max grab</th><td>16 jobs per SPU pull</td></tr>
+  <tr><th>Sync</th><td>SPURS job guards (<code>cellSpursJobGuard*</code>)</td></tr>
+  <tr><th>SPU users</th><td>Lighting, shader patch, Edge geom, Havok</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>SPURS foundation</h2>
+<p>SPURS (the SPU Runtime System) owns the SPU thread group; JobStream creates <strong>job
+chains</strong> on top of it. The chain attribute set-up is fully visible in the source paths, and
+two call sites pin down the exact parameters:</p>
+<pre>// libs/System/JobStream/JobStream/Spurs/SpursJobChain.cpp
+cellSpursJobChainAttributeInitialize(
+    &amp;attr, mCommandList, mJobSize, mMaxGrab, mPriorities,
+    mNumSPU, true, 0, 1, false, 256, 1 );
+cellSpursCreateJobChainWithAttribute( mSpurs, mJobChain, &amp;attr );
+
+// Crayon2 shader-patch chain (ShaderPatching.cpp) — concrete values:
+cellSpursJobChainAttributeInitialize(
+    &amp;attr, mCommandList, sizeof( CellSpursJob128 ), 16,
+    spuPriorities, spuCount, true, 0, 1, false, 256, 1 );</pre>
+<p>From these we know each job is a <code>CellSpursJob128</code> (a 128-byte job descriptor), a SPU
+<strong>grabs up to 16 jobs at a time</strong> (<code>mMaxGrab = 16</code>), and the chain runs
+across <code>spuCount</code> SPUs with a per-SPU <code>spuPriorities</code> array. Chains are run,
+shut down and joined explicitly:</p>
+<table>
+<tr><th>SPURS call</th><th>Role in JobStream</th></tr>
+<tr><td><code>cellSpursRunJobChain( mJobChain )</code></td><td>Start a chain executing on the SPUs</td></tr>
+<tr><td><code>cellSpursJobGuardInitialize(…)</code> / <code>cellSpursJobGuardNotify(…)</code></td><td>Barrier: PPU/other jobs wait until a count of jobs complete</td></tr>
+<tr><td><code>cellSpursShutdownJobChain</code> → <code>cellSpursJoinJobChain</code></td><td>Tear down and join a finished chain</td></tr>
+<tr><td><code>cellSpursJobGetInputList(&amp;job-&gt;workArea.dmaList[n], …)</code></td><td>Build the per-job DMA input list (e.g. shader + patch data)</td></tr>
+</table>
+
+<h3>Event handling thread</h3>
+<p>Chain completion is delivered through a dedicated PPU helper thread,
+<code>spurs_job_event_handler_%d</code>, created with an 8&nbsp;KB stack:</p>
+<pre>// SpursJobEventHandler.cpp
+sys_ppu_thread_create( &amp;mThread, ThreadHandler, (u64)(uintptr_t)this,
+    mPriority, (1024 * 8), SYS_PPU_THREAD_CREATE_JOINABLE, threadName );
+sys_event_queue_create( &amp;mQueue, &amp;attr, SYS_EVENT_QUEUE_LOCAL, 127 );
+cellSpursAttachLv2EventQueue( mSpurs, mQueue, &amp;mEventPort, true );</pre>
+<p>It attaches an LV2 event queue (depth 127) to SPURS and blocks in
+<code>sys_event_queue_receive</code>, signalling the rest of the engine when SPU jobs finish. A
+terminating event port (<code>sys_event_port_send( mTerminatingPort, … )</code>) lets the main
+thread shut it down cleanly.</p>
+
+<div class="note">There are <strong>two</strong> job-dispatch abstractions in the build:
+<code>JobStream::cJobScheduler</code> / <code>cJobThread</code> (the SPURS job-chain wrapper) and a
+higher-level <code>cJobManager</code> with PPU worker threads
+(<code>cJobManager::cWorkerThread</code>). "Job Manager" appears as a profiled subsystem under both
+the in-game and front-end controllers, so it is a long-lived service, not a per-frame object.</div>
+
+<h2>PPU threads</h2>
+<p>The profiler thread/category table in the EBOOT names the long-running PPU threads. The build
+calls <code>initialized profiling for thread %s (%p)</code> as each one starts. The notable ones:</p>
+<table>
+<tr><th>Thread / subsystem</th><th>Role</th></tr>
+<tr><td><strong>Main / game thread</strong></td><td>Runs the frame: <code>FrameBegin</code> → <code>Update</code> → <code>FrameEnd</code>, then <code>RenderToTexture</code> / <code>RenderAlpha</code> / <code>RenderDebug</code>. Submits SPU job chains.</td></tr>
+<tr><td><strong>Loading Thread</strong></td><td>Generic background loader (<code>Background Loader</code>)</td></tr>
+<tr><td><strong>Level (Loader Thread)</strong></td><td>Streams the current level / <a href="system-tracks.html">track</a> data while racing</td></tr>
+<tr><td><strong>Front End (Loader Thread)</strong></td><td>Loads front-end / menu resources independently of gameplay</td></tr>
+<tr><td><strong>Rendering</strong></td><td>Render submission / GPU pacing (<code>cRenderSynchronizer</code>, <code>C2:EndScene</code>, <code>C2:Wait</code>)</td></tr>
+<tr><td><strong>spu_printf_handler_%d</strong></td><td>PPU thread servicing SPU <code>printf</code> output (debug build)</td></tr>
+<tr><td><strong>spurs_job_event_handler_%d</strong></td><td>SPURS completion event pump (see above)</td></tr>
+</table>
+
+<p>Splitting the loaders into a <strong>Level</strong> loader and a <strong>Front End</strong> loader
+is deliberate: the front-end (menus, car select, season screen) can stream its assets on its own
+thread while the level loader continues to bring in track data, so the game can transition between
+the menu and a race without one starving the other. The EBOOT confirms both as distinct profiled
+threads (<code>Level (Loader Thread)</code>, <code>Front End (Loader Thread)</code>), alongside a
+plain <code>LoaderThread</code> token and a <code>Loading Thread</code>.</p>
+
+<h2>Profiled subsystems</h2>
+<p>JobStream's profiler tracks dozens of named subsystems (the strings double as the live-profiler
+overlay labels). They split roughly into the engine services and the per-discipline "code / art"
+budget pairs the studio used:</p>
+<table>
+<tr><th>Group</th><th>Profiled entries (from EBOOT)</th></tr>
+<tr><td>Boot / system</td><td><code>Bootup</code>, <code>Debug Init</code>, <code>AppInit</code>, <code>System Manager</code>, <code>Game Data Manager</code>, <code>SigSlot</code></td></tr>
+<tr><td>Controllers</td><td><code>HUD Controller</code>, <code>Audio Controller</code>, <code>Powerplay Controller</code>, <code>Game Logic Controller</code>, <code>Environment Controller</code>, <code>Command Handler</code>, <code>Job Manager</code></td></tr>
+<tr><td>Render</td><td><code>Renderer</code>, <code>Render Targets</code>, <code>Global Shaders</code>, <code>Deferred Shading Manager</code>, <code>ShaderPatch</code>, <code>Lighting</code>, <code>DP Shader Combos</code>, <code>Material Combos</code>, <code>Draw Primitives</code></td></tr>
+<tr><td>Gameplay</td><td><code>VehiclePhysics</code>, <code>Particles</code>, <code>Swoosh</code>, <code>Catnip</code> systems, <code>Map Maker</code>, <code>Megabowles</code></td></tr>
+<tr><td>Budget pairs</td><td><code>Environment Code</code>/<code>Environment Art</code>, <code>Vehicle Code</code>/<code>Vehicle Art</code>, <code>UI Code</code>/<code>UI Art</code>, <code>Powerplay … Art</code>, plus a catch-all <code>No Budget</code></td></tr>
+</table>
+
+<h2>SPU job consumers</h2>
+<p>JobStream is shared by every SPU-heavy subsystem. The job names in the binary make the consumers
+explicit:</p>
+<table>
+<tr><th>Consumer</th><th>SPU jobs / evidence</th><th>What runs on SPU</th></tr>
+<tr><td><a href="engine-rendering.html">SPULight</a></td><td><code>JobLight0…16</code>, <code>JobPointLight1…16</code>; markers <code>SPULight Build Jobs</code>, <code>Copy Depth</code>, <code>Stall Kick Jobs</code></td><td>Local-light culling &amp; deferred accumulation into <code>spu_output</code></td></tr>
+<tr><td>Shader patching (Crayon2)</td><td><code>ShaderPatching.cpp</code> chain; 3 DMA inputs (clean shader, patch list, patch-reg buffer)</td><td>Patches register blocks into <a href="format-fxc.html">material combos</a> off the PPU</td></tr>
+<tr><td>Sony Edge geometry</td><td><code>contrib/Sony/Edge/EdgeGeom</code> (v0_4_3): <code>edgegeom.cpp</code>, <code>edgegeom_compress.cpp</code>, <code>edgegeom_decompress.cpp</code></td><td>Vertex decompression / culling for <a href="format-model.html">models</a> before RSX submission</td></tr>
+<tr><td><a href="engine-middleware.html">Havok 5.5</a></td><td><code>contrib/Havok/Havok550/…/hkPs3SpuUtil.cpp</code>; <code>SPU Thread %d</code>, <code>hkSpuUtil Helper</code>; uses SPURS <em>tasksets</em></td><td>Collision / physics simulation</td></tr>
+</table>
+
+<div class="tip">Note the division of labour on SPURS: JobStream uses SPURS <strong>job chains</strong>
+(<code>cellSpursCreateJobChainWithAttribute</code>), while Havok plugs in through SPURS
+<strong>tasksets</strong> (<code>cellSpursCreateTaskset</code> / <code>CreateTask</code>). Both share
+the same underlying <code>cellSpurs</code> instance and event-queue plumbing.</div>
+
+<h2>Sony Edge</h2>
+<p>The geometry-processing SPU library is Sony's <strong>Edge</strong> middleware
+(<a href="engine-middleware.html">SPU libs</a>), version <code>v0_4_3</code>, used here as
+<strong>EdgeGeom</strong>. Its three core source files —
+<code>edgegeom.cpp</code>, <code>edgegeom_compress.cpp</code>, <code>edgegeom_decompress.cpp</code> —
+appear in the assert paths, confirming Split/Second decompresses (and likely back-face/cluster
+culls) vehicle and environment geometry on SPUs as a JobStream job before handing index/vertex data
+to the RSX. This is why <a href="format-model.html">.model</a> geometry is stored Edge-compressed.</p>
+
+<h2>Window of opportunity</h2>
+<p>The "<code>SPULight Window of opportunity</code>" marker captures the core design idea of the
+whole system: while the SPUs chew through a job chain, the PPU main thread is free to do other work
+and only blocks (<code>SPULight Stall Global Light</code>) when it actually needs the result. The
+job-guard barriers (<code>cellSpursJobGuardNotify</code>) are what let the PPU defer that wait as
+late as possible, maximising PPU/SPU overlap each frame.</p>
+
+<blockquote>Source-path evidence: <code>c:/Projects/proj_1/ws_0/Code/libs/System/JobStream/JobStream/Spurs/SpursJobChain.cpp</code>
+(JobStream) and <code>E:/SplitSecond/ss_dev/Code/contrib/Havok/Havok550/Common/Base/Spu/Util/Ps3/hkPs3SpuUtil.cpp</code>
+(Havok's SPU util — note the alternate <code>E:/SplitSecond/ss_dev/</code> tree for contrib code).
+The job-system structure is <span class="badge ok">Confirmed</span>; the exact SPU count and per-job
+priorities are <span class="badge partial">Partial</span> (passed as runtime variables
+<code>spuCount</code>/<code>spuPriorities</code>, not constants in the strings).</blockquote>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="engine-rendering.html">Rendering Pipeline</a> — SPULight, shader patching and the deferred passes that ride on JobStream</li>
+  <li><a href="engine-overview.html">Engine Architecture</a> — the full subsystem map</li>
+  <li><a href="engine-middleware.html">Middleware Stack</a> — Havok 5.5, Sony Edge and the rest of <code>contrib/</code></li>
+  <li><a href="engine-resources.html">Resources &amp; Streaming</a> — what the loader threads bring in</li>
+  <li><a href="format-model.html">Model (.model)</a> — Edge-compressed geometry decompressed on SPU</li>
+  <li><a href="format-fxc.html">FX Compiled (.fxc)</a> &middot; <a href="format-shaders.html">Shaders</a> — patched by the shader-patch SPU job</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

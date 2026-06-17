@@ -3,6 +3,8 @@ import { havokHandler } from '../havok';
 import {
 	parseHavok,
 	isHavokPackfile,
+	convexHullTriangles,
+	aabbBoxMesh,
 	HAVOK_MAGIC0,
 	HAVOK_MAGIC1,
 } from '../../../havok';
@@ -157,6 +159,142 @@ describe('havok packfile parser', () => {
 			expect(m.header.contentsVersion).toBe('Havok-5.5.0-r1');
 			expect(m.classNames.length).toBeGreaterThan(0);
 			expect(m.rootClassName && m.rootClassName.length).toBeGreaterThan(0);
+		},
+	);
+});
+
+// ---------------------------------------------------------------------------
+// Geometry triangulation helpers (synthetic — no devkit needed)
+// ---------------------------------------------------------------------------
+
+describe('convexHullTriangles', () => {
+	it('triangulates a unit cube into a closed manifold (12 tris, F = 2V-4)', () => {
+		const cube: number[] = [];
+		for (const x of [-1, 1])
+			for (const y of [-1, 1]) for (const z of [-1, 1]) cube.push(x, y, z);
+		const idx = convexHullTriangles(cube);
+		expect(idx.length / 3).toBe(12); // 8 verts -> 2*8-4 = 12 triangles
+		// every undirected edge shared by exactly two triangles (closed hull)
+		const edge = new Map<string, number>();
+		for (let t = 0; t < idx.length; t += 3) {
+			const tri = [idx[t], idx[t + 1], idx[t + 2]];
+			for (let e = 0; e < 3; e++) {
+				const a = tri[e];
+				const b = tri[(e + 1) % 3];
+				const k = a < b ? `${a}_${b}` : `${b}_${a}`;
+				edge.set(k, (edge.get(k) ?? 0) + 1);
+			}
+		}
+		for (const c of edge.values()) expect(c).toBe(2);
+		// all indices in range
+		for (const i of idx) expect(i).toBeGreaterThanOrEqual(0);
+		for (const i of idx) expect(i).toBeLessThan(8);
+	});
+
+	it('returns [] for fewer than 4 points and for coplanar points', () => {
+		expect(convexHullTriangles([0, 0, 0, 1, 0, 0, 0, 1, 0])).toEqual([]); // triangle
+		// 4 coplanar points (all z=0)
+		expect(convexHullTriangles([0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0])).toEqual([]);
+	});
+
+	it('aabbBoxMesh builds 8 verts / 12 tris around a center', () => {
+		const box = aabbBoxMesh([10, 0, -5], [2, 3, 4]);
+		expect(box.vertexCount).toBe(8);
+		expect(box.indices.length / 3).toBe(12);
+		// X coordinates span center ± half-extent
+		const xs = box.positions.filter((_, i) => i % 3 === 0);
+		expect(Math.min(...xs)).toBeCloseTo(8);
+		expect(Math.max(...xs)).toBeCloseTo(12);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Collision geometry from REAL devkit samples
+// ---------------------------------------------------------------------------
+
+describe('havok collision geometry (real samples)', () => {
+	const MAINCOLL = 'Vehicles/Bodies/Musclecar_01/Musclecar_01.mainColl';
+	it.skipIf(!hasSample(MAINCOLL))(
+		'extracts the 4 named convex hulls with real vertices from a .mainColl',
+		() => {
+			const m = parseHavok(readSample(MAINCOLL));
+			const hulls = m.shapes.filter((s) => s.className === 'hkpConvexVerticesShape');
+			expect(hulls.length).toBe(4);
+			// Positionally labelled by the four documented target hull names.
+			expect(hulls.map((h) => h.name)).toEqual([
+				'Vs_Environment',
+				'Vs_Object',
+				'Vs_Vehicle',
+				'Core',
+			]);
+			// Every hull recovers real vertices and triangulates to a solid mesh.
+			expect(m.hasGeometry).toBe(true);
+			for (const h of hulls) {
+				expect(h.geometryComplete).toBe(true);
+				expect(h.mesh).toBeDefined();
+				expect(h.mesh!.vertexCount).toBe(h.numVertices);
+				expect(h.mesh!.positions.length).toBe(h.numVertices! * 3);
+				expect(h.mesh!.indices.length).toBeGreaterThanOrEqual(3);
+			}
+			// First hull's first vertex is the byte-traced (-1.045, 0.314, -2.106).
+			const v = hulls[0].mesh!.positions;
+			expect(v[0]).toBeCloseTo(-1.045, 2);
+			expect(v[1]).toBeCloseTo(0.314, 2);
+			expect(v[2]).toBeCloseTo(-2.106, 2);
+		},
+	);
+
+	const PHYS = 'Vehicles/Bodies/Musclecar_01/Musclecar_01.phys';
+	it.skipIf(!hasSample(PHYS))(
+		'extracts convex hull geometry + hkpMaterial friction/restitution from a .phys',
+		() => {
+			const m = parseHavok(readSample(PHYS));
+			const hulls = m.shapes.filter((s) => s.className === 'hkpConvexVerticesShape');
+			expect(hulls.length).toBeGreaterThan(4);
+			expect(m.meshes.length).toBeGreaterThan(0);
+			// __types__ reflection decoded the hkpMaterial member layout.
+			const mat = m.types.find((t) => t.name === 'hkpMaterial');
+			expect(mat).toBeDefined();
+			expect(mat!.members.map((x) => x.name)).toEqual([
+				'responseType',
+				'friction',
+				'restitution',
+			]);
+			// And the data values match the wiki-confirmed Havok defaults.
+			const fric = m.fields.find((f) => f.name === 'friction');
+			const rest = m.fields.find((f) => f.name === 'restitution');
+			expect(fric?.value).toBeCloseTo(0.5, 3);
+			expect(rest?.value).toBeCloseTo(0.4, 3);
+		},
+	);
+
+	const TLCOLL = 'Environments/Levels/Downtown/Subtracks/A/tl.hkColl';
+	it.skipIf(!hasSample(TLCOLL))(
+		'reports a level .hkColl extended mesh as AABB-box-only (triangle buffers absent)',
+		() => {
+			const m = parseHavok(readSample(TLCOLL));
+			const ext = m.shapes.filter((s) => s.className === 'hkpExtendedMeshShape');
+			expect(ext.length).toBe(1);
+			const s = ext[0];
+			// Subpart metadata IS recovered (subpart count + per-subpart tri/vert sums)…
+			expect(s.subpartCount).toBeGreaterThan(0);
+			expect(s.numTriangles).toBeGreaterThan(0);
+			// …but the triangle vertex/index buffers are SERIALIZE_IGNORED, so the
+			// only renderable geometry is the AABB box (8 verts), honestly partial.
+			expect(s.geometryComplete).toBe(false);
+			expect(s.mesh?.vertexCount).toBe(8);
+			expect(s.aabbHalfExtents).toBeDefined();
+		},
+	);
+
+	const CLCOLL = 'Environments/Levels/Downtown/Common/cl.hkColl';
+	it.skipIf(!hasSample(CLCOLL))(
+		'parses the empty cl.hkColl placeholder with no geometry',
+		() => {
+			const m = parseHavok(readSample(CLCOLL));
+			// cl.hkColl is a placeholder hkpPhysicsData with no shapes.
+			expect(m.shapes.length).toBe(0);
+			expect(m.hasGeometry).toBe(false);
 		},
 	);
 });

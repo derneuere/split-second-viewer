@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Powerplays (.powerplays) — Split/Second RE Wiki</title>
+<meta name="description" content="Per-subtrack XML database of Split/Second powerplay definitions: each powerplay's placement matrix, timelines, animated prop instance hierarchy and per-event parameter overrides.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Powerplays (.powerplays)" data-category="Formats · Gameplay (Catnip)">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Powerplays (<code>.powerplays</code>)</h1>
+<p>The per-subtrack catalogue of <strong>powerplays</strong> — the scripted track-altering events
+(the "Level 1/2/3" destruction set-pieces) that define Split/Second's gameplay. Despite the binary-looking
+extension this is a <strong>plain UTF-8 XML</strong> file. Each entry binds a powerplay to a world
+placement matrix, one or more <a href="format-timeline.html">timelines</a>, an animated-prop instance
+tree and a table of per-event parameter overrides. The <a href="format-triggers.html">.triggers</a>
+file in the same folder references these powerplays by id; the <a href="system-powerplay.html">Powerplay
+System</a> page covers the runtime side.</p>
+
+<div class="infobox"><div class="ib-title">.powerplays</div><table>
+  <tr><th>Category</th><td>Catnip powerplay definitions</td></tr>
+  <tr><th>Encoding</th><td>UTF-8 XML (text)</td></tr>
+  <tr><th>Root</th><td><code>&lt;Root FileVersion="1.0000000"&gt;</code></td></tr>
+  <tr><th>Top element</th><td><code>&lt;Powerplay&gt;</code> (one per definition)</td></tr>
+  <tr><th>XML twin</th><td>n/a (already text)</td></tr>
+  <tr><th>Size range</th><td>~11 KB (frontend) … ~345 KB (docks D)</td></tr>
+  <tr><th>Count</th><td>20 files</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span> structure · <span class="badge partial">Partial</span> enums</td></tr>
+</table></div>
+
+<h2>At a glance</h2>
+<p>Every file opens with <code>&lt;Root FileVersion="1.0000000"&gt;</code> and contains a flat list of
+<code>&lt;Powerplay&gt;</code> elements (one large file, <code>Downtown/A</code>, has 111 of them). The
+loader path is confirmed in the EBOOT: <code>powerplays(noassert)|UI/Frontend/Powerplays/frontend.powerplays</code>,
+and the runtime owner is <code>cPowerplayManager</code> / <code>cPowerplayController</code>. File size
+scales with how much a subtrack does — the racing city tracks (Downtown, docks, Powerplant, Graveyard,
+airport_test_03) run ~230–353 KB with 100–130 powerplays each, while the smaller Nemesis subtracks run
+~124–161 KB with ~80–86 powerplays. The lone outlier is the frontend menu file at ~11 KB / 7 powerplays.</p>
+
+<div class="note">Read this together with <a href="format-triggers.html">.triggers</a>. A
+<code>.powerplays</code> entry <em>defines</em> a powerplay and its content; a <code>.triggers</code>
+entry <em>places the activation volume</em> that fires it, referencing the same <code>id</code>/<code>idCRC</code>.</div>
+
+<h2>Document structure</h2>
+<p>The nesting is regular. A simplified skeleton of one powerplay:</p>
+<pre class="hex">&lt;Root FileVersion="1.0000000"&gt;
+  &lt;Powerplay name="…\Powerplays\PG07_Taxis_Long_P" NiceName="PG07_Taxis_Long_Freeway_1"
+             Repeatable="false" AICanTrigger="true" RouteChanging="false" OpenShortcut="false"
+             TotallyUndriveable="false" MasterMaterial="7" PowerLevel="1"
+             id="1249478979.1976132398" idCRC="0xCF520610" contextual="0"&gt;
+    &lt;worldmtx&gt; &lt;Row0/&gt;&lt;Row1/&gt;&lt;Row2/&gt;&lt;Row3/&gt; &lt;/worldmtx&gt;          &lt;!-- placement matrix --&gt;
+    &lt;EventParams&gt; &lt;Event …&gt; &lt;Param …/&gt; &lt;/Event&gt; … &lt;/EventParams&gt;   &lt;!-- per-event overrides --&gt;
+    &lt;Timeline name="Powerplays\Timelines\PG07_Cars_1_30m_T.xml" id="…" idCRC="…"&gt;
+       &lt;transform&gt; &lt;Row0/&gt;…&lt;Row3/&gt; &lt;/transform&gt;
+    &lt;/Timeline&gt;                                                    &lt;!-- one or more --&gt;
+    &lt;Ambient&gt; &lt;NODE_FACTORY …&gt; … &lt;/NODE_FACTORY&gt; &lt;/Ambient&gt;        &lt;!-- animated-prop tree --&gt;
+  &lt;/Powerplay&gt;
+  …
+&lt;/Root&gt;</pre>
+
+<h3><code>&lt;Powerplay&gt;</code> attributes</h3>
+<table class="struct">
+<tr><th>Attribute</th><th>Type</th><th>Example</th><th>Description</th></tr>
+<tr><td>name</td><td>path</td><td><code>..\..\..\..\Powerplays\Powerplays\PG07_Taxis_Long_P</code></td><td>Source authoring path/name of the powerplay (the <code>_P</code> suffix = powerplay).</td></tr>
+<tr><td>NiceName</td><td>string</td><td><code>PG07_Taxis_Long_Freeway_1</code></td><td>Human-readable display/debug name.</td></tr>
+<tr><td>Repeatable</td><td>bool</td><td><code>false</code></td><td>Whether the powerplay can fire more than once per race.</td></tr>
+<tr><td>AICanTrigger</td><td>bool</td><td><code>true</code></td><td>Whether AI drivers are allowed to fire it (cross-refs the EBOOT debug toggle "Can Trigger Powerplays on Drones").</td></tr>
+<tr><td>RouteChanging</td><td>bool</td><td><code>false</code></td><td>True for the "Level 3" powerplays that open/close a whole route branch.</td></tr>
+<tr><td>OpenShortcut</td><td>bool</td><td><code>false</code></td><td>Whether firing opens a shortcut route.</td></tr>
+<tr><td>TotallyUndriveable</td><td>bool</td><td><code>false</code></td><td>Marks the affected area as fully blocked once triggered.</td></tr>
+<tr><td>MasterMaterial</td><td>int</td><td><code>7</code></td><td>Index into the <code>cPowerplayMaterialManager</code> material set used to highlight/render the powerplay zone.</td></tr>
+<tr><td>PowerLevel</td><td>int</td><td><code>1</code></td><td>Power tier 1–3 (matches the EBOOT <code>SetPowerLevel1/2/3</code> and the per-level highlight colours).</td></tr>
+<tr><td>id</td><td>uid</td><td><code>1249478979.1976132398</code></td><td>Catnip unique id, a <code>timestamp.serial</code> pair. This is the key referenced by <a href="format-triggers.html">.triggers</a>.</td></tr>
+<tr><td>idCRC</td><td>hex32</td><td><code>0xCF520610</code></td><td>32-bit CRC of the id, the value the runtime actually hashes/compares.</td></tr>
+<tr><td>contextual</td><td>int</td><td><code>0</code></td><td>Flag for context-sensitive powerplays. <code>0</code> in the common case.</td></tr>
+</table>
+
+<h3><code>&lt;worldmtx&gt;</code> and <code>&lt;transform&gt;</code></h3>
+<p>Both use the same four-row form: <code>Row0/Row1/Row2</code> are the 3×3 basis (rotation+scale) and
+<code>Row3</code> is the translation, each with <code>X/Y/Z</code> attributes. <code>worldmtx</code> places
+the whole powerplay in world space; each Timeline's <code>transform</code> offsets that timeline relative
+to the powerplay origin (e.g. <code>Row3 Z="6.8707972"</code> nudges one car group forward).</p>
+
+<h3><code>&lt;Timeline&gt;</code></h3>
+<p>One <code>&lt;Powerplay&gt;</code> can reference several timelines (Downtown/A has 191 across the file).
+Each names a <a href="format-timeline.html">timeline asset</a> and carries its own placement.</p>
+<table class="struct">
+<tr><th>Attribute</th><th>Type</th><th>Example</th><th>Description</th></tr>
+<tr><td>name</td><td>path</td><td><code>Powerplays\Timelines\PG07_Cars_1_30m_T.xml</code></td><td>Timeline asset path (the <code>_T</code> suffix = timeline).</td></tr>
+<tr><td>id / idCRC</td><td>uid / hex32</td><td><code>1262717283.-987787820</code> / <code>0xA5256093</code></td><td>Timeline instance id and its CRC.</td></tr>
+</table>
+
+<h3><code>&lt;EventParams&gt;</code> → <code>&lt;Event&gt;</code> → <code>&lt;Param&gt;</code></h3>
+<p>Per-instance overrides applied to events on the referenced timelines. An <code>&lt;Event&gt;</code>'s
+<code>idString</code> is a comma-joined chain of three Catnip ids — <em>powerplay-id, timeline-id,
+event-id</em> — which scopes the override to a specific event inside a specific timeline of this
+powerplay; <code>id</code> is the event's own CRC. Each holds one or more typed <code>&lt;Param&gt;</code>:</p>
+<table class="struct">
+<tr><th>Attribute</th><th>Type</th><th>Example</th><th>Description</th></tr>
+<tr><td>Name</td><td>string</td><td><code>Animation</code></td><td>Parameter slot name. Observed: <code>Animation</code>, <code>Route</code>, <code>Trigger</code>, <code>Timeline</code>, <code>Clip</code>, <code>PowerLevel</code>.</td></tr>
+<tr><td>Type</td><td>int</td><td><code>6</code></td><td>Value's data type (see enum below).</td></tr>
+<tr><td>Value</td><td>typed</td><td><code>0x2B15FDF5</code></td><td>The value — a CRC/asset hash for type 6, a small integer for type 1, etc.</td></tr>
+</table>
+<p>Across all 20 files the <code>(Name, Type)</code> pairs are tightly correlated, which lets us pin the
+type codes:</p>
+<table>
+<tr><th>Param Name</th><th>Type</th><th>Value form</th><th>Notes</th></tr>
+<tr><td>Animation</td><td>6</td><td>hex32 CRC</td><td>By far the most common (≈2700 instances). Type 6 = asset/CRC reference.</td></tr>
+<tr><td>Trigger</td><td>6</td><td>hex32 CRC</td><td>Reference to another trigger.</td></tr>
+<tr><td>Timeline</td><td>6</td><td>hex32 CRC</td><td>Reference to a timeline asset.</td></tr>
+<tr><td>Route</td><td>5</td><td>integer</td><td>Type 5 = route/index reference.</td></tr>
+<tr><td>Clip</td><td>1</td><td>small int</td><td>Type 1 = integer.</td></tr>
+<tr><td>PowerLevel</td><td>1</td><td>small int</td><td>Integer override of the power tier.</td></tr>
+</table>
+<div class="warn">Type codes 5 and 6 are inferred from how their values are written (integer vs. hex CRC)
+and from the parameter names, not from the EBOOT — treat the exact numeric meanings as
+<span class="badge partial">Partial</span>. Names 1=int, 5=route, 6=CRC/asset are consistent across all
+samples but unverified against the type enum in code.</div>
+
+<h3><code>&lt;Ambient&gt;</code> — the animated-prop tree</h3>
+<p>A recursive <code>&lt;NODE_FACTORY&gt;</code> hierarchy that places and animates the actual scenery
+(cranes, rotors, etc.). Each node has a <code>&lt;STATIC_POSITION&gt;&lt;node_transform&gt;</code> (same
+4-row matrix form) and may carry motion modifiers and/or children:</p>
+<table class="struct">
+<tr><th>Element / attribute</th><th>Description</th></tr>
+<tr><td><code>NODE_FACTORY Type</code></td><td>Node kind. <code>0</code> = leaf with an <code>&lt;INSTANCE&gt;</code> (a real prop), <code>1</code> = leaf variant, <code>2</code> = internal/grouping node. (Distribution in Downtown/A: 115×0, 4×1, 10×2.)</td></tr>
+<tr><td><code>NumberOfInstances</code> / <code>NumberOfChildren</code></td><td>Counts of direct <code>&lt;INSTANCE&gt;</code> leaves and child <code>&lt;NODE_FACTORY&gt;</code> nodes — redundant with the actual element counts, used by the loader to pre-size arrays.</td></tr>
+<tr><td><code>ROTATION_POSITIONER Speed, Axis</code></td><td>Constant spin: <code>Speed</code> in radians/tick about <code>Axis</code> (observed 120/121/122 = X/Y/Z axis codes).</td></tr>
+<tr><td><code>OSCILLATION_POSITIONER MaxArcAngle, Frequency</code></td><td>Pendulum-style sway, amplitude (radians) and frequency.</td></tr>
+<tr><td><code>INSTANCE Name, Path, Id</code></td><td>The leaf prop, e.g. <code>Name="AA_skycrane_01" Path="Powerplays\Animations\AA\" Id="0xE131565F"</code>. <code>Id</code> is the instance CRC.</td></tr>
+</table>
+
+<h2>How we know</h2>
+<blockquote>The file is literally readable XML (<code>head</code> shows ASCII tags from byte 0). Element and
+attribute names below are taken verbatim from <code>Downtown/Subtracks/A/Downtown.powerplays</code> and
+cross-checked against <code>frontend.powerplays</code>. Class names (<code>cPowerplayManager</code>,
+<code>cPowerplayMaterialManager</code>, <code>cPowerplayController</code>) and the load path appear in
+<code>eboot_strings.txt</code>. <code>PowerLevel</code> maps to the EBOOT's <code>SetPowerLevel1/2/3</code>
+and the "Powerplays/Highlight/Level 1-3" debug colour menus.</blockquote>
+
+<h2>Open questions</h2>
+<ul>
+<li>The full <code>Param Type</code> enum (only 1, 5, 6 observed) and the exact axis-code base (120 = ASCII
+<code>'x'</code>? the values 120/121/122 are suggestive) are unconfirmed.</li>
+<li><code>MasterMaterial</code> indexes the <code>cPowerplayMaterialManager</code> set but the material table
+itself lives elsewhere (see <a href="system-powerplay.html">Powerplay System</a>).</li>
+<li>The two halves of the dotted <code>id</code> (<code>1249478979.1976132398</code>) look like a creation
+timestamp plus a serial; this is the same id scheme used throughout Catnip but its bit layout is unverified.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="system-powerplay.html">Powerplay System</a> — runtime: power bar, danger zones, sequences, materials.</li>
+<li><a href="format-triggers.html">Triggers (.triggers)</a> — the activation volumes that reference these powerplays.</li>
+<li><a href="format-timeline.html">Timelines (.timelineInfo)</a> — the timeline assets each powerplay sequences.</li>
+<li><a href="format-entities.html">Entities (.entities)</a> — sibling Catnip file in the same subtrack folder.</li>
+<li><a href="data-catnip.html">Catnip Entity System</a> — the overarching data-driven framework.</li>
+<li><a href="format-powerplayinfo.html">Powerplay Info (.dat)</a> — the per-level <code>powerplayInfo.dat</code> companion.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { skelHandler } from '../skel';
-import { parseSkel, rootBoneIndex } from '../../../skel';
+import { parseSkel, rootBoneIndex, skeletonDrawBones } from '../../../skel';
 import { ssCtx } from '../../handler';
 import { hasSample, readSample } from '@/test/dataRoot';
 
@@ -89,6 +89,24 @@ describe('skel parser', () => {
 		expect(rootBoneIndex(m)).toBe(0);
 	});
 
+	it('exposes draw-ready skeleton bones (positions + parent indices)', () => {
+		const m = parseSkel(INLINE);
+		// parseSkel populates the `skeleton` field used by the line-segment viewer.
+		expect(m.skeleton).toHaveLength(2);
+		expect(m.skeleton).toBe(m.skeleton); // stable
+		expect(m.skeleton[0].parent).toBe(-1);
+		expect(m.skeleton[1].parent).toBe(0);
+		expect(m.skeleton[0].name).toBe('root_group1_export');
+		// Each bone exposes a finite [x,y,z] origin.
+		for (const b of m.skeleton) {
+			expect(b.pos).toHaveLength(3);
+			expect(b.pos.every((v) => Number.isFinite(v))).toBe(true);
+		}
+		// skeletonDrawBones is idempotent with the parsed field.
+		const again = skeletonDrawBones(m);
+		expect(again).toEqual(m.skeleton);
+	});
+
 	it('rejects a bad magic', () => {
 		const bad = new Uint8Array(0x40);
 		bad.set([0x66, 0x61, 0x69, 0x6c]); // "fail"
@@ -115,6 +133,11 @@ describe('skel parser', () => {
 			expect(m.bones[1].parent).toBe(0);
 			expect(m.bones[0].name).toBe('root_group1_export');
 			expect(m.bones[1].name).toBe('joint_Explosive1');
+			// Draw bones present, with finite world positions for the line viewer.
+			expect(m.skeleton).toHaveLength(2);
+			for (const b of m.skeleton) {
+				expect(b.pos.every((v) => Number.isFinite(v))).toBe(true);
+			}
 		},
 	);
 });

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Powerplay Info (.dat) — Split/Second RE Wiki</title>
+<meta name="description" content="Per-level _powerplayInfo.dat: a placement table mapping each powerplay's Catnip .cat timeline to a world-space transform (orientation + position).">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Powerplay Info (.dat)" data-category="Formats · Track & Route">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Powerplay Info <small>(&lt;Level&gt;_powerplayInfo.dat)</small></h1>
+<p>Every level carries one <code>&lt;Level&gt;_powerplayInfo.dat</code> in its root
+(<code>Environments/Levels/&lt;Level&gt;/</code>). It is a flat <b>placement table</b>: a counted list of records, each
+naming a <a href="data-catnip.html">Catnip</a> powerplay timeline (<code>.cat</code>) and giving the world-space
+transform at which that powerplay is instanced in the level. It is the level-side index the
+<a href="system-powerplay.html">Powerplay system</a> reads to know <i>which</i> powerplays exist on a track and
+<i>where</i> they fire.</p>
+
+<div class="infobox"><div class="ib-title">_powerplayInfo.dat</div><table>
+  <tr><th>Category</th><td>Powerplay placement table</td></tr>
+  <tr><th>Location</th><td><code>…/Levels/&lt;Level&gt;/&lt;Level&gt;_powerplayInfo.dat</code></td></tr>
+  <tr><th>Count</th><td>1 per level (10 present; the 5 <code>nem_</code> boss arenas are 4-byte count-0 stubs)</td></tr>
+  <tr><th>Size</th><td>4 B (empty) – ~8 KB (race levels)</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>References</th><td>Catnip <code>.cat</code> timelines</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<h2>Top-level layout</h2>
+<p><span class="badge ok">Confirmed (header)</span> The file begins with a big-endian <b>entry count</b>, followed by
+that many variable-length records. Each record is length-prefixed by its name, so the file must be walked record by
+record (there is no offset table).</p>
+
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>0x4</td><td>uint32_t</td><td>entryCount</td><td>Number of powerplay placements. Downtown <code>0x58</code>=88, Graveyard <code>0x31</code>=49, docks <code>0x51</code>=81.</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>uint32_t</td><td>tableHash?</td><td><code>80 73 33 3c</code> — a 4-byte value that precedes the first record (a CRC/hash of the table or first id). <span class="badge theory">Theory</span></td></tr>
+<tr><td>0x8</td><td>var</td><td>record[]</td><td>entries</td><td><code>entryCount</code> variable-length records (see below).</td></tr>
+</table>
+
+<h2>Record layout</h2>
+<p><span class="badge partial">Partial</span> Each record is a length-prefixed name followed by a fixed <b>4×3 affine
+transform matrix</b> (12 big-endian <code>float32</code>) and a short trailing block (two words + a per-entry id). The
+name length and string are <span class="badge ok">certain</span>; decoding the 12 floats of the first Downtown record
+yields a near-identity 3×3 rotation with the world position in the <b>translation row</b>, which is why the record is a
+TM34 matrix — <b>not</b> a quaternion+position pair as a first glance at the leading <code>≈1.0</code> float suggests.</p>
+
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>+0x0</td><td>0x4</td><td>uint32_t</td><td>nameLen</td><td>Length of the timeline name in bytes (e.g. <code>0x19</code>=25). <span class="badge ok">Confirmed</span></td></tr>
+<tr><td>+0x4</td><td>nameLen</td><td>char[]</td><td>name</td><td>Catnip timeline file, e.g. <code>pp12_road_explode_mpo.cat</code>. Not NUL-terminated. <span class="badge ok">Confirmed</span></td></tr>
+<tr><td>+…</td><td>0x30</td><td>float32_t[3][4]</td><td>transform</td><td>4×3 (TM34) affine matrix: rows 0–2 = 3×3 orientation (near-identity in the sample), row 3 = world-space translation <code>(x,y,z)</code>. <span class="badge theory">Theory (matrix order)</span></td></tr>
+<tr><td>+…</td><td>0x8</td><td>uint32_t[2]</td><td>fields</td><td>Two trailing words — observed <code>00 00 00 00</code> then <code>00 00 00 01</code> (a flag/count?). <span class="badge theory">Theory</span></td></tr>
+<tr><td>+…</td><td>0x4</td><td>uint32_t</td><td>id</td><td>Per-entry trailing id/hash (e.g. <code>84 fe d8 1b</code>), immediately preceding the next record's <code>nameLen</code>. <span class="badge theory">Theory</span></td></tr>
+</table>
+
+<pre class="hex">$ od -A d -t x1z Downtown_powerplayInfo.dat        # record 0
+0000000 00 00 00 58 80 73 33 3c 00 00 00 19 70 70 31 32  >...X.s3<....pp12<
+        └count=88┘ └tableHash┘ └nameLen=25┘ └ "pp12...
+0000016 5f 72 6f 61 64 5f 65 78 70 6c 6f 64 65 5f 6d 70  >_road_explode_mp<
+0000032 6f 2e 63 61 74 3f 7f ff ff 00 00 00 00 3a 19 0d  >o.cat?.......:..<
+            ...cat" ┘ └ TM34 matrix starts (row0: 1.0  0.0  0.0006 …) →
+   …matrix rows (12 floats) … row3 = (-496.9, -0.38, -1075.3) = world pos
+0000080 f0 c4 86 6a 6f 00 00 00 00 00 00 00 01 84 fe d8  >...jo...........<
+        └ …pos ┘  └ word0=0 ┘ └ word1=1 ┘ └id=84 fe d8…
+0000096 1b 00 00 00 1c 70 70 31 30 ...                   >.....pp10...<
+        …1b ┘ └nameLen=28┘ "pp10_pier_bld1noswap_mpr.cat"</pre>
+
+<div class="note">The whole record is <code>4 + nameLen + 0x30 + 0x8 + 0x4</code> bytes. For record 0 that is
+<code>4 + 25 + 48 + 8 + 4 = 89</code> bytes (offsets 8…96 here), and the next record's <code>nameLen</code> (<code>0x1C</code>=28)
+lands exactly where predicted — confirming the record stride even though the matrix-row order is not yet pinned to a
+known in-game powerplay.</div>
+
+<div class="tip">The name length cross-checks exactly: <code>0x19</code>=25 = <code>len("pp12_road_explode_mpo.cat")</code>,
+and the following record's <code>0x1C</code>=28 = <code>len("pp10_pier_bld1noswap_mpr.cat")</code>. Counting records
+forward from offset 8 reaches <code>entryCount</code> entries and lands exactly on EOF.</div>
+
+<h2>What the names tell us</h2>
+<p>The referenced files are <a href="data-catnip.html">Catnip</a> <b>powerplay timelines</b> — the
+<code>.cat</code> assets under <code>Powerplays/</code>/<code>Catnip/PowerplayTimelines</code> that script a powerplay's
+sequence of FX, physics and camera beats. Their naming encodes the powerplay and its variant:</p>
+<table>
+<tr><th>Token</th><th>Meaning</th><th>Example</th></tr>
+<tr><td><code>pp##</code></td><td>Powerplay number</td><td><code>pp12_road_explode</code></td></tr>
+<tr><td><code>pg##</code> / <code>pa##</code></td><td>Other event/scenario prefixes</td><td><code>pg07_cars_6_mpo.cat</code></td></tr>
+<tr><td><code>_mpo</code> / <code>_mpr</code></td><td>Multiplayer-online vs multiplayer-race variant</td><td><code>…_mpo.cat</code>, <code>…_mpr.cat</code></td></tr>
+<tr><td><code>noswap</code></td><td>Geometry-swap behaviour flag</td><td><code>pp10_pier_bld1noswap_mpr.cat</code></td></tr>
+</table>
+<p>The <a href="system-cameras.html">TakedownSequences</a> <code>.params</code> in the level's
+<code>Cameras/</code> folder carry matching <code>PP##</code>/<code>PA##</code> names, so a powerplay's placement (here),
+its timeline (the <code>.cat</code>), and its takedown camera are linked by the shared id.</p>
+
+<div class="warn">The 4-byte word at offset 4 (<code>80 73 33 3c</code>) and the trailing per-entry id
+(<code>84 fe d8 1b</code>, …) are plausibly CRC32 name hashes — the title's
+<a href="format-crcs.html">.crcs</a> tables use the same hashed-name lookup scheme — but this has not been confirmed by
+hashing the strings. The record <em>stride</em> is solid (the predicted <code>nameLen</code> of each following record
+lands exactly), but the <b>order of the matrix rows</b> and whether the two trailing words are flags vs. part of the id
+stay <span class="badge theory">Theory</span> until a record is matched to a known in-game powerplay position.</div>
+
+<h2>Relationship to the powerplay system</h2>
+<p>At load, the <a href="system-powerplay.html">Powerplay system</a> (<code>cPowerplayManager</code> /
+<code>cPowerplayController</code>) reads this table to instantiate each placed powerplay, binding its
+<code>.cat</code> timeline to the given transform and to the surrounding
+<a href="format-triggers.html">triggers</a> / <a href="format-entities.html">Catnip entities</a>. The separate
+top-level <code>sectordata.dat</code> + <code>sector_scenarios_overlay.dat</code> are used by the
+<a href="data-catnip.html">Megabowles</a> test harness to auto-generate powerplay scenarios and are unrelated to this
+per-level placement file.</p>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="system-powerplay.html">Powerplay System</a> — power bar, triggers, danger zones, sequences.</li>
+<li><a href="data-catnip.html">Catnip Entity System</a> — the <code>.cat</code> timelines this table places.</li>
+<li><a href="format-powerplays.html">Powerplays (.powerplays)</a> — powerplay definitions.</li>
+<li><a href="format-timeline.html">Timelines (.timelineInfo)</a> — Catnip timeline sequencing.</li>
+<li><a href="system-cameras.html">Cameras &amp; Director</a> — takedown sequences keyed by the same ids.</li>
+<li><a href="format-crcs.html">CRC Tables (.crcs)</a> — the hashed-name scheme the trailing ids likely use.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

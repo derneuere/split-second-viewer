@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shaders (.shaders / .shaderinst) — Split/Second RE Wiki</title>
+<meta name="description" content="Crayon2 shader-set register blocks (.shaders) and per-mesh shader instance bindings (.shaderinst): SHDR/HDRB and SDRI/INSS containers, material-combo CRCs, named constant/sampler tables.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Shaders (.shaders / .shaderinst)" data-category="Formats · Geometry & Render">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Shaders (.shaders / .shaderinst)</h1>
+<p>A renderable in Split/Second is described by a <a href="format-model.html">.model</a> plus a tightly-coupled
+<a href="format-fxc.html">.fxc</a> (compiled RSX microcode) and <code>.shaders</code> "shader set" — the latter two are
+1:1 with each other (2357 each on disk). Vehicle bodies/wheels and a broad set of level geometry additionally carry a
+<code>.shaderinst</code>. The <code>.shaders</code> file holds the engine-side
+<em>register block sets</em> — the named constant- and sampler-binding tables that the <a href="engine-rendering.html">Crayon2</a>
+renderer uses to <strong>patch</strong> the clean microcode at load time. The <code>.shaderinst</code> binds a concrete
+mesh instance to a shader set and overrides specific material constants (paint colour, emissive index, etc.).</p>
+
+<div class="infobox"><div class="ib-title">.shaders / .shaderinst</div><table>
+  <tr><th>Category</th><td>Geometry &amp; render</td></tr>
+  <tr><th>System</th><td>Crayon2 shader patcher</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Magic (.shaders)</th><td><code>53 48 44 52</code> "SHDR"</td></tr>
+  <tr><th>Magic (.shaderinst)</th><td><code>53 44 52 49</code> "SDRI"</td></tr>
+  <tr><th>Pairs with</th><td>.model + .fxc (1:1 with .fxc)</td></tr>
+  <tr><th>Count</th><td>2357 .shaders, 710 .shaderinst</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<h2>Role in the render pipeline</h2>
+<p>The EBOOT spells the design out. <code>libs/Render/Support/Crayon2/Crayon2/Shader/PS3/ShaderPatching.cpp</code>
+runs a SPURS job whose three DMA inputs are the <em>clean shader</em>, a <em>patch list</em>, and a <em>patch register buffer</em>:</p>
+<blockquote>
+<code>cellSpursJobGetInputList( …, alignedShaderSize, (s32)info.mCleanShader )</code><br>
+<code>cellSpursJobGetInputList( …, alignedPatchDataSize, (s32)&info.mPatchList-&gt;GetPatchList()[0] )</code><br>
+<code>cellSpursJobGetInputList( …, alignedPatchRegSize, (s32)&info.mPatchRegBuffer[0] )</code>
+<br>— eboot_strings.txt
+</blockquote>
+<p>The "clean shader" is the RSX microcode stored in the <a href="format-fxc.html">.fxc</a>; the patch list / register
+data are exactly the named register-block sets serialized in <code>.shaders</code>. The load message
+<em>"Loading register block sets from %s."</em> fires when the <code>.shaders</code> file is read, and the format is owned by
+<code>cMaterialComboManagers</code> / <code>cMaterialComboFactory</code> (both present as RTTI strings in the EBOOT).
+Each shader record is identified by an 8-hex-digit <strong>material-combo CRC</strong>; a missing one trips
+<em>"Can't find material combo with CRC 0x%08x.. replacing with error combo!"</em>.</p>
+
+<div class="note">A <code>.shaders</code> set is a <em>collection of material combos</em>, not a single program. The übershader
+database <code>global_shader_combos/global_shader_combos.shaders</code> is the same format with 263 combos in it; the
+per-car files are subsets the build tool emitted for that one body.</div>
+
+<h2>.shaders — SHDR container</h2>
+<p>A flat little-overhead container: a fixed header, then <code>count</code> back-to-back shader records. There is no
+offset table — records are walked sequentially. All multi-byte integers are big-endian.</p>
+
+<h3>Header (0x14 bytes + name)</h3>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x0</td><td>0x4</td><td>char[4]</td><td>magic</td><td><code>"SHDR"</code> (<code>53 48 44 52</code>). Constant across all 2357 samples.</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>uint32_t</td><td>version</td><td><code>6</code> in every sample checked (vehicle bodies, wheels, global DB). Format/version tag.</td></tr>
+<tr><td>0x8</td><td>0x4</td><td>uint32_t</td><td>combo_count</td><td>Number of shader/material-combo records that follow. Verified: equals the number of <code>HDRB</code> markers in the file <em>and</em> the count field of the sibling <code>.fxc</code> (Musclecar_01 = 23, _WheelBack = 9, global DB = 263).</td></tr>
+<tr><td>0xC</td><td>0x4</td><td>uint32_t</td><td>name_len</td><td>Length of the set name including its terminator (<code>0x0B</code> = 11 here).</td></tr>
+<tr><td>0x10</td><td>name_len</td><td>char[]</td><td>set_name</td><td>The set-level CRC string, e.g. <code>"0xe4249692"</code>. Identical to the name in the paired <code>.fxc</code> — this is how the two files are matched.</td></tr>
+</tbody>
+</table>
+
+<h3>Shader record</h3>
+<p>Each record is an <code>HDRB…HDRE</code> header block, followed by two <code>SDRS…SDRE</code> slots (the vertex and
+fragment microcode slots — <strong>empty here</strong>, because the actual microcode lives in the <a href="format-fxc.html">.fxc</a>),
+then the record's own CRC name. The <code>HDRB</code> block carries the named constant and sampler binding table.</p>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>+0x0</td><td>0x4</td><td>char[4]</td><td>hdr_begin</td><td><code>"HDRB"</code> — start of the register/binding header.</td></tr>
+<tr><td>+0x4</td><td>0x8</td><td>uint32_t[2]</td><td>reserved</td><td>Two zero words in every observed sample (flags/reserved).</td></tr>
+<tr><td>+0xC</td><td>0x4</td><td>uint32_t</td><td>count_a</td><td>First of <strong>two</strong> consecutive count words. Both equal <code>2</code> in the Musclecar/Wheel samples examined; their distinct roles are not byte-proven (see caveat). <span class="badge theory">Theory</span></td></tr>
+<tr><td>+0x10</td><td>0x4</td><td>uint32_t</td><td>combiner_count</td><td>Number of named "combiner" entries that follow (e.g. 2). Each combiner entry is <code>{u32 tag; u32 = 1; u32 strlen; char[] name}</code> where <code>tag</code> increments per entry (<code>0x2f</code>, <code>0x30</code>, …); names such as <code>VehicleGenericNoNormalMap_2_fadeout</code>, <code>ambient_occlusion_simple_3_fadeout</code>.</td></tr>
+<tr><td>…</td><td>var</td><td>struct[]</td><td>const_table</td><td>A list of named shader constants/samplers. Each record carries a small leading metadata word group, a <code>{u32 strlen; char[] name}</code> pair, and a register-slot index. Names are the engine uniform symbols — <code>WorldCameraPos</code>, <code>sslighting_ambient</code>, <code>sslighting_sky</code>, <code>sslighting_diffuse</code>, <code>gbuffer_MotionID</code>, <code>ss_deferred_gbuffer_globalFace</code>, etc. The slot index rises monotonically 0,1,2,… The exact field order within each record (kind / count / reg_index relative to the name) is only partially decoded. <span class="badge partial">Partial</span></td></tr>
+<tr><td>…</td><td>0x4</td><td>char[4]</td><td>hdr_end</td><td><code>"HDRE"</code>.</td></tr>
+<tr><td>…</td><td>0xC</td><td>—</td><td>vp_slot</td><td><code>"SDRS" + u32 len(=0) + "SDRE"</code> (12 bytes) — vertex-shader microcode slot, length <code>0</code> (microcode is in the .fxc).</td></tr>
+<tr><td>…</td><td>0xC</td><td>—</td><td>fp_slot</td><td><code>"SDRS" + u32 len(=0) + "SDRE"</code> (12 bytes) — fragment-shader microcode slot, length <code>0</code>.</td></tr>
+<tr><td>…</td><td>4 + n</td><td>u32 + char[]</td><td>combo_crc</td><td>Length-prefixed CRC string for this combo, e.g. <code>"0x618d6dad"</code>. Followed immediately by the next record's <code>HDRB</code>.</td></tr>
+</tbody>
+</table>
+
+<div class="tip">Both per-car and global files show <code>SDRS 00 00 00 00 SDRE</code> (zero-length microcode). That is the
+strongest evidence that <code>.shaders</code> is metadata only and the compiled programs are entirely delegated to the
+<a href="format-fxc.html">.fxc</a> twin.</div>
+
+<h3>Hex excerpt — header + first record (Musclecar_01.shaders)</h3>
+<pre class="hex">000000  53 48 44 52 00 00 00 06 00 00 00 17 00 00 00 0b   SHDR  ......  ....    magic; ver=6; count=0x17(23); name_len=0x0B
+000010  30 78 65 34 32 34 39 36 39 32 00 00 00 00 48 44   0xe4249692....HD   set_name "0xe4249692"; pad; HDRB starts @0x1E
+00001e  48 44 52 42 00 00 00 00 00 00 00 00 00 00 00 02   HDRB............   HDRB; 8 zero bytes; count_a=2
+00002e  00 00 00 02 00 00 00 2f 00 00 00 01 00 00 00 24   ......./.......$   combiner_count=2; combiner[0] tag=0x2f, =1, len=0x24
+00003e  56 65 68 69 63 6c 65 47 65 6e 65 72 69 63 4e 6f   VehicleGenericNo   …name "VehicleGenericNo…"
+…
+00048c  48 44 52 45 53 44 52 53 00 00 00 00 53 44 52 45   HDRESDRS....SDRE   record tail: HDRE, then SDRS+len(0)+SDRE …
+00049c  53 44 52 53 00 00 00 00 53 44 52 45 00 00 00 0b   SDRS....SDRE....   … second SDRS·0·SDRE; combo_crc len=0x0B
+0004ac  30 78 36 31 38 64 36 64 61 64 00 00 00 00 48 44   0x618d6dad....HD   combo_crc "0x618d6dad"; pad; next HDRB</pre>
+<p class="note" style="font-size:.9em">Offsets are real file offsets; <code>HDRB</code> begins at <code>0x1E</code> because the
+11-byte set-name plus 3 pad bytes precede it. Note the <strong>two</strong> consecutive <code>00 00 00 02</code> count words before the
+first combiner tag.</p>
+
+<h2>.shaderinst — SDRI / INSS container</h2>
+<p>The shader <em>instance</em> file binds mesh instances to material combos and supplies <strong>instance-specific
+constant overrides</strong> (paint colour, emissive light index, decals). It is <strong>not</strong> a single binding:
+after the header it carries a <em>list of N instance records</em>, each naming a node, the combo CRC it binds, and that
+node's overrides. <code>.shaderinst</code> is carried by vehicle bodies/wheels <em>and</em> by a wide range of level
+geometry (backdrops, lens-flare, light rigs, physics debris, sectors, skydomes, particle screens) — <strong>710</strong>
+files in total against 2357 <code>.shaders</code>; static geometry that needs no per-instance override omits it.</p>
+
+<h3>Header (0x10 bytes)</h3>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x0</td><td>0x4</td><td>char[4]</td><td>magic</td><td><code>"SDRI"</code> (<code>53 44 52 49</code>). Constant.</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>uint32_t</td><td>version</td><td><code>8</code> in every observed sample.</td></tr>
+<tr><td>0x8</td><td>0x4</td><td>char[4]</td><td>blk_magic</td><td><code>"INSS"</code> — instance sub-block tag (one per file).</td></tr>
+<tr><td>0xC</td><td>0x4</td><td>uint32_t</td><td>node_count</td><td><strong>Number of instance records that follow.</strong> Byte-proven: this value equals the count of <code>"unnamed"</code> node strings in the file (Musclecar_01 = <code>0x1C</code> = 28 nodes; <code>_WheelBack</code> / <code>_WheelFront</code> = <code>0x0B</code> = 11 each). Not a block size. <span class="badge ok">Confirmed</span></td></tr>
+</tbody>
+</table>
+
+<h3>Instance record (repeated <code>node_count</code> times)</h3>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>+0x0</td><td>0x4</td><td>uint32_t</td><td>inst_crc</td><td>Per-node instance/object CRC (e.g. <code>25 51 DB EA</code> for the first record). Differs per node.</td></tr>
+<tr><td>+0x4</td><td>4 + n</td><td>u32 + char[]</td><td>node_name</td><td>Length-prefixed node name, <code>"unnamed"</code> (len <code>0x08</code> incl. terminator) for the sampled records.</td></tr>
+<tr><td>…</td><td>4 + n</td><td>u32 + char[]</td><td>combo_crc</td><td>The material-combo CRC string this node binds to (record 0 = <code>"0x0882fbc1"</code>, record 1 = <code>"0xa416b168"</code>, …) — a key into the paired <code>.shaders</code> set. Each node may bind a different combo.</td></tr>
+<tr><td>…</td><td>var</td><td>struct[]</td><td>overrides</td><td>Two leading count words (e.g. <code>00 00 00 02</code> ×2) then named constant overrides with inline values. Observed entries include <code>VehiclePaintFast_1_paintColour</code> (a float3 colour <code>0.914, 0.104, 0.104</code>), <code>VehicleEmissiveLight_2_lightIndex</code>, <code>VehiclePaintFast_1_diffuseMap</code> (a texture CRC), and small <code>00 00 00 02</code> index tables. <span class="badge partial">Partial</span></td></tr>
+</tbody>
+</table>
+
+<h3>Hex excerpt — header + first instance record (Musclecar_01.shaderinst)</h3>
+<pre class="hex">000000  53 44 52 49 00 00 00 08 49 4e 53 53 00 00 00 1c   SDRI....INSS....   magic; ver=8; "INSS"; node_count=0x1C(28)
+000010  25 51 db ea 00 00 00 08 75 6e 6e 61 6d 65 64 00   %Q......unnamed.   inst_crc 0x2551DBEA; len=8 "unnamed"
+000020  00 00 00 0b 30 78 30 38 38 32 66 62 63 31 00 00   ....0x0882fbc1..   combo_crc len=0x0B "0x0882fbc1"
+000030  00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00   ................   (zeros) then override counts begin: 02…
+000040  00 02 00 00 00 1f 56 65 68 69 63 6c 65 50 61 69   ......VehiclePai   …×2; strlen=0x1F; name "VehiclePai…"
+000060  6e 74 46 61 73 74 5f 31 5f 70 61 69 6e 74 43 6f   ntFast_1_paintCo   "…ntFast_1_paintColour"
+000070  6c 6f 75 72 00 00 00 00 00 00 00 02 00 00 00 10   lour............   name end; meta 02 / 0x10
+000080  00 00 00 01 3f 69 e9 ea 3d d4 d0 cc 3d d4 d0 cc   ....?i..=...=...   paintColour float3 ≈ (0.914, 0.104, 0.104)</pre>
+
+<div class="warn">The override sub-structure (the exact <code>kind</code> codes and value layouts after each name) is only
+partially decoded. Floats and texture CRCs are legible, but the small index tables that follow each override
+(<code>00 00 00 02 …</code>) map names to RSX register/sampler slots in a way that is not yet fully confirmed —
+hence the <span class="badge partial">Partial</span> badge.</div>
+
+<h2>How the three files fit together</h2>
+<ul>
+<li><a href="format-model.html">.model</a> — geometry + a per-mesh reference to a material combo.</li>
+<li><strong>.shaders</strong> — the material-combo register block sets (constant/sampler symbol → slot tables).</li>
+<li><a href="format-fxc.html">.fxc</a> — the compiled RSX vertex + fragment microcode for those combos (the "clean shader").</li>
+<li><strong>.shaderinst</strong> — binds a concrete mesh instance to a combo CRC and overrides constants (paint, emissive, decals).</li>
+</ul>
+<p>At load, Crayon2 reads the clean microcode (.fxc), applies the register-block patches (.shaders) plus instance
+overrides (.shaderinst) on a SPURS job, and uploads the patched program to RSX. The debug tweakvars
+<code>renderer/filter_dup_shaderinst</code> and <code>renderer/filter_dup_shader</code> deduplicate identical combos at runtime.</p>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="format-fxc.html">FX Compiled (.fxc)</a> — the compiled microcode twin documented here.</li>
+<li><a href="format-model.html">Model (.model)</a> — the geometry container that references these combos.</li>
+<li><a href="format-textures.html">Textures (.textures)</a> — the maps referenced by sampler bindings.</li>
+<li><a href="engine-rendering.html">Rendering Pipeline</a> — Crayon2, deferred G-Buffer, SPULight, shader patching.</li>
+<li><a href="data-globalregs.html">Global Registry</a> — <code>default.global_regs</code> and <code>global_shader_context</code>.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

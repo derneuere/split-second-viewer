@@ -53,6 +53,13 @@ export type ParsedGlobalRegs = {
 	payloadLength: number;
 	/** True if the descriptor table consumed exactly recordCount records. */
 	tableConsistent: boolean;
+	/**
+	 * Verbatim original bytes. The trailing register-value payload is not decoded,
+	 * so the model is NOT a full structural representation; the writer reproduces
+	 * the file from these bytes (byte-exact passthrough). A copy, so the model is
+	 * independent of the caller's buffer.
+	 */
+	raw: Uint8Array;
 };
 
 export function parseGlobalRegs(raw: Uint8Array): ParsedGlobalRegs {
@@ -114,7 +121,19 @@ export function parseGlobalRegs(raw: Uint8Array): ParsedGlobalRegs {
 		payloadOffset: r.position,
 		payloadLength: Math.max(0, total - r.position),
 		tableConsistent: consistent,
+		raw: raw.slice(), // independent verbatim copy for the byte-exact writer
 	};
+}
+
+/**
+ * Byte-exact passthrough writer. The trailing register-value payload is not
+ * decoded, so we cannot re-serialize from the structured fields; instead we
+ * reproduce the verbatim source bytes captured at parse time. writeRaw(parse(b))
+ * === b for any input. (Editing register values is out of scope until the value
+ * payload is decoded.)
+ */
+export function writeGlobalRegs(model: ParsedGlobalRegs): Uint8Array {
+	return model.raw.slice();
 }
 
 function readU32BE(buf: Uint8Array, off: number): number {

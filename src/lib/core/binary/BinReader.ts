@@ -36,6 +36,8 @@ export class BinReader {
 	readU16(): number { const v = this.view.getUint16(this.offset, this.little); this.offset += 2; return v; }
 	readI16(): number { const v = this.view.getInt16(this.offset, this.little); this.offset += 2; return v; }
 	readU32(): number { const v = this.view.getUint32(this.offset, this.little); this.offset += 4; return v >>> 0; }
+	/** Read a u32 at the cursor WITHOUT advancing it (look-ahead for tagged framing). */
+	peekU32(): number { return this.view.getUint32(this.offset, this.little) >>> 0; }
 	readI32(): number { const v = this.view.getInt32(this.offset, this.little); this.offset += 4; return v | 0; }
 	readF32(): number { const v = this.view.getFloat32(this.offset, this.little); this.offset += 4; return v; }
 	readF64(): number { const v = this.view.getFloat64(this.offset, this.little); this.offset += 8; return v; }

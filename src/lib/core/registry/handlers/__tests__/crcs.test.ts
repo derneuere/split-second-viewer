@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { crcsHandler } from '../crcs';
 import { parseCrcs, writeCrcs } from '../../../crcs';
 import { ssCtx } from '../../handler';
-import { hasSample, readSample } from '@/test/dataRoot';
+import {
+	hasSample,
+	readSample,
+	listSamplesByExt,
+	readFileBytes,
+} from '@/test/dataRoot';
 
 // An inline fixture used when the devkit data root isn't present: 4 big-endian
 // uint32s. Bytes are exactly what writeCrcs should reproduce.
@@ -52,4 +57,28 @@ describe('crcs parser', () => {
 			expect(Array.from(out)).toEqual(Array.from(raw));
 		},
 	);
+
+	const ALL = listSamplesByExt('.crcs');
+	it.skipIf(ALL.length === 0)(
+		`crcs round-trips real sample byte-for-byte (${ALL.length} files)`,
+		() => {
+			const ctx = ssCtx();
+			const failures: string[] = [];
+			for (const abs of ALL) {
+				const raw = readFileBytes(abs);
+				const out = crcsHandler.writeRaw!(crcsHandler.parseRaw(raw, ctx), ctx);
+				if (!bytesEqual(out, raw)) failures.push(`${abs} (len ${out.length} vs ${raw.length})`);
+			}
+			expect(failures).toEqual([]);
+			// Proven against many real files, not just one.
+			expect(ALL.length).toBeGreaterThan(1);
+		},
+	);
 });
+
+/** Byte-exact comparison without building two huge JS arrays. */
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+	return true;
+}

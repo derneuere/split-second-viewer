@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scaleform UI (.gfx) — Split/Second RE Wiki</title>
+<meta name="description" content="The .gfx format: Scaleform GFx UI assets — a SWF-compatible Flash 8 container (magic 'GFX') used for the frontend, HUD, and debug menus. Little-endian, SWF header layout.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Scaleform UI (.gfx)" data-category="Formats · Archive & Misc">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Scaleform UI (<code>.gfx</code>)</h1>
+<p>
+<code>.gfx</code> files are <strong>Scaleform GFx</strong> assets — the Flash-based middleware
+Black Rock used for the entire 2-D interface: front-end menus, in-race HUD, the QA/debug menus, and
+the bitmap font library. A <code>.gfx</code> is structurally a SWF (Flash) movie with a
+GFx-specific signature, authored in Flash and exported through Scaleform's <code>gfxexport</code>
+tool. The engine drives them through the Scaleform runtime (the EBOOT logs via
+<code>GFxLog_Error</code> / <code>GFxLog_Warning</code> / <code>GFxLog_Info</code>).
+</p>
+
+<div class="infobox"><div class="ib-title">.gfx</div><table>
+  <tr><th>Category</th><td>Scaleform GFx / SWF UI</td></tr>
+  <tr><th>Middleware</th><td>Scaleform GFx</td></tr>
+  <tr><th>Container</th><td>SWF (Flash 8)</td></tr>
+  <tr><th>Magic</th><td><code>47 46 58 08</code> ("GFX", v8)</td></tr>
+  <tr><th>Endianness</th><td>Little-endian (SWF spec)</td></tr>
+  <tr><th>Source</th><td>Flash <code>.swf</code> (e.g. <code>gfxfontlib.swf</code>)</td></tr>
+  <tr><th>Count</th><td>82 files</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span> (format) / <span class="badge raw">Opaque</span> (tag bodies)</td></tr>
+</table></div>
+
+<h2>Signature &amp; versioning</h2>
+<p>
+All 82 <code>.gfx</code> files in this build begin with the same four bytes:
+</p>
+<pre class="hex">47 46 58 08   =  'G' 'F' 'X'  0x08</pre>
+<p>
+The first three bytes are the GFx signature <code>GFX</code> (uncompressed). The fourth byte,
+<code>0x08</code>, is the <strong>SWF version</strong> the asset targets — Flash 8. This mirrors the
+SWF header convention, where an uncompressed movie starts <code>FWS&nbsp;&lt;ver&gt;</code>; GFx
+swaps the <code>FWS</code>/<code>CWS</code> tag for <code>GFX</code>/<code>CFX</code>. No
+<code>CFX</code> (zlib-compressed) variants appear in this build — every file is the uncompressed
+<code>GFX</code> form.
+</p>
+<div class="note">
+Unlike most data in this PS3 title, <code>.gfx</code> is <strong>little-endian</strong>: GFx keeps
+the SWF byte order regardless of host platform, so multi-byte fields (file length, tag codes) are
+read LSB-first even on the big-endian PS3.
+</div>
+
+<h2>Header layout (SWF-compatible)</h2>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>0x3</td><td>char[3]</td><td>signature</td><td>ASCII <code>GFX</code>. <code>CFX</code> would mark a zlib-compressed body (not seen here).</td></tr>
+<tr><td>0x3</td><td>0x1</td><td>uint8_t</td><td>version</td><td>SWF target version. <code>0x08</code> (Flash 8) for every file.</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>uint32_t&nbsp;(LE)</td><td>fileLength</td><td>Total file size in bytes. Verified to equal the on-disk size on every sample.</td></tr>
+<tr><td>0x8</td><td>var</td><td>RECT</td><td>frameSize</td><td>Stage bounds as a bit-packed SWF <code>RECT</code> (5-bit nbits prefix + 4 twips fields). Variable length — this is why bytes 0x8+ differ per file. Most assets (42 of 82) use a 1280&times;720 stage (<code>0..25600, 0..14400</code> twips, nbits=16, 9 bytes); others range down to 320&times;540 etc.</td></tr>
+<tr><td>after&nbsp;RECT</td><td>0x2</td><td>uint16_t&nbsp;(8.8 fixed)</td><td>frameRate</td><td>Playback rate as SWF 8.8 fixed-point, stored frac-byte then int-byte. Verified across all 82 files: <strong>46 @ 30 fps</strong>, <strong>32 @ 60 fps</strong>, <strong>4 @ 12 fps</strong> — the fractional byte is always <code>0</code>. (For the 1280&times;720 assets this lands at file offset <code>0x11</code>, e.g. Bootup <code>00 3C</code> = 60 fps.)</td></tr>
+<tr><td>+0x2</td><td>0x2</td><td>uint16_t&nbsp;(LE)</td><td>frameCount</td><td>Number of frames on the main timeline (commonly 1–2).</td></tr>
+<tr><td>—</td><td>…</td><td>SWF tags</td><td>tagStream</td><td>Sequence of <code>RECORDHEADER</code> + body tags (DefineShape, DefineSprite, DefineFont, DoAction/DoABC, GFx-specific tags…). Opaque middleware payload.</td></tr>
+</table>
+
+<h2>Hex walk-through</h2>
+<p><code>UI/Bootup/Bootup.gfx</code> (4,935 bytes = <code>0x1347</code>):</p>
+<pre class="hex">000000  47 46 58 08  47 13 00 00  80 00 03 20  00 00 01 c2
+        └ 'G''F''X'  └ fileLength └────────── RECT (stage) ────────
+          v8           =0x00001347                              …
+                       =4935 bytes
+                       (matches file size)</pre>
+<p>
+<code>fileLength</code> reads <code>47 13 00 00</code> little-endian = <code>0x1347</code> = 4935, the
+exact byte count of the file — proving the LE field interpretation. The same check holds on the
+largest asset, <code>UI/Fonts/gfxfontlib.gfx</code>:
+</p>
+<pre class="hex">000000  47 46 58 08  65 73 0a 00  …
+                     └ 0x000A7365 LE = 684901 = file size ✓</pre>
+
+<h2>Asset inventory</h2>
+<p>The 82 assets are organised by UI layer:</p>
+<table>
+<tr><th>Folder</th><th>Role</th><th>Examples</th></tr>
+<tr><td><code>UI/Bootup/</code></td><td>Boot/legal screens</td><td><code>Bootup.gfx</code></td></tr>
+<tr><td><code>UI/CommonUI/</code></td><td>Shared widgets &amp; overlays</td><td><code>Message.gfx</code>, <code>Prompt_Bar.gfx</code>, <code>SafeFrame.gfx</code>, <code>FE_LoadingScreen.gfx</code>, <code>QA_Menu.gfx</code>, <code>QA_Info.gfx</code>, <code>ResourceStats.gfx</code></td></tr>
+<tr><td><code>UI/Fonts/</code></td><td>Bitmap/vector font library</td><td><code>gfxfontlib.gfx</code>, <code>Fonts_EN.gfx</code>, <code>Fonts_Latin.gfx</code></td></tr>
+<tr><td><code>UI/Frontend/Flash/</code></td><td>Menu front-end</td><td><code>FE_Credits.gfx</code>, <code>FE_vehicleSelect.gfx</code>, <code>FE_episode_select_*.gfx</code>, <code>FE_leaderboards_*.gfx</code>, <code>SignIn.gfx</code></td></tr>
+<tr><td><code>UI/HUD/</code></td><td>In-race HUD</td><td><code>Hud.gfx</code>, <code>DialsPower.gfx</code>, <code>DialsInfo.gfx</code>, <code>PowerPlayIcons.gfx</code>, <code>TimerOverlay.gfx</code></td></tr>
+<tr><td><code>UI/InGame/</code></td><td>Pause / results / objectives</td><td><code>FE_PauseMenu_NEW.gfx</code>, <code>RaceResults.gfx</code>, <code>RaceEnd.gfx</code>, <code>EventObjectives.gfx</code>, <code>DebugMenu.gfx</code></td></tr>
+<tr><td><code>UI/DebugHud/</code></td><td>Developer overlay</td><td><code>DebugHud.gfx</code></td></tr>
+</table>
+<div class="tip">
+The QA build keeps developer Flash around: <code>QA_Menu.gfx</code>, <code>QA_Info.gfx</code>,
+<code>ResourceStats.gfx</code>, <code>DebugMenu.gfx</code> and <code>DebugHud.gfx</code> are the
+Scaleform front-ends for the in-game debug menus (consistent with <code>qa_menus=true</code>).
+</div>
+
+<h2>EBOOT evidence</h2>
+<table>
+<tr><th>String</th><th>Meaning</th></tr>
+<tr><td><code>gfxfontlib.swf</code></td><td>Source SWF name of the font library — the runtime asset is the exported <code>gfxfontlib.gfx</code>.</td></tr>
+<tr><td><code>GFxLog_Error</code> / <code>GFxLog_Warning</code> / <code>GFxLog_Info</code></td><td>Scaleform GFx logging channels — confirms the GFx runtime.</td></tr>
+<tr><td><code>ActionScriptImage</code></td><td>GFx ActionScript image-loading hook.</td></tr>
+<tr><td><code>Resident|UI/Bootup/Bootup.gfx</code></td><td>UI assets are addressed inside the <a href="format-ark.html">Resident archive</a> in retail (<code>&lt;Archive&gt;|&lt;path&gt;</code>).</td></tr>
+<tr><td><code>%s\DebugHud.gfx</code></td><td>Debug HUD path template.</td></tr>
+</table>
+<blockquote>
+Per-file tag streams (DefineShape geometry, embedded DjVu/JPEG images, ActionScript bytecode) are
+authored Flash content and are treated here as an <span class="badge raw">Opaque</span>
+middleware payload. They can be inspected with standard SWF/GFx tooling
+(<code>gfxexport</code>, JPEXS); this page documents only the container.
+</blockquote>
+
+<h2>Open questions</h2>
+<ul>
+  <li>Decode the GFx-specific export tags (e.g. <code>ExporterInfo</code>, <code>DefineExternalImage</code>,
+      font/glyph cache tags) that Scaleform's <code>gfxexport</code> emits — the first tag after the
+      header is consistently a GFx record, not a stock SWF tag.</li>
+  <li>Identify the remaining GFx-specific tag IDs (gradient/edge AA settings) versus stock SWF tags.</li>
+  <li>Map ActionScript callbacks to the C++ UI controllers (<code>FE_*</code> widget classes).</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="system-hud.html">HUD &amp; Frontend</a> — how these assets are wired to game state.</li>
+  <li><a href="engine-middleware.html">Middleware Stack</a> — Scaleform alongside Havok, FMOD, Bink, Edge.</li>
+  <li><a href="format-ark.html">Archives (.ark)</a> — the <code>Resident.ark</code> that packs UI in retail.</li>
+  <li><a href="format-misc.html">Misc &amp; Raw</a> — the font <code>.ker</code>/<code>.bed</code> tables and localisation <code>.dct</code> that feed the UI.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

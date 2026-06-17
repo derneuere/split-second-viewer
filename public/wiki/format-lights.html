@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lights (.lights) — Split/Second RE Wiki</title>
+<meta name="description" content="The Split/Second .lights format: placed point/spot light instances inside a LightRig, fed to the deferred SPULight pipeline.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Lights (.lights)" data-category="Formats · FX &amp; Particles">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Lights (.lights)</h1>
+<p>A <code>.lights</code> file is the list of <b>placed local lights</b> (point and spot lights) for one
+<i>LightRig</i> — a named time-of-day lighting setup for a level. It is a flat, fixed-stride array of
+light instances: colour, world transform, range and cone, fed straight into the engine's deferred
+<a href="engine-rendering.html">SPULight</a> pipeline. The rig's global environment (sun, ambient, sky,
+scattering, reflection map) lives in the sibling <code>.params</code> text file, not here.</p>
+
+<div class="infobox"><div class="ib-title">.lights</div><table>
+  <tr><th>Category</th><td>Light placement</td></tr>
+  <tr><th>Scope</th><td>One LightRig (time of day)</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Magic</th><td><code>00 00 00 02</code> (version 2)</td></tr>
+  <tr><th>Record size</th><td>0xB0 = 176 bytes</td></tr>
+  <tr><th>XML twin</th><td>none (<code>.gbx</code> stub; tuning in <code>.params</code>)</td></tr>
+  <tr><th>Siblings</th><td>.params .fxc .shaders .textures .gbx</td></tr>
+  <tr><th>Count</th><td>19 files</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<h2>Where they live</h2>
+<p>Each level has a <code>LightRigs/</code> folder with one sub-folder per time-of-day variant, and each
+variant ships a complete rig set:</p>
+<pre class="hex">Environments/Levels/docks/LightRigs/
+  midday/     midday.lights  midday.params  midday.fxc  midday.shaders  midday.textures  midday.gbx
+  sunrise/    sunrise.*
+  sunset/     sunset.*
+  twilight/   twilight.*
+  nighttime/  nighttime.*</pre>
+<p>The runtime builds these paths from format strings in the EBOOT:
+<code>%sLightRigs/%s/%s.lights</code>, with siblings <code>%sLightRigs/%s/%s.params</code>,
+<code>%sLightRigs/LightRigNames.names</code> and a defaults file
+<code>%sParams/LightRigDefaults.params</code>. Rig selection per subtrack is listed in
+<code>Environments\SubTrackLightRigs.txt</code> ("<code>Env '%s' : SubTrack '%s' : LightRig '%s'</code>").</p>
+<div class="note">The four-byte <code>.gbx</code> beside each rig is a stub (the <code>.gbx</code>
+sequence/graph format is used elsewhere; here it is empty). The 8 KB <code>.params</code> twin is the
+authored environment config — see the breakdown below — while the binary <code>.lights</code> file holds
+the discrete light <i>instances</i> placed in the world.</div>
+
+<h2>File format</h2>
+<p>An 8-byte header followed by a tight array of 176-byte light records. No string table, no offset
+table — record <i>i</i> lives at <code>8 + i*0xB0</code>.</p>
+
+<h3>Header</h3>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>0x4</td><td>uint32_t</td><td>version</td><td>Always <code>0x00000002</code> across all
+non-stub samples.</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>uint32_t</td><td>lightCount</td><td>Number of light records. Verified by
+arithmetic: docks <code>sunset.lights</code> is 2120 bytes with count <code>0x0C</code> = 12, and
+8 + 12&times;176 = 2120 exactly.</td></tr>
+</table>
+
+<h3>Light record (0xB0 = 176 bytes)</h3>
+<p>Offsets are relative to the start of the record. Field meaning is read off the values: two RGB colour
+triplets, a position, a 2-row orientation basis, then range/cone scalars and a type flag, an
+<code>FF FF FF FF</code> sentinel at +0x94, and trailing zero padding to the 176-byte stride. The
+<code>.params</code> slider ranges (e.g. diffuse 0–500, colours 0–1) corroborate the colour-vs-position
+split.</p>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>+0x00</td><td>0xC</td><td>float32_t[3]</td><td>diffuseColor</td><td>RGB. e.g. docks sunset light
+0 = (0.098, 0.0585, 0.0155) — a dim warm tint. HDR-range (the .params caps diffuse at 500).</td></tr>
+<tr><td>+0x0C</td><td>0x4</td><td>float32_t</td><td>pad0</td><td>Zero (colour alpha / 16-byte
+align).</td></tr>
+<tr><td>+0x10</td><td>0xC</td><td>float32_t[3]</td><td>specColor</td><td>Second colour triplet, often
+(1,1,1). Specular tint / secondary colour.</td></tr>
+<tr><td>+0x1C</td><td>0x4</td><td>float32_t</td><td>pad1</td><td>Zero.</td></tr>
+<tr><td>+0x20</td><td>0xC</td><td>float32_t[3]</td><td>position</td><td>World XYZ. e.g.
+(204.7, 1.44, -411.1) for docks sunset light 0 — plausible track coordinates.</td></tr>
+<tr><td>+0x2C</td><td>0x4</td><td>float32_t</td><td>pad2</td><td>Zero.</td></tr>
+<tr><td>+0x30</td><td>0x20</td><td>float32_t[2][4]</td><td>orientation</td><td>Direction basis, <b>two</b>
+rows of 4 floats (xyz + 0). In both samples row0 = <code>(0,-1,0,0)</code> and row1 =
+<code>(1,0,0,0)</code> — axis-aligned. The third basis row is implied (cross product) or unused; only
+0x20 bytes are present before <code>range</code>.</td></tr>
+<tr><td>+0x50</td><td>0x4</td><td>float32_t</td><td>range</td><td>Falloff radius. docks sunset light 0 =
+100.0 (<code>42 C8 00 00</code>); nem_downtown light 0 = 30.0.</td></tr>
+<tr><td>+0x54</td><td>0x4</td><td>float32_t</td><td>param1</td><td>30.0 (<code>41 F0 00 00</code>) in
+samples — inner cone / intensity.</td></tr>
+<tr><td>+0x58</td><td>0x4</td><td>float32_t</td><td>param2</td><td>20.0 (<code>41 A0 00 00</code>) —
+outer cone / second falloff.</td></tr>
+<tr><td>+0x5C</td><td>0x4</td><td>uint32_t</td><td>pad3</td><td>Zero.</td></tr>
+<tr><td>+0x60</td><td>0x4</td><td>uint32_t</td><td>lightType / flags</td><td><code>0x00000001</code> in
+samples — point vs spot selector (the engine distinguishes <code>PointLight</code>/<code>SpotLight</code>,
+each with a <code>_Low_LOD</code> variant).</td></tr>
+<tr><td>+0x64</td><td>0x30</td><td>float32_t[…]</td><td>extra</td><td>Mostly zero with two
+1.0s (<code>3F 80 00 00</code> at +0x74 and +0x88, 0x14 apart) — looks like the diagonal of a small
+gobo / shadow transform (the deferred path uses
+<code>deferred_lighting_gobo_view_proj</code>).</td></tr>
+<tr><td>+0x94</td><td>0x4</td><td>uint32_t</td><td>sentinel</td><td><code>0xFFFFFFFF</code>. Confirmed at
+this relative offset in every record (file offsets 0x9C, 0x14C, 0x1FC, … step 0xB0).</td></tr>
+<tr><td>+0x98</td><td>0x18</td><td>—</td><td>pad</td><td>Trailing zero padding to the 0xB0 record size.</td></tr>
+</table>
+
+<h3>Annotated hex — nem_downtown midday_v01.lights (184 bytes, 1 light)</h3>
+<pre class="hex">000000 00 00 00 02 00 00 00 01 3f 14 7a e1 3e d2 46 c6  ........?.z.&gt;.F.   v=2 count=1 | diffuse R,G…
+000010 3e 43 a4 eb 00 00 00 00 3e 4c cc cd 3e 0d 44 64  &gt;C......&gt;L..&gt;.Dd   …B pad | specColor R,G…
+000020 3d 92 2b bf 00 00 00 00 c3 07 aa ed 40 b0 f8 a6  =.+.........@...   …B pad | pos X=-135.7 Y=5.5
+000030 c2 6f cb 46 00 00 00 00 00 00 00 00 bf 80 00 00  .o.F............   Z=-59.95 pad | orient row0
+000050 00 00 00 00 00 00 00 00 41 f0 00 00 41 f0 00 00  ........A...A...   …| range=30 param1=30
+000060 41 a0 00 00 00 00 00 00 00 00 00 01 00 00 00 00  A...............   param2=20 pad | type=1
+000090 3f 80 00 00 00 00 00 00 00 00 00 00 ff ff ff ff  ?...........­....   extra (1.0) … sentinel</pre>
+<p>The docks <code>sunset.lights</code> (12 lights) shows the array nature plainly: records 1–3 share
+identical colour/orientation and differ only in position (<code>43 CC FF B4</code> vs
+<code>43 D2 AF 25</code> vs <code>43 D2 1D 15</code> in the X slot) — a row of street/dock lights placed
+along the track.</p>
+
+<h2>Light types &amp; LOD</h2>
+<p>The renderer recognises four local-light shader permutations, all present as strings in the EBOOT:</p>
+<table>
+<tr><th>Name</th><th>Value</th><th>Notes</th></tr>
+<tr><td>PointLight</td><td>type 1 (observed)</td><td>Omnidirectional; uses <code>range</code>.</td></tr>
+<tr><td>PointLight_Low_LOD</td><td>—</td><td>Cheaper distant variant.</td></tr>
+<tr><td>SpotLight</td><td>—</td><td>Cone light; uses <code>orientation</code> + cone params; can sample a
+gobo (<code>deferred_lighting_gobo_view_proj</code>).</td></tr>
+<tr><td>SpotLight_Low_LOD</td><td>—</td><td>Cheaper distant variant.</td></tr>
+<tr><td>VehicleLight / SunLight</td><td>—</td><td>Vehicle headlights and the rig's directional sun are
+handled separately, not via <code>.lights</code>.</td></tr>
+</table>
+<p>Local lights are batched and LOD-sorted for the SPU lighting jobs. The debug log
+"<code>Light LODs viewport %d, num lights %d, combined %d, full %d, qtr %d, spu %d</code>" shows lights
+being split into full-res, quarter-res and SPU-processed buckets, and the shader DB has
+<code>CombinedLight_%dSpot_%dPoint</code> permutations and 16 <code>JobPointLight1..16</code> SPU jobs.
+See <a href="engine-rendering.html">Rendering Pipeline</a>.</p>
+
+<h2>The .params environment twin</h2>
+<p>The text <code>%s.params</code> beside each rig is <b>not</b> a per-light list — it is the global
+environment for the rig, parsed under the <code>/Lighting</code> tree (a standard
+<a href="data-params.html">.params</a> file with slider ranges). It defines the directional sun,
+ambience, sky, scattering and reflection map; the discrete placed lights stay in the binary
+<code>.lights</code>. Major sections:</p>
+<table>
+<tr><th>Section</th><th>Contents</th></tr>
+<tr><td><code>/Lighting/ambience</code></td><td>ambient/sky/ground RGB hemispheric terms, occlusion
+factors. A separate <code>ambience_vehicle</code> block tints cars.</td></tr>
+<tr><td><code>/Lighting/sun</code> + <code>/sun/diffuse</code></td><td>Sun specular RGB, elevation,
+rotation, spec offsets, and 6 indexed diffuse colours (0_r…5_b).</td></tr>
+<tr><td><code>/Lighting/sun shadow</code></td><td>Cascade shadow ranges, split weight, filter scale, and
+per-platform (xenon/ps3) slope/bias for single-player and split-screen.</td></tr>
+<tr><td><code>/Lighting/LS</code>, <code>/ATV_LS</code></td><td>Light-scattering coefficients
+(Mie/Rayleigh, inscattering rate/intensity/focus, extinction tone) — drives
+<code>lightscattering_*</code> shaders.</td></tr>
+<tr><td><code>/Lighting/ReflectionMap</code></td><td>Cube reflection contributions and external file
+names (<code>Env</code>, <code>Skydome</code>, <code>SunLight</code>, <code>PointLight</code>,
+<code>SpotLight</code>).</td></tr>
+<tr><td><code>/Lighting/ParticleOverrides</code></td><td>Per-rig tints handed to the
+<a href="format-emitter.html">particle</a> system: SunColor, AmbientColor, Unlit/Emissive/Light/Corona
+tint, EnvShadow strength.</td></tr>
+<tr><td><code>/Lighting/Sky</code>, <code>/Params</code>, <code>/Emissive</code>,
+<code>/Radiosity</code>, <code>/Kicker</code>, <code>/Unlit</code></td><td>Skydome file/rotation/height,
+post-process file binding, emissive scales, radiosity tweak colour, a fill "kicker" light, unlit sigmoid
+offset.</td></tr>
+</table>
+
+<h3>Stub rigs</h3>
+<p>Several Nemesis levels ship an 8-byte stub (<code>00 00 00 02 00 00 00 00</code>, version 2, zero
+lights) — those rigs rely entirely on the sun/ambience in <code>.params</code> with no placed local
+lights. The smallest real file is nem_downtown <code>midday_v01.lights</code> at 184 bytes (1 light); the
+largest is Powerplant <code>twilight.lights</code> at 73,400 bytes (417 lights), with docks
+<code>twilight.lights</code> close behind at 70,056 bytes (exactly 398 lights). Across all 19 files the
+identity <code>8 + lightCount&times;176 = fileSize</code> holds exactly.</p>
+
+<div class="warn">Inside the record, the colour / position / orientation / range / type field <i>positions</i>
+are <span class="badge ok">Confirmed</span> by value inspection across two files (nem_downtown,
+docks sunset) and by the constant <code>0xFFFFFFFF</code> sentinel at +0x94. The orientation is only
+0x20 bytes (two basis rows, not three — an earlier draft over-stated it as a full 3&times;4 matrix). The
+<i>names/semantics</i> — the split of the +0x54/+0x58 scalars into "inner/outer cone" vs "intensity",
+and the meaning of the +0x64 extra block — are <span class="badge theory">Theory</span>; there is no
+XML twin to cross-check them.</div>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-emitter.html">Emitters (.emitter*)</a> — the other FX-cluster format; consumes the rig's ParticleOverrides.</li>
+  <li><a href="engine-rendering.html">Rendering Pipeline</a> — deferred G-buffer, SPULight, combined light passes.</li>
+  <li><a href="data-params.html">.params Tuning System</a> — the format of the rig's <code>.params</code> twin.</li>
+  <li><a href="system-tracks.html">Tracks &amp; Levels</a> — LightRigs, subtracks and time-of-day selection.</li>
+  <li><a href="system-postprocess.html">Post-Processing DB</a> — colour grading bound per rig via <code>/Lighting/Params</code>.</li>
+  <li><a href="format-fxc.html">FX Compiled (.fxc)</a> / <a href="format-shaders.html">Shaders</a> — the rig's render set.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

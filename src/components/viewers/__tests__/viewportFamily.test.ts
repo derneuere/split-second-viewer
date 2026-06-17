@@ -21,7 +21,9 @@ describe('viewportFor dispatch', () => {
 	});
 
 	it('routes mesh formats to the mesh viewer', () => {
-		for (const key of ['model', 'skel', 'deform', 'mcl']) {
+		// 'havok' is a mesh format: vehicle .mainColl/.phys (and prop .hkPPs/.hkRBs)
+		// convex hulls render as solid meshes; level .hkColl renders its AABB box.
+		for (const key of ['model', 'skel', 'deform', 'mcl', 'havok']) {
 			expect(viewportFor(getHandlerByKey(key))).toBe('mesh');
 		}
 	});
@@ -32,8 +34,8 @@ describe('viewportFor dispatch', () => {
 		}
 	});
 
-	it('routes config / physics / shader formats to the config viewer', () => {
-		for (const key of ['params', 'xml', 'powerplays', 'triggers', 'names', 'havok', 'shaders', 'fxc']) {
+	it('routes config / shader formats to the config viewer', () => {
+		for (const key of ['params', 'xml', 'powerplays', 'triggers', 'names', 'shaders', 'fxc']) {
 			expect(viewportFor(getHandlerByKey(key))).toBe('config');
 		}
 	});

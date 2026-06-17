@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Name Tables (.names / .filenames / dirlist) — Split/Second RE Wiki</title>
+<meta name="description" content="The small string and lookup tables that pair names with array indices: .names (counted NUL list), .filenames (texture-atlas name list) and dirlist (directory manifest).">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Name Tables (.names / .filenames / dirlist)" data-category="Formats · Track & Route">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Name Tables <small>(.names / .filenames / dirlist)</small></h1>
+<p>Three tiny, near-plaintext formats provide the engine with <b>name → index</b> lookups. They are not really
+"track" formats, but they sit beside level data and are grouped here. All three are just lists of strings; the only
+difference is how the count is encoded and how the entries are separated.</p>
+
+<div class="infobox"><div class="ib-title">Name tables</div><table>
+  <tr><th>Category</th><td>String / lookup tables</td></tr>
+  <tr><th>Members</th><td><code>.names</code>, <code>.filenames</code>, <code>dirlist</code></td></tr>
+  <tr><th>Encoding</th><td>ASCII / 8-bit, NUL- or space-separated</td></tr>
+  <tr><th>Endianness</th><td>n/a (text)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>.names — counted NUL-terminated list</h2>
+<p><span class="badge ok">Confirmed</span> A single leading <b>ASCII count digit</b>, a <code>0x00</code> separator,
+then that many NUL-terminated strings. Used for short fixed enumerations — most commonly
+<code>LightRigs/LightRigNames.names</code>, which names a level's time-of-day light rigs in
+<a href="format-lights.html">the order the light-rig array indexes them</a>.</p>
+
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>0x1</td><td>char</td><td>countDigit</td><td>ASCII digit giving the entry count (e.g. <code>'3'</code> = 3, <code>'5'</code> = 5).</td></tr>
+<tr><td>0x1</td><td>0x1</td><td>char</td><td>sep</td><td><code>0x00</code> separator after the count.</td></tr>
+<tr><td>0x2</td><td>var</td><td>cstring[N]</td><td>names</td><td><i>N</i> NUL-terminated ASCII strings, in index order.</td></tr>
+</table>
+
+<pre class="hex">$ od -A d -c Downtown/LightRigs/LightRigNames.names    # 24 bytes
+0000000   3  \0   m  i  d  d  a  y \0  s  u  n  r  i  s  e \0  s  u  n  s  e  t \0
+          │  │    └─ [0] ─────┘    └─ [1] ──────┘    └─ [2] ───┘
+        '3' sep    3 light-rig names, NUL-terminated
+
+$ od -A d -c docks/LightRigs/LightRigNames.names       # 43 bytes
+0000000   5  \0   t  w  i  l  i  g  h  t \0  s  u  n  s  e  t \0  m  i  d  d  a  y \0 …
+        '5' sep   → 5 names: twilight, sunset, midday, nighttime, sunrise</pre>
+
+<div class="tip">The count is a literal text digit, not a binary byte — Downtown stores <code>0x33</code> ('3') and docks
+stores <code>0x35</code> ('5'), each matching the number of strings that follow. The single-rig frontend model stores
+<code>0x31</code> ('1').</div>
+
+<div class="warn">Because the count is one ASCII digit, this scheme as observed only encodes counts 0–9. No sampled
+<code>.names</code> exceeds nine entries, so whether ≥10 uses a multi-digit count or a different field is
+<span class="badge theory">unconfirmed</span>.</div>
+
+<h2>.filenames — texture-atlas name list</h2>
+<p><span class="badge ok">Confirmed</span> A bare run of NUL-terminated ASCII strings with <b>no count header</b>.
+These live next to a <a href="format-textures.html">UI <code>.textures</code></a> atlas
+(<code>UI/HUD/Textures/HUD.filenames</code>, <code>CommonUI.filenames</code>, …) and give the human-readable name of
+each sub-texture in the atlas, in array order — so UI/Scaleform code can look a sprite up by name and resolve it to a
+texture index.</p>
+
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>var</td><td>cstring[]</td><td>names</td><td>Consecutive NUL-terminated ASCII strings; index = position in the list. Read to EOF.</td></tr>
+</table>
+
+<pre class="hex">$ od -A d -t x1z UI/HUD/Textures/HUD.filenames | head -3
+0000000 42 75 6d 70 65 72 43 61 6d 5f 62 61 6e 6b 65 64  >BumperCam_banked<
+0000016 47 6c 6f 77 42 6c 75 65 00 42 75 6d 70 65 72 43  >GlowBlue.BumperC<
+0000032 61 6d 5f 62 61 6e 6b 65 64 47 6c 6f 77 52 65 64  >am_bankedGlowRed<
+          [0] "BumperCam_bankedGlowBlue"  \0  [1] "BumperCam_bankedGlowRed" …</pre>
+
+<div class="note">The entry order in the <code>.filenames</code> list matches the sub-texture order packed into the paired
+<code>.textures</code> atlas, so the two are read together: the atlas supplies pixels, the <code>.filenames</code>
+table supplies the lookup keys.</div>
+
+<h2>dirlist — directory manifest</h2>
+<p><span class="badge ok">Confirmed</span> A bare run of <b>NUL-terminated relative paths</b> naming the contents of
+the folder it lives in — structurally identical to <code>.filenames</code> (no count header, read to EOF), just used for
+directories rather than atlas sub-textures. The loader uses it to enumerate a directory without a real filesystem scan
+(the engine has matching <code>Find files matching</code> / <code>Find directories matching</code> / <code>Reading</code>
+log strings). Seen at <code>Environments/Levels/&lt;Level&gt;/ColorCubes/dirlist</code>, listing the available
+time-of-day colour-cube subfolders.</p>
+
+<div class="warn">Entries are separated by <code>0x00</code>, <b>not spaces</b>. Piping the file through <code>cat</code> makes
+the NUL bytes look like spaces in a terminal, which is misleading — a byte-accurate dump shows the real terminators.</div>
+
+<pre class="hex">$ od -A d -c Downtown/ColorCubes/dirlist           # 49 bytes
+0000000  A  f  t  e  r  n  o  o  n  \  d  e  f  a  u  l  t \0
+0000018  S  u  n  r  i  s  e  \  d  e  f  a  u  l  t \0 S  u
+0000036  n  s  e  t  \  d  e  f  a  u  l  t \0
+          → 3 entries: Afternoon\default, Sunrise\default, Sunset\default
+
+$ od -A d -c docks/ColorCubes/dirlist              # 28 bytes
+0000000  c  r  a  s  h \0 d  e  f  a  u  l  t \0 N  i  g  h  t  \  d  e  f  a  u  l  t \0
+          → 3 entries: crash, default, Night\default  (entries need not be "X\default")</pre>
+
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>var</td><td>cstring[]</td><td>entries</td><td>Consecutive NUL-terminated relative paths (Windows-style <code>\</code> separators); index = position. No count, file ends after the last entry's NUL. Read to EOF.</td></tr>
+</table>
+
+<div class="tip">Paths use back-slashes and point at sibling subfolders/files (each holding a
+<a href="format-textures.html">.textures</a> colour-cube). Parse by splitting on the <code>0x00</code> bytes — exactly the
+same way you'd walk a <code>.filenames</code> list.</div>
+
+<h2>How they differ</h2>
+<table>
+<tr><th>Format</th><th>Count</th><th>Separator</th><th>Encoding</th><th>Typical use</th></tr>
+<tr><td><code>.names</code></td><td>leading ASCII digit</td><td><code>0x00</code></td><td>ASCII</td><td>Light-rig / TOD name enums</td></tr>
+<tr><td><code>.filenames</code></td><td>none (read to EOF)</td><td><code>0x00</code></td><td>ASCII</td><td>UI texture-atlas sprite names</td></tr>
+<tr><td><code>dirlist</code></td><td>none (read to EOF)</td><td><code>0x00</code></td><td>ASCII</td><td>Directory/content manifest</td></tr>
+</table>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="format-textures.html">Textures (.textures)</a> — the atlases that <code>.filenames</code> indexes.</li>
+<li><a href="format-lights.html">Lights (.lights)</a> — light rigs named by <code>LightRigNames.names</code>.</li>
+<li><a href="format-crcs.html">CRC Tables (.crcs)</a> — the hashed-name lookup counterpart.</li>
+<li><a href="engine-resources.html">Resources &amp; Streaming</a> — how the loader enumerates content.</li>
+<li><a href="system-postprocess.html">Post-Processing DB</a> — colour cubes the <code>dirlist</code> enumerates.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

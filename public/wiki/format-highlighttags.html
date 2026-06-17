@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Highlight Tags (.highlighttags) — Split/Second RE Wiki</title>
+<meta name="description" content="The .highlighttags file is a plaintext XML list of HUD highlight markers (id, idCRC, icon, 4x3 transform, linked Powerplay) used to flag powerplay locations on-screen.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Highlight Tags (.highlighttags)" data-category="Formats · Gameplay (Catnip)">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Highlight Tags (<code>.highlighttags</code>)</h1>
+<p>
+<code>.highlighttags</code> is a <strong>plaintext XML</strong> file — one per level — that lists the
+on-screen <em>highlight markers</em> the HUD draws over <a href="format-powerplays.html">powerplay</a>
+locations. Each <code>&lt;HighlightTag&gt;</code> binds a 3-D placement (a 4×3 transform) to a powerplay,
+so the game can show "Highlight Geometry" (the boxed/pulsing indicator) where a powerplay is about to
+trigger or where a replay/highlight should be framed.
+</p>
+
+<div class="infobox"><div class="ib-title">.highlighttags</div><table>
+  <tr><th>Category</th><td>HUD highlight markers</td></tr>
+  <tr><th>Container</th><td>Plaintext XML (UTF-8/ASCII)</td></tr>
+  <tr><th>Endianness</th><td>n/a (text)</td></tr>
+  <tr><th>Root</th><td><code>&lt;Root FileVersion="2.0000000"&gt;</code></td></tr>
+  <tr><th>Record</th><td><code>&lt;HighlightTag&gt;</code></td></tr>
+  <tr><th>XML twin</th><td>self (it <em>is</em> the XML)</td></tr>
+  <tr><th>Scope</th><td>One per level (<code>&lt;Level&gt;.highlighttags</code>)</td></tr>
+  <tr><th>Count</th><td>10 files</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>Where it lives</h2>
+<p>
+Exactly one file sits in each level root, named after the level:
+</p>
+<pre class="hex">Environments/Levels/Downtown/Downtown.highlighttags        12 108 B
+Environments/Levels/docks/docks.highlighttags              20 793 B  (largest)
+Environments/Levels/Graveyard/Graveyard.highlighttags       7 042 B
+Environments/Levels/airport_test_03/airport_test_03.…      18 204 B
+Environments/Levels/nem_storm/nem_storm.highlighttags          32 B  (empty)</pre>
+<p>
+The loader token <code>environment(noassert)|%s.highlighttags</code> appears in
+<code>eboot_strings.txt</code> immediately beside the literal tag/attribute names this file uses —
+<code>HighlightTag</code>, <code>highlightTag</code>, <code>relative_transform</code>,
+<code>transformation</code>, <code>Powerplay</code> — and beside the UI strings
+<code>Highlight Geometry</code>, <code>UI/HUD/Highlight Geometry/Cube Fade Down</code>,
+<code>Highlight pulse intensity</code> and <code>Tag Map</code>. That ties this file to the HUD's
+highlight-geometry overlay rather than to the physics or particle systems.
+</p>
+
+<h2>Format</h2>
+<p>
+Because it is text, the whole format is directly readable; no hex interpretation is needed. The file
+is a single <code>&lt;Root&gt;</code> with a <code>FileVersion</code> attribute, containing zero or
+more <code>&lt;HighlightTag&gt;</code> elements. An empty level still ships the one-line self-closing
+root (the 32-byte <code>nem_storm</code> file).
+</p>
+
+<h3>Root element</h3>
+<table class="struct">
+<thead><tr><th>Element / Attr</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>&lt;Root&gt;</code></td><td>element</td><td>root</td><td>Document root. Self-closing (<code>&lt;Root …/&gt;</code>) when the level has no tags.</td></tr>
+<tr><td>@FileVersion</td><td>float (string)</td><td>FileVersion</td><td>Always <code>"2.0000000"</code> in this build.</td></tr>
+</tbody>
+</table>
+
+<h3><code>&lt;HighlightTag&gt;</code></h3>
+<table class="struct">
+<thead><tr><th>Element / Attr</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>@id</td><td>string "a.b"</td><td>id</td><td>Two signed-int parts (e.g. <code>1263809359.-611452811</code>) — the same two-part 64-bit object id notation used by Catnip entities and <a href="format-timeline.html">emitter controllers</a>.</td></tr>
+<tr><td>@idCRC</td><td>hex u32</td><td>idCRC</td><td>32-bit CRC of the id, e.g. <code>0x492CC192</code>. The runtime's fast lookup key for the tag.</td></tr>
+<tr><td>@icon</td><td>int</td><td>icon</td><td>HUD icon index. <code>"0"</code> in every shipped tag (icon set unused / default).</td></tr>
+<tr><td>@relative_transform</td><td>bool</td><td>relative_transform</td><td><code>"true"</code> or <code>"false"</code>. When <code>true</code> the transform below is relative to the linked powerplay/entity; when <code>false</code> it is an absolute world-space placement (and the translation magnitudes are correspondingly larger). Mixed within a file — see note below.</td></tr>
+<tr><td>&nbsp;&nbsp;<code>&lt;transformation&gt;</code></td><td>element</td><td>transform</td><td>The marker's 4×3 affine matrix (3×3 basis + translation).</td></tr>
+<tr><td>&nbsp;&nbsp;&nbsp;&nbsp;<code>&lt;Row0/1/2&gt;</code></td><td>X,Y,Z floats</td><td>basis</td><td>Rotation/scale rows. Identity for un-rotated markers; off-axis or non-unit values give per-tag scale &amp; yaw (see the scaled example below).</td></tr>
+<tr><td>&nbsp;&nbsp;&nbsp;&nbsp;<code>&lt;Row3&gt;</code></td><td>X,Y,Z floats</td><td>translation</td><td>Marker position (relative). E.g. <code>X="2.5192447" Y="12.833467" Z="-5.5014286"</code>.</td></tr>
+<tr><td>&nbsp;&nbsp;<code>&lt;Powerplay&gt;</code></td><td>element</td><td>powerplay</td><td>The powerplay this marker highlights.</td></tr>
+<tr><td>&nbsp;&nbsp;&nbsp;&nbsp;@id</td><td>string "a.b"</td><td>id</td><td>Two-part id of the target powerplay, e.g. <code>1239805449.2</code>.</td></tr>
+<tr><td>&nbsp;&nbsp;&nbsp;&nbsp;@idCRC</td><td>hex u32</td><td>idCRC</td><td>CRC of the powerplay id, e.g. <code>0x13887213</code>.</td></tr>
+</tbody>
+</table>
+
+<h2>Annotated excerpt</h2>
+<p>
+A complete tag from <code>Graveyard.highlighttags</code> — an identity-rotation marker offset on the
+Y/Z plane, pointing at one powerplay:
+</p>
+<pre class="hex">&lt;HighlightTag id="1263809359.-611452811" idCRC="0x492CC192" icon="0" relative_transform="true"&gt;
+   &lt;transformation&gt;
+      &lt;Row0 X="1.0000000" Y="0.0000000" Z="0.0000000"/&gt;   <span class="cmt">basis = identity</span>
+      &lt;Row1 X="0.0000000" Y="1.0000000" Z="0.0000000"/&gt;
+      &lt;Row2 X="0.0000000" Y="0.0000000" Z="1.0000000"/&gt;
+      &lt;Row3 X="0.0000000" Y="229.37067" Z="-178.84406"/&gt; <span class="cmt">translation (relative)</span>
+   &lt;/transformation&gt;
+   &lt;Powerplay id="1239805449.2" idCRC="0x13887213"/&gt;     <span class="cmt">linked powerplay</span>
+&lt;/HighlightTag&gt;</pre>
+<p>
+And a rotated marker, also from <code>Graveyard.highlighttags</code> (note the non-identity Row0/Row2 =
+a yaw about Y; Row0/Row2 are still unit-length here, so it is a pure rotation, not a scale):
+</p>
+<pre class="hex">&lt;HighlightTag id="1262886888.-508312769" idCRC="0xD0A88A65" icon="0" relative_transform="true"&gt;
+   &lt;transformation&gt;
+      &lt;Row0 X="0.8370311" Y="0.0000000" Z="0.5471553"/&gt;   <span class="cmt">yaw rotation in XZ</span>
+      &lt;Row1 X="0.0000000" Y="1.0000000" Z="0.0000000"/&gt;
+      &lt;Row2 X="-0.5471553" Y="0.0000000" Z="0.8370311"/&gt; <span class="cmt">(acos 0.8370311 ⇒ ~33° about Y)</span>
+      &lt;Row3 X="-10.038172" Y="15.508035" Z="-6.7290363"/&gt;
+   &lt;/transformation&gt;
+   &lt;Powerplay id="1256919348.-669000736" idCRC="0x6211B6B"/&gt;
+&lt;/HighlightTag&gt;</pre>
+
+<h2>Observations across samples</h2>
+<ul>
+<li>The same <code>HighlightTag id</code> recurs for several entries (e.g. <code>1249383404.…</code> in
+Graveyard) each pointing at a <em>different</em> <code>&lt;Powerplay&gt;</code> — so one tag template
+can mark multiple powerplay instances that share a geometry footprint. The <code>transformation</code>
+block is byte-identical when the tag id repeats, confirming the id keys a reusable marker shape.</li>
+<li><code>icon="0"</code> is invariant across all 141 tags in all ten files (the icon set is unused in
+this build). <code>relative_transform</code>, however, is <em>not</em> fixed: of the 141 tags, 109 are
+<code>"true"</code> and 32 are <code>"false"</code> — and all 32 <code>"false"</code> tags live in the
+<code>airport_test_03</code> test level (8 true / 32 false there), while every shipped race level uses
+<code>"true"</code> exclusively. So it is a real per-tag flag, not a constant.</li>
+<li>For <code>relative_transform="true"</code> tags the translation magnitudes are level-scale offsets
+(tens to hundreds of units) from the linked powerplay's transform; the <code>"false"</code> tags in
+<code>airport_test_03</code> carry larger absolute world coordinates (e.g. <code>Row3</code> ≈
+141 / 14 / 77), consistent with an absolute placement.</li>
+<li>File size scales with tag count: docks (busiest level) is largest at ~20 KB; nemesis-mode boss
+levels such as <code>nem_storm</code> ship an empty root.</li>
+</ul>
+
+<div class="note">
+The two-part <code>id</code> notation (<code>&lt;int&gt;.&lt;int&gt;</code>) and the <code>idCRC</code>
+hex attribute are shared with the Catnip <a href="format-entities.html">entity</a>,
+<a href="format-powerplays.html">powerplay</a> and emitter-controller data — strong evidence these
+are global Catnip object ids, and that <code>.highlighttags</code> is a cross-reference layer authored
+on top of the powerplay graph rather than a standalone asset.
+</div>
+<div class="tip">
+Unlike most level data this file is human-editable text, which makes it the easiest place to confirm
+powerplay ids/CRCs and to verify the CRC algorithm against the binary
+<a href="format-crcs.html">CRC tables</a>.
+</div>
+
+<h2>Open questions</h2>
+<ul>
+<li>The <code>icon</code> field is always 0 here; the icon index space (and where the icon art lives in
+the Scaleform <a href="format-gfx.html">GFx</a> HUD) is not yet mapped.</li>
+<li>Whether the HUD draws these only during the powerplay "danger zone" window or also in replay/
+highlight playback (the format name suggests replay tagging; the runtime strings point at live HUD
+"Highlight Geometry"). Both uses may share the data.</li>
+<li>The exact CRC-32 polynomial behind <code>idCRC</code> — verifiable since both the source id string
+and its CRC are present in the same file.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="format-powerplays.html">Powerplays (.powerplays)</a> — the objects these tags reference</li>
+<li><a href="format-entities.html">Entities (.entities)</a> — same two-part id / idCRC scheme</li>
+<li><a href="data-catnip.html">Catnip Entity System</a></li>
+<li><a href="system-powerplay.html">Powerplay System</a> — danger zones &amp; sequences</li>
+<li><a href="system-hud.html">HUD &amp; Frontend</a> — Highlight Geometry overlay</li>
+<li><a href="data-xml.html">XML Conventions</a> · <a href="format-crcs.html">CRC Tables (.crcs)</a></li>
+<li><a href="format-timeline.html">Timelines (.timelineInfo)</a> · <a href="format-logicinfo.html">Logic Info (.logicinfo)</a></li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entities (.entities) — Split/Second RE Wiki</title>
+<meta name="description" content="Binary Catnip entity-instance table for a Split/Second subtrack: an ENTS header plus fixed-size named transform records (currently only the eight player start positions).">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Entities (.entities)" data-category="Formats · Gameplay (Catnip)">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Entities (<code>.entities</code>)</h1>
+<p>A small <strong>binary</strong> table of placed <em>entity instances</em> for one subtrack of a
+level. It is part of the <a href="data-catnip.html">Catnip</a> gameplay data set that sits next to a
+level's <a href="format-powerplays.html">.powerplays</a> and <a href="format-triggers.html">.triggers</a>
+files. In every shipped subtrack the file holds exactly one entity class — the eight
+<code>Entity_StartPosition_PlayerN</code> race-grid slots — so the format below is fully decoded for
+that case and the header is generic enough to describe other entity types should they appear.</p>
+
+<div class="infobox"><div class="ib-title">.entities</div><table>
+  <tr><th>Category</th><td>Catnip entity instances (level)</td></tr>
+  <tr><th>Encoding</th><td>Binary, big-endian (PS3)</td></tr>
+  <tr><th>Magic</th><td><code>45 4E 54 53</code> (<code>ENTS</code>)</td></tr>
+  <tr><th>Version</th><td>3 (uint32 at <code>0x08</code>)</td></tr>
+  <tr><th>Header</th><td>32 bytes</td></tr>
+  <tr><th>Record</th><td>97 bytes (fixed)</td></tr>
+  <tr><th>XML twin</th><td>none</td></tr>
+  <tr><th>Count</th><td>19 files (all 808 B)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>At a glance</h2>
+<p>All 19 <code>.entities</code> files on disk are byte-for-byte identical in their header and are all
+exactly <strong>808 bytes</strong>. The layout is trivially regular: a 32-byte header followed by
+<code>count</code> fixed-size 97-byte records, with no offset table, no string pool and no trailing
+data. The math closes exactly: <code>0x20 + 8 × 97 = 808</code>, i.e. the file ends on the last record
+byte.</p>
+
+<div class="note">Unlike its two siblings, <code>.entities</code> is a real binary blob. The level's
+<a href="format-powerplays.html">.powerplays</a> and <a href="format-triggers.html">.triggers</a>
+files are plain XML. Don't assume the Catnip family shares an encoding.</div>
+
+<h2>File header</h2>
+<p>The 32-byte header is constant across every sample (same magic, same reserved zeros, same version 3,
+same count 8). Only the magic, version and count carry meaning; the rest is reserved padding.</p>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x00</td><td>0x4</td><td>char[4]</td><td>magic</td><td>Always <code>ENTS</code> (<code>45 4E 54 53</code>).</td></tr>
+<tr><td>0x04</td><td>0x4</td><td>uint32_t</td><td>reserved</td><td>Always <code>0</code> in all samples. The EBOOT version-checks an <em>id</em>, a <em>major</em> and a <em>minor</em> version (see note below), so this word is plausibly the minor version or a file id — but since it never varies in shipped data the meaning is unconfirmed.</td></tr>
+<tr><td>0x08</td><td>0x4</td><td>uint32_t</td><td>version</td><td>File major version. <code>3</code> in this build. The EBOOT contains <em>"entities file id mismatch"</em>, <em>"entities file major version mismatch"</em> and <em>"entities file minor version mismatch - attempting to load"</em>, so the loader id- and version-checks the header (a minor mismatch is a soft warning, a major mismatch is hard).</td></tr>
+<tr><td>0x0C</td><td>0x4</td><td>uint32_t</td><td>count</td><td>Number of entity records that follow. Always <code>8</code> here (the eight player start positions). Equals exactly <code>(filesize − 32) / 97</code>.</td></tr>
+<tr><td>0x10</td><td>0x10</td><td>byte[16]</td><td>reserved</td><td>All zero in every sample. Padding to a 32-byte boundary for the first record.</td></tr>
+</table>
+
+<h2>Entity record (97 bytes)</h2>
+<p>Each record is a fixed-width, null-padded name followed by a 4×4-style transform stored as 16
+big-endian <code>float32</code>s. The record stride was confirmed by locating consecutive
+<code>Entity_StartPosition</code> name markers: every gap is exactly <strong>97 bytes</strong> across
+all eight records in every file.</p>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x00</td><td>0x21</td><td>char[33]</td><td>name</td><td>NUL-terminated, NUL-padded entity name, e.g. <code>Entity_StartPosition_Player1</code> (28 chars, so the terminating NUL falls at <code>+0x1C</code> and bytes <code>+0x1C…+0x20</code> are all NUL). The field width is 33 bytes (<code>0x21</code>), which is why <code>position.x</code> only decodes correctly when the float block is read from record <code>+0x21</code> (verified: reading from <code>+0x20</code> yields garbage 6.14, from <code>+0x21</code> yields the correct −1512.30).</td></tr>
+<tr><td>0x21</td><td>0xC</td><td>float32_t[3]</td><td>position</td><td>World-space translation X,Y,Z. Verified against the world: Downtown P1 = <code>(−1512.30, 9.31, 321.57)</code>.</td></tr>
+<tr><td>0x2D</td><td>0xC</td><td>float32_t[3]</td><td>scale</td><td>Per-axis scale; <code>(1.0, 1.0, 1.0)</code> for every start position.</td></tr>
+<tr><td>0x39</td><td>0x24</td><td>float32_t[9]</td><td>rotation</td><td>Row-major 3×3 rotation/basis matrix. Identical for all eight grid slots in a subtrack (the cars all face the same way).</td></tr>
+<tr><td>0x5D</td><td>0x4</td><td>float32_t</td><td>index</td><td>Spawn index, stored as a float. Matches the <code>PlayerN</code> suffix exactly: 1.0…8.0. This is how the engine maps a record to grid position N regardless of file order.</td></tr>
+</table>
+
+<div class="tip">The transform decomposes as <strong>3 position + 3 scale + 9 rotation</strong> (15 floats)
+with a 16th "index" float. Reading it as a flat <code>float32[16]</code> and slicing 3/3/9/1 reproduces
+sane world coordinates and an orthonormal basis; reading it as a single 4×4 matrix does not, because
+the index occupies what would be the matrix's last element.</div>
+
+<h2>Decoded example — Downtown / Subtrack A</h2>
+<p>The 8 start positions form a staggered 4-row × 2-column race grid: X steps ~14 units between columns,
+Z steps ~7.7 units between rows, all sharing one rotation. The <code>index</code> values 1–8 are not in
+file order (records appear 1,4,3,2,5,6,7,8), confirming the engine keys off the index field, not the
+slot order.</p>
+<table class="struct">
+<tr><th>Record</th><th>Name</th><th>Position (X,Y,Z)</th><th>index</th></tr>
+<tr><td>0</td><td>…Player1</td><td>(−1512.30, 9.31, 321.57)</td><td>1.0</td></tr>
+<tr><td>1</td><td>…Player4</td><td>(−1513.64, 9.28, 329.25)</td><td>4.0</td></tr>
+<tr><td>2</td><td>…Player3</td><td>(−1527.57, 9.28, 329.52)</td><td>3.0</td></tr>
+<tr><td>3</td><td>…Player2</td><td>(−1528.81, 9.25, 337.21)</td><td>2.0</td></tr>
+<tr><td>7</td><td>…Player8</td><td>(−1559.01, 9.20, 352.90)</td><td>8.0</td></tr>
+</table>
+
+<h2>Annotated hex</h2>
+<p>Header plus the start of record 0 from <code>Downtown/Subtracks/A/Downtown.entities</code>:</p>
+<pre class="hex">000000  45 4e 54 53 00 00 00 00 00 00 00 03 00 00 00 08   ENTS........····
+        └ "ENTS" ──┘ └reserved┘ └ ver=3 ┘ └ count=8 ┘
+000010  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00   ················  reserved (pad to 0x20)
+000020  45 6e 74 69 74 79 5f 53 74 61 72 74 50 6f 73 69   Entity_StartPosi
+000030  74 69 6f 6e 5f 50 6c 61 79 65 72 31 00 00 00 00   tion_Player1····  name[33], NUL-padded
+000040  40 c4 bd 09 ad 41 14 f0 34 43 a0 c9 75 3f 7f ff   @····A··4C··u?··
+        └ pos.x ─┘ └ pos.y ─┘ └ pos.z ─┘ └ scl.x …
+000050  ff 3f 80 00 00 3f 7f ff fc 3f 64 4e bd 3b 2d 75   ·?···?···?dN·;-u  scale + rotation rows …</pre>
+<p>Here <code>40 c4 bd 09</code> = <code>−1512.30</code> is <code>position.x</code> (the leading
+<code>0x40</code> byte sits at <code>0x40</code>, i.e. record offset <code>+0x21</code> after the 33-byte
+name). <code>3f 80 00 00</code> = <code>1.0</code> is the first scale component.</p>
+
+<h2>Open questions</h2>
+<ul>
+<li>The <code>reserved</code> word at <code>0x04</code> is always 0. The EBOOT performs three separate
+header checks (<em>id</em>, <em>major version</em>, <em>minor version</em>) but the header only exposes one
+obvious version field at <code>0x08</code>; the word at <code>0x04</code> is the natural candidate for the
+minor version or a file id. Unconfirmed — no shipped sample varies it.</li>
+<li>Only one entity class (<code>cStartPositionEntity</code>) is ever instanced in shipped data, so it
+is unknown whether other entity types would carry extra per-record payload after the transform, or
+whether the 97-byte record is a universal entity stride. The fixed record size and lack of a per-record
+type tag suggest the latter for this version.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="data-catnip.html">Catnip Entity System</a> — the data-driven entity/timeline/trigger framework this file feeds.</li>
+<li><a href="format-powerplays.html">Powerplays (.powerplays)</a> — sibling file, the powerplay definitions for the same subtrack.</li>
+<li><a href="format-triggers.html">Triggers (.triggers)</a> — sibling file, the trigger volumes that fire those powerplays.</li>
+<li><a href="system-tracks.html">Tracks &amp; Levels</a> — subtrack layout and the <code>Subtracks/A…D</code> directory scheme.</li>
+<li><a href="system-gamemodes.html">Game Modes</a> — how the 8 start positions feed the race grid.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

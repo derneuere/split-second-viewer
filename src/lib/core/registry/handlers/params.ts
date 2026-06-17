@@ -16,14 +16,17 @@ export const paramsHandler: ResourceHandler<ParsedParams> = {
 		"Black Rock plaintext tuning grammar: '!directory:' header, '/section:' groups, " +
 		"and 'key = value (min, max);' tuples parsed to a tree of groups/sections/entries.",
 	category: 'Data',
-	caps: { read: true, write: false },
+	caps: { read: true, write: true },
 	extensions: ['.params'],
-	wikiUrl: 'format-misc.html',
+	wikiUrl: 'data-params.html',
 
 	parseRaw: (raw) => parseParams(raw),
-	// Text-grammar writer exists but is not byte-exact (CRLF/whitespace
-	// normalisation); kept read-only for the MVP. Re-enable caps.write once a
-	// fully faithful serializer is validated.
+	// Byte-exact writer: a verbatim line model is the source of truth, so an
+	// unmodified document round-trips byte-for-byte; an edit splices only the
+	// changed value's column span. Validated against many real .params files
+	// (CRLF/LF/mixed endings, no-trailing-newline, blank-line runs, escaped
+	// quotes, `==`-in-key). See params.test.ts "round-trips real sample…".
+	writeRaw: (model) => writeParams(model),
 	describe: (m) => {
 		const sections = m.groups.reduce((n, g) => n + g.sections.length, 0);
 		const entries = countParamEntries(m);
@@ -34,8 +37,20 @@ export const paramsHandler: ResourceHandler<ParsedParams> = {
 	},
 
 	fixtures: [
-		{ file: 'AreaOfEffects/GlobalParams.params', expect: { parseOk: true } },
-		{ file: 'AreaOfEffects/EffectParams.params', expect: { parseOk: true } },
+		// GlobalParams: CRLF, single group. EffectParams: CRLF, multi-section.
+		{ file: 'AreaOfEffects/GlobalParams.params', expect: { parseOk: true, byteRoundTrip: true } },
+		{ file: 'AreaOfEffects/EffectParams.params', expect: { parseOk: true, byteRoundTrip: true } },
+		// Cameras: LF endings, MANY back-to-back `!directory:` groups, no trailing
+		// newline on some — the hardest line-structure cases.
+		{
+			file: 'Cameras/CommonCameras/Cameras.params',
+			expect: { parseOk: true, byteRoundTrip: true },
+		},
+		// PostProcess: MIXED endings + escaped-quote / colon-laden values.
+		{
+			file: 'Environments/Levels/airport_test_03/Params/PostProcess.params',
+			expect: { parseOk: true, byteRoundTrip: true },
+		},
 	],
 
 	stressScenarios: [
@@ -55,5 +70,5 @@ export const paramsHandler: ResourceHandler<ParsedParams> = {
 	],
 };
 
-// Re-export for the round-trip stress runner if it later flips caps.write on.
+// Re-export the byte-exact writer for the round-trip stress runner / CLI.
 export { writeParams };

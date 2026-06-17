@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { fileNamesHandler } from '../filenames';
 import { parseFileNames, writeFileNames } from '../../../filenames';
 import { ssCtx } from '../../handler';
-import { hasSample, readSample } from '@/test/dataRoot';
+import {
+	hasSample,
+	readSample,
+	listSamplesByExt,
+	readFileBytes,
+} from '@/test/dataRoot';
 
 // Inline fixture: headerless NUL-terminated list, two entries.
 const INLINE_BYTES = new Uint8Array([
@@ -42,4 +47,26 @@ describe('filenames parser', () => {
 			expect(Array.from(out)).toEqual(Array.from(raw));
 		},
 	);
+
+	const ALL = listSamplesByExt('.filenames');
+	it.skipIf(ALL.length === 0)(
+		`filenames round-trips real sample byte-for-byte (${ALL.length} files)`,
+		() => {
+			const ctx = ssCtx();
+			const failures: string[] = [];
+			for (const abs of ALL) {
+				const raw = readFileBytes(abs);
+				const out = fileNamesHandler.writeRaw!(fileNamesHandler.parseRaw(raw, ctx), ctx);
+				if (!bytesEqual(out, raw)) failures.push(`${abs} (len ${out.length} vs ${raw.length})`);
+			}
+			expect(failures).toEqual([]);
+			expect(ALL.length).toBeGreaterThan(1);
+		},
+	);
 });
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+	return true;
+}

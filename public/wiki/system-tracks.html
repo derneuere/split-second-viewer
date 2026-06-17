@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tracks & Levels — Split/Second RE Wiki</title>
+<meta name="description" content="The Split/Second level pipeline: the track roster, Subtracks (A/B/C route variants), ColorCubes & LightRigs for time-of-day, Sectors & streaming archives, Backdrop, Skydome, reflection maps and route data.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Tracks & Levels" data-category="Game Systems">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Tracks &amp; Levels</h1>
+<p>A Split/Second "level" is a small TV-studio set dressed up as a city, harbour or quarry. Each level lives under <code>Deferred/Environments/Levels/&lt;Level&gt;/</code> and is assembled at runtime from a fixed set of sub-systems: <b>Subtracks</b> (the alternate routes A/B/C), <b>Sectors</b> (the streamable chunks of world geometry), <b>LightRigs</b> + <b>ColorCubes</b> + <b>Skydome</b> (the time-of-day look), a <b>Backdrop</b> and <b>ReflectionMap</b> set, and the per-route <b>route data</b> the race logic and AI run on. This page walks the roster and the pipeline, quoting the real on-disk layout (Downtown is used as the worked example).</p>
+
+<div class="infobox"><div class="ib-title">Levels</div><table>
+  <tr><th>Root</th><td><code>Environments/Levels/&lt;Level&gt;/</code></td></tr>
+  <tr><th>Race levels</th><td>Downtown, docks, Graveyard, Powerplant, airport_test_03</td></tr>
+  <tr><th>Nemesis levels</th><td>nem_downtown, nem_graveyard, nem_storm, nem_training, nem_warehouse</td></tr>
+  <tr><th>Subtracks</th><td>route variants A / B / C (per level)</td></tr>
+  <tr><th>Time-of-day</th><td>LightRig + ColorCube + Skydome triple</td></tr>
+  <tr><th>Streaming</th><td><code>.sectorInfo</code> + <code>.Static.ark</code> / <code>.Stream.ark</code></td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>The track roster</h2>
+<p><code>Deferred/directory.txt</code> is the master asset manifest; its <code>:TRACKS</code> section lists every level, and a <code>&lt;Level&gt;_SUBTRACK</code> section lists each level's route letters. The Subtracks per level (verbatim from <code>directory.txt</code>):</p>
+<table>
+  <tr><th>Level</th><th>Subtracks</th><th>Type</th></tr>
+  <tr><td>Downtown</td><td>A, B, C</td><td>Race</td></tr>
+  <tr><td>docks</td><td>A, B, C, D</td><td>Race</td></tr>
+  <tr><td>Graveyard</td><td>A, B</td><td>Race</td></tr>
+  <tr><td>Powerplant</td><td>A, B</td><td>Race</td></tr>
+  <tr><td>airport_test_03</td><td>A</td><td>Test / dev</td></tr>
+  <tr><td>nem_downtown</td><td>A</td><td>Nemesis</td></tr>
+  <tr><td>nem_graveyard</td><td>A, B</td><td>Nemesis</td></tr>
+  <tr><td>nem_storm</td><td>A</td><td>Nemesis</td></tr>
+  <tr><td>nem_training</td><td>A, B</td><td>Nemesis</td></tr>
+  <tr><td>nem_warehouse</td><td>A</td><td>Nemesis</td></tr>
+</table>
+<div class="note">The retail game shipped many more named tracks (Airport, Construction, Suburbs, River, Aquarium…), but they are all <b>subtracks / route layouts cut from this handful of physical environments</b>. The same Downtown geometry is re-routed and re-lit to produce a whole set of distinct-feeling races. <code>scale_track_01</code> and <code>mlr_fastload</code> appear in <code>SubTrackLightRigs.txt</code> as internal test/load-benchmark levels.</div>
+
+<h2>Subtracks: route variants</h2>
+<p>A subtrack is one drivable route through the level. The engine loads it from <code>Environments/Levels/%s/Subtracks/%s</code> (confirmed in the eboot, alongside <code>SetSubTrack</code> and the log line <code>mSubtrackName: %s</code>). Each subtrack folder (<code>Downtown/Subtracks/A/</code>) carries the gameplay layer for that route:</p>
+<table>
+  <tr><th>File</th><th>Purpose</th></tr>
+  <tr><td><code>Downtown.entities</code></td><td>Catnip entity instances placed on this route — see <a href="format-entities.html">Entities</a></td></tr>
+  <tr><td><code>Downtown.powerplays</code></td><td>Powerplay definitions active on this route — see <a href="format-powerplays.html">Powerplays</a></td></tr>
+  <tr><td><code>Downtown.triggers</code></td><td>Trigger volumes — see <a href="format-triggers.html">Triggers</a></td></tr>
+  <tr><td><code>Downtown.hkPPs</code> / <code>.hkPPsXml</code></td><td>Physics packs (+ XML twin) — see <a href="format-hkpps.html">Physics Packs</a></td></tr>
+  <tr><td><code>Downtown.hkRBs</code> / <code>.hkRBsXml</code></td><td>Rigid bodies (+ XML twin) — see <a href="format-hkrbs.html">Rigid Bodies</a></td></tr>
+  <tr><td><code>tl.hkColl</code> / <code>tl.hkCollXml</code> / <code>tl.xml</code></td><td>The route's (track-logic) collision mesh — see <a href="format-hkcoll.html">Collision</a></td></tr>
+  <tr><td><code>SectorVisibility.xml</code></td><td>Which sectors are visible/streamed along this route (eboot path <code>Subtracks/%s/SectorVisibility.xml</code>)</td></tr>
+  <tr><td><code>Particles/TimelineParticles/</code></td><td>Per-route particle sets — Geometry / Light / Screen / Standard, each with <code>.emitterControllers</code>, <code>.emitterSurfaces</code>, <code>.timelineInfo</code> (see <a href="format-emitter.html">Emitters</a>)</td></tr>
+</table>
+
+<h2>Route data (race logic)</h2>
+<p>The racing line, checkpoints and respot/drop metadata live separately under <code>&lt;Level&gt;/Event/RACING/TrackLogic/&lt;Subtrack&gt;/</code>. This is the data the race director, lap timing and AI follow. Each subtrack directory contains the route binaries plus human-readable debug twins:</p>
+<table>
+  <tr><th>File</th><th>Role</th></tr>
+  <tr><td><code>Track.checkpoints</code></td><td>Binary checkpoint/node graph (see below) — detailed on <a href="format-route.html">Route Data</a></td></tr>
+  <tr><td><code>Track.linkorigins</code></td><td>Link origin table for the node graph</td></tr>
+  <tr><td><code>Track.sideways</code> + <code>.sideways.txt</code></td><td>Lateral links between nodes (the width of the drivable corridor)</td></tr>
+  <tr><td><code>Track.splitlength</code></td><td>Per-split lengths (used for progress / position)</td></tr>
+  <tr><td><code>Track.logicinfo</code></td><td>Track-logic metadata — see <a href="format-logicinfo.html">Logic Info</a></td></tr>
+  <tr><td><code>Track.nis</code> / <code>Track.lip</code></td><td>Non-interactive sequence + lip-sync (intro flythrough, radio chatter)</td></tr>
+  <tr><td><code>Track.debug.txt</code></td><td>Human-readable node dump (debug build only)</td></tr>
+</table>
+<p>The debug dump shows each node's world position and flags. Note the <b>respot</b> / <b>drop-zone</b> / <b>crash-zone</b> flags per node — this is how the game knows where it is allowed to re-place a wrecked car:</p>
+<pre>Node [0]
+Pos (-1342, 8, 254)
+Crash zone [ ]
+Can respot [x]
+DropZone False
+TriggerZone False</pre>
+<p>The sideways table records the lateral connectivity (Downtown route A: <code>Total Links = 283</code>):</p>
+<pre>link [6]  sideways links to ([244][231])
+link [21] sideways links to ([252][259])</pre>
+<p><code>Track.checkpoints</code> itself is a big-endian binary. The header begins <code>00 03 00 00</code> (a count/version), then a repeating record marker <code>CD AB 0D F0</code> precedes each entry — a recognisable sentinel that makes the record stream easy to walk. Full layout on <a href="format-route.html">Route Data</a>.</p>
+<pre class="hex">00000000: 0003 0000 cdab 0df0 0000 0150 4939 a99a  ...........PI9..
+00000010: 48e6 5b4b 3f80 0000 cdab 0df0 0000 0138  H.[K?..........8
+00000020: 0e19 a032 cdab 0df0 0000 00e0 5817 1462  ...2........X..b</pre>
+
+<h2>Sectors &amp; streaming</h2>
+<p>The bulk of the world — buildings, road, props — is partitioned into <b>sectors</b> and streamed. Sector data sits in <code>&lt;Level&gt;/Sectors/</code>:</p>
+<table>
+  <tr><th>File</th><th>Role</th></tr>
+  <tr><td><code>Downtown.sectorInfo</code></td><td>Sector table: bounds, ids, and which assets each sector owns — see <a href="format-sectors.html">Sectors</a></td></tr>
+  <tr><td><code>Downtown.Static.ark</code></td><td>Always-resident packed geometry/textures for the level</td></tr>
+  <tr><td><code>Downtown.Stream.ark</code></td><td>Streamed-on-demand packed assets — see <a href="format-ark.html">Archives</a></td></tr>
+  <tr><td><code>Downtown.fxc</code> / <code>.shaders</code> / <code>.shaderinst</code> / <code>.textures</code></td><td>Sector render set (materials, shaders, textures)</td></tr>
+</table>
+<p>The <code>.sectorInfo</code> opens with float bounds and is tagged with the Crayon source path (UTF-16) <code>…\proj_1\ws_0\Data\Split…</code> — the same build-tool signature seen across the renderer's authored data:</p>
+<pre class="hex">00000000: 3ff5 c28f 4396 0000 0000 0080 7130 3030  ?...C.......q000
+00000010: 0000 5c00 7000 7200 6f00 6a00 5f00 3100  ..\.p.r.o.j._.1.
+00000020: 5c00 7700 7300 5f00 3000 5c00 4400 6100  \.w.s._.0.\.D.a.</pre>
+<p>Per-subtrack streaming residency is selected by that route's <code>SectorVisibility.xml</code>, so route A and route C of the same level stream different chunks. See <a href="engine-resources.html">Resources &amp; Streaming</a> for the residency model.</p>
+
+<h2>Backdrop &amp; Skydome</h2>
+<p>Far scenery is split into a low-detail <b>Backdrop</b> (the distant city silhouette) and a <b>Skydome</b>. The backdrop is loaded from <code>environment|Backdrop/%s_backdrop.model</code> (with a matching <code>.texture.crcs</code>), confirmed by the eboot's <code>"Backdrop for '%s' not found!"</code> assert. Downtown ships <code>Downtown_backdrop.model</code> + shaders/textures.</p>
+<p>The Skydome is <b>per-time-of-day</b>. <code>&lt;Level&gt;/Skydome/</code> contains a base <code>Skydome</code> plus <code>Skydome_Midday</code>, <code>Skydome_Sunrise</code>, <code>Skydome_sunset</code> variants (each a full model/shader/texture set). The active skydome is named in the LightRig's <code>/Lighting/Sky/Filename</code> field. Render order is visible in the renderer's pass list (<code>Opaque Skydome Render</code>, <code>Opaque Env Backdrop Render</code>) — see <a href="engine-rendering.html">Rendering Pipeline</a>.</p>
+
+<h2>Time-of-day: LightRigs, ColorCubes &amp; ReflectionMaps</h2>
+<p>The dramatic "same track at sunrise vs sunset" looks are achieved by swapping a <b>LightRig</b>. <code>Environments/SubTrackLightRigs.txt</code> maps each <code>level:subtrack:lightrig</code> — i.e. which lighting a route ships with:</p>
+<pre>downtown:A:midday
+downtown:B:sunset
+downtown:C:sunrise
+docks:A:midday   docks:B:nighttime   docks:C:sunset
+Graveyard:A:midday   Graveyard:B:sunset
+Powerplant:A:twilight   Powerplant:B:midday</pre>
+<p>The eboot confirms the loader: <code>"Env '%s' : SubTrack '%s' : LightRig '%s'"</code> and a fallback <code>"Adding default combo of : SubTrack 'A', LightRig 'default'"</code>.</p>
+
+<h3>LightRig (<code>LightRigs/&lt;name&gt;/&lt;name&gt;.params</code>)</h3>
+<p>A LightRig is the master lighting descriptor for one time-of-day. Beside the <code>.params</code> it carries baked <code>.lights</code>, a <code>.gbx</code>, and its own shader/texture set. The <code>.params</code> is a single big <code>/Lighting</code> tree. Real Downtown <code>midday</code> values:</p>
+<table>
+  <tr><th>Section</th><th>What it sets</th></tr>
+  <tr><td><code>/Lighting/sun</code></td><td>sun specular colour, <code>elevation 0.4148</code>, <code>rotation -0.3565</code></td></tr>
+  <tr><td><code>/Lighting/sun/diffuse</code></td><td>a 6-step diffuse ramp (0→5) for sun intensity over the day</td></tr>
+  <tr><td><code>/Lighting/sun shadow</code></td><td>single-player cascade <code>range 300</code>, <code>fadeout 140</code>, <code>split weight 0.8</code>, with separate per-platform <code>xenon</code> and <code>ps3</code> per-cascade bias/slope blocks, plus a tighter <code>split screen</code> rig (range 150)</td></tr>
+  <tr><td><code>/Lighting/ambience</code> &amp; <code>ambience_vehicle</code></td><td>sky/ground hemisphere ambient (separate tint for cars)</td></tr>
+  <tr><td><code>/Lighting/kicker</code></td><td>a fill/rim "kicker" light (elevation 0.6525, rotation 0.2515)</td></tr>
+  <tr><td><code>/Lighting/Radiosity</code></td><td>GI tweak (1.12) + tint colour</td></tr>
+  <tr><td><code>/Lighting/LS</code> &amp; <code>ATV_LS</code></td><td>atmospheric/light scattering (Mie/Rayleigh coeffs, extinction &amp; inscattering tones)</td></tr>
+  <tr><td><code>/Lighting/ReflectionMap/Files</code></td><td>names the reflection set: <code>Env = environment_A</code>, <code>Skydome = Skydome_Midday</code>, <code>SunLight</code>, <code>PointLight</code>, <code>SpotLight</code></td></tr>
+  <tr><td><code>/Lighting/Params</code></td><td><code>Post Process = PostProcess_Downtown_Midday.params</code> (links to <a href="system-postprocess.html">Post-Processing DB</a>)</td></tr>
+  <tr><td><code>/Lighting/ColorCube</code></td><td><code>Set Name = Afternoon</code> — selects the grading LUT</td></tr>
+  <tr><td><code>/Lighting/Sky</code></td><td><code>Filename = Skydome_Midday</code>, <code>Rotation 241°</code></td></tr>
+  <tr><td><code>/Lighting/ParticleOverrides</code></td><td>per-rig tint for particles (sun/ambient/emissive/light/corona colours)</td></tr>
+</table>
+<p><code>LightRigs/default/default.params</code> is the fallback rig; <code>LightRigNames.names</code> is the string table of rig names for the level. Downtown ships rigs <code>midday</code>, <code>sunrise</code>, <code>sunset</code> (matching its three subtracks).</p>
+
+<h3>ColorCubes (colour-grade LUTs)</h3>
+<p>A ColorCube is a 3D-LUT colour grade applied in post. They live in <code>&lt;Level&gt;/ColorCubes/&lt;Set&gt;/default.textures</code>, indexed by a <code>dirlist</code>. Downtown ships three sets:</p>
+<pre>ColorCubes/Afternoon/default.textures
+ColorCubes/Sunrise/default.textures
+ColorCubes/Sunset/default.textures
+dirlist:  Afternoon\default  Sunrise\default  Sunset\default</pre>
+<p>The active cube is named by the LightRig (<code>/Lighting/ColorCube/Set Name</code>), and the camera system can blend cubes per shot — the <code>ColorCubeBehavior</code> exposes <code>ColorCubeEnabled</code>, <code>ColorCubeBlending</code>, <code>ColorCubeInputBlending</code> (see <a href="system-cameras.html">Cameras &amp; Camera Director</a>). The render pass is the eboot's <code>"Post Processing ColorCube Render"</code>.</p>
+
+<h3>ReflectionMap set</h3>
+<p>The cubemap/reflection inputs sit under <code>&lt;Level&gt;/ReflectionMap/</code>, grouped by what they represent — each a small model+shader+texture bundle the engine composites into the environment reflection used by car paint and wet surfaces:</p>
+<table>
+  <tr><th>Subfolder</th><th>Contents</th></tr>
+  <tr><td><code>Environments/</code></td><td><code>environment</code> + per-subtrack <code>environment_A</code> / <code>_B</code> / <code>_C</code></td></tr>
+  <tr><td><code>Skydomes/</code></td><td><code>Skydome_Midday</code>, <code>Skydome_Sunset</code>, <code>Skydome_Surise</code> (sic) variants for reflections</td></tr>
+  <tr><td><code>Lights/</code></td><td><code>PointLight</code>, <code>SpotLight</code> reflection proxies</td></tr>
+  <tr><td><code>SunLights/</code></td><td><code>SunLight</code> reflection proxy</td></tr>
+</table>
+<p>The LightRig's <code>/Lighting/ReflectionMap/Emissive</code> block weights how much each contributes (e.g. Downtown midday: emissive scale 31.46, environment 1.0, skydome 0.75, sun 0.76).</p>
+
+<h2>Other per-level data</h2>
+<table>
+  <tr><th>Path</th><th>Role</th></tr>
+  <tr><td><code>Common/cl.hkColl</code>, <code>cl.xml</code></td><td>Level-common collision shared by all subtracks</td></tr>
+  <tr><td><code>Physics/Downtown.hkColl</code>, <code>.hkRBXs</code></td><td>Level physics &amp; rigid-body extras</td></tr>
+  <tr><td><code>PhysicsDebris/materials.*</code></td><td>Debris material/render set for shattering geometry</td></tr>
+  <tr><td><code>LensFlare/Flare*.model</code></td><td>Sun/kicker/environment lens-flare quads (Catnip LensFlare)</td></tr>
+  <tr><td><code>TyreTracks/TyreTracks.textures</code></td><td>Skid-mark decal atlas</td></tr>
+  <tr><td><code>Downtown_powerplayInfo.dat</code></td><td>Per-level powerplay info — see <a href="format-powerplayinfo.html">Powerplay Info</a></td></tr>
+  <tr><td><code>Downtown.highlighttags</code></td><td>Replay/highlight tag points — see <a href="format-highlighttags.html">Highlight Tags</a></td></tr>
+  <tr><td><code>Params/PostProcess_Downtown_*.params</code></td><td>Per-time-of-day post-process (Afternoon/Midday/Sunrise/Sunset)</td></tr>
+  <tr><td><code>Params/CityLOD.params</code>, <code>PowerPlayDrawDists.params</code></td><td>LOD &amp; powerplay draw-distance tuning</td></tr>
+  <tr><td><code>Params/RaceSetupOverlay_*.params</code></td><td>Per-subtrack start-grid overlay setup</td></tr>
+  <tr><td><code>moving_assets.xml</code></td><td>Animated/moving set pieces</td></tr>
+</table>
+
+<h2>Putting it together: loading a race</h2>
+<p>When the game loads "Downtown, route C", it: selects subtrack <code>C</code>; from <code>SubTrackLightRigs.txt</code> picks LightRig <code>sunrise</code>; the rig in turn names the Skydome (<code>Skydome_Sunrise</code>), the ReflectionMap env (<code>environment_C</code>), the ColorCube set and the PostProcess params; it loads the <code>Static.ark</code> always-resident set and streams sectors per <code>Subtracks/C/SectorVisibility.xml</code>; it loads route logic from <code>Event/RACING/TrackLogic/C/Track.checkpoints</code>; and it loads the route's entities, powerplays, triggers and particle timelines. The result is the same physical city, re-routed and re-lit into a fresh-feeling event.</p>
+
+<div class="tip">Everything in this pipeline is plaintext config (<code>.txt</code>/<code>.xml</code>/<code>.params</code>) except the packed/streamed geometry (<code>.ark</code>, <code>.sectorInfo</code>, route binaries). The structure and quoted values are <span class="badge ok">Confirmed</span> from the Downtown tree + eboot strings; exact binary field layouts for <code>.sectorInfo</code> and <code>Track.checkpoints</code> are <span class="badge partial">Partial</span> and covered on their format pages.</div>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-route.html">Route Data</a> — checkpoints / sideways / splitlength / linkorigins</li>
+  <li><a href="format-sectors.html">Sectors</a> · <a href="format-ark.html">Archives (.ark)</a> · <a href="engine-resources.html">Resources &amp; Streaming</a></li>
+  <li><a href="system-postprocess.html">Post-Processing DB</a> · <a href="engine-rendering.html">Rendering Pipeline</a> — colour grading &amp; lighting passes</li>
+  <li><a href="system-cameras.html">Cameras &amp; Camera Director</a> — per-level cameras, splines &amp; ColorCube blending</li>
+  <li><a href="system-powerplay.html">Powerplay System</a> · <a href="format-powerplays.html">Powerplays</a> · <a href="format-entities.html">Entities</a> · <a href="format-triggers.html">Triggers</a></li>
+  <li><a href="format-lights.html">Lights &amp; Light Rigs</a> · <a href="data-params.html">.params Tuning System</a></li>
+  <li><a href="system-nemesis.html">Nemesis &amp; Heli Modes</a> — the <code>nem_*</code> levels</li>
+  <li><a href="engine-overview.html">Engine Architecture</a> — where the level pipeline sits in the Black Rock engine</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

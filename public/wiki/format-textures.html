@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Textures (.textures / .low.textures) — Split/Second RE Wiki</title>
+<meta name="description" content="Crayon2 TEXS texture-set container: GCM/RSX pixel formats (DXT1/DXT5/A8R8G8B8), dimensions, mip counts, CRC-named entries, and the .low / .streamtex split.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Textures (.textures / .low.textures)" data-category="Formats · Geometry &amp; Render">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Textures (.textures / .low.textures)</h1>
+<p>The <code>.textures</code> file is the Black Rock <strong>Crayon2</strong> renderer's texture-set
+container. It bundles one or more GPU textures into a single <code>TEXS</code> archive: a fixed header,
+a table of per-texture descriptors (PS3 <strong>RSX/GCM</strong> pixel format, dimensions, mip count),
+the swizzled pixel payload, and a trailing <code>C2NM</code> name/CRC table that links each texture to a
+32-bit CRC. The companion <code>.low.textures</code> is the same format holding only the smallest mip
+levels (a tiny always-resident fallback), while full-resolution payloads for streamed assets live in a
+sibling <a href="format-streamtex.html">.streamtex</a> blob.</p>
+
+<div class="infobox"><div class="ib-title">.textures</div><table>
+  <tr><th>Category</th><td>GPU texture set</td></tr>
+  <tr><th>Engine</th><td>Crayon2 renderer</td></tr>
+  <tr><th>Magic</th><td><code>54 45 58 53</code> = <code>"TEXS"</code></td></tr>
+  <tr><th>Name table</th><td><code>"C2NM"</code> trailer</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Pixel data</th><td>RSX/GCM swizzled (DXT1/DXT5/ARGB8888)</td></tr>
+  <tr><th>Variants</th><td><code>.low.textures</code>, <code>.streamtex</code> payload</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span> (magic/header/descriptor/C2NM) · <span class="badge partial">Partial</span> (placement table, <code>sizeUnits</code>)</td></tr>
+</table></div>
+
+<h2>Overview</h2>
+<p>Every car body, level sector, skydome, lens-flare and prop ships a <code>.textures</code> set. Three
+physical layouts of the <em>same</em> TEXS format occur:</p>
+<table>
+<tr><th>File</th><th>Contents</th><th>Example size</th></tr>
+<tr><td><code>X.textures</code> (object dir)</td><td>Full mip chain, pixels stored inline after the descriptors</td><td>481 KB (Musclecar_01 body)</td></tr>
+<tr><td><code>X.low.textures</code></td><td>Same descriptors but only the lowest mip(s); always-resident LOD fallback</td><td>4–5 KB</td></tr>
+<tr><td><code>X.textures</code> (Frontend dir)</td><td>Descriptor-only stub; full pixels live in <a href="format-streamtex.html">X.streamtex</a></td><td>2.4 KB stub + 3.1 MB stream</td></tr>
+</table>
+<div class="note">The byte value <code>0x86</code> shows up in two unrelated places: as the GCM
+<em>pixel-format</em> code for DXT1 inside each descriptor, and (coincidentally) inside swizzled pixel
+payloads. It has nothing to do with the magic — <code>"TEXS"</code> is <code>54 45 58 53</code>
+(<code>'T'</code>=<code>0x54</code>).</div>
+
+<h2>File header</h2>
+<p>The header is a constant 24-byte (<code>0x18</code>) block. <code>magic</code>, <code>version</code>,
+<code>flags</code> and <code>firstDescOff</code> were verified <strong>constant</strong> across the
+0-, 1-, 5-, 14- and 27-entry samples below; <code>textureCount</code> and <code>payloadTableOff</code>
+vary per file.</p>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x00</td><td>0x4</td><td>char[4]</td><td>magic</td><td>Always <code>"TEXS"</code> (<code>54 45 58 53</code>). Constant across every sample.</td></tr>
+<tr><td>0x04</td><td>0x4</td><td>uint32_t</td><td>version</td><td>Always <code>0x0000000C</code> (12) — header size / format version.</td></tr>
+<tr><td>0x08</td><td>0x4</td><td>uint32_t</td><td>flags</td><td>Always <code>0x00000001</code> across all samples (likely "has C2NM names").</td></tr>
+<tr><td>0x0C</td><td>0x4</td><td>uint32_t</td><td>payloadTableOff</td><td>Offset of the post-descriptor <em>placement/payload table</em> (the region just before the pixel data and the <code>C2NM</code> trailer). <span class="badge partial">Partial</span> — value verified non-constant and file-dependent (<code>0x68</code> in the 1-entry damageMap, <code>0x128</code> in the 5-entry .low, <code>0x310</code> in the 14-entry Frontend stub, <code>0x548</code> in the 27-entry <code>_po</code>). It is <strong>not</strong> the <code>C2NM</code> offset — the name trailer lives at end-of-file and is reached by scanning, not by this field.</td></tr>
+<tr><td>0x10</td><td>0x4</td><td>uint32_t</td><td>textureCount</td><td>Number of descriptor records. 0 (empty wheel), 1, 5, 14, 27 observed; matches the descriptor stride below.</td></tr>
+<tr><td>0x14</td><td>0x4</td><td>uint32_t</td><td>firstDescOff</td><td>Always <code>0x18</code>. Points at a 20-byte sub-header, then the descriptor array at <code>0x2C</code>.</td></tr>
+</table>
+<p>At <code>0x18</code> sits a short 20-byte sub-header (e.g. <code>00 00 00 07 00 00 02 10 00 00 00 02
+00 00 02 48 00 00 00 00</code> in the Frontend stub) before the descriptor array proper. Its dwords look
+like a small count plus two offsets that index into the placement table; the exact field meanings are
+<span class="badge theory">Theory</span>. The descriptor records themselves begin at <code>0x2C</code>
+(<code>firstDescOff</code> = <code>0x18</code>, and <code>0x2C &minus; 0x18 = 0x14</code> = the 20-byte
+sub-header).</p>
+
+<h2>Texture descriptor</h2>
+<p>Each descriptor is a <strong>36-byte (0x24)</strong> record. Stride was pinned by walking from one CRC to
+the next: descriptor 0's CRC sits at <code>0x2C</code>, descriptor 1's CRC at <code>0x50</code> →
+<code>0x50&minus;0x2C = 0x24</code>. Field meanings were cross-checked against the embedded <code>C2NM</code>
+names and against on-disk byte sizes (DXT math, below).</p>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x00</td><td>0x4</td><td>uint32_t</td><td>crc</td><td>Texture name CRC-32. Re-appears in the <code>C2NM</code> trailer paired with the ASCII name, and is the key used by <a href="format-crcs.html">.crcs reference tables</a>.</td></tr>
+<tr><td>0x04</td><td>0x2</td><td>uint16_t</td><td>marker</td><td>Always <code>0xFFFF</code> in every descriptor — start-of-record sentinel.</td></tr>
+<tr><td>0x06</td><td>0x2</td><td>uint16_t</td><td>pad0</td><td>Always <code>0x0000</code>.</td></tr>
+<tr><td>0x08</td><td>0x1</td><td>uint8_t</td><td>gcmFormat</td><td>RSX/GCM pixel format (see enum). <code>0x86</code>=DXT1, <code>0x88</code>=DXT5, <code>0xA5</code>=A8R8G8B8.</td></tr>
+<tr><td>0x09</td><td>0x1</td><td>uint8_t</td><td>mipCount</td><td>Number of stored mip levels. For full-chain art it equals <code>log2(max(W,H)) + 1</code> — verified 512×512→<code>0x0A</code> (10), 1024×2048→<code>0x0C</code> (12), 16×16→<code>0x05</code> (5). Some assets store a <em>single</em> mip instead: the 512×512 A8R8G8B8 skydome and 1024×32 ColorCubes both carry <code>mipCount = 0x01</code>, so this is the actual stored count, not a derived constant.</td></tr>
+<tr><td>0x0A</td><td>0x2</td><td>uint16_t</td><td>dimension</td><td>Always <code>0x0200</code> — GCM texture dimension/type field (2D).</td></tr>
+<tr><td>0x0C</td><td>0x4</td><td>uint32_t</td><td>gcmRemap</td><td>GCM channel remap word. <code>0x0000AAE4</code> for compressed (DXT) formats, <code>0x0000AA1B</code> for A8R8G8B8 — the standard CELL GCM ARGB remap constants. Value tracks <code>gcmFormat</code>.</td></tr>
+<tr><td>0x10</td><td>0x2</td><td>uint16_t</td><td>width</td><td>Texel width. Matches expected art sizes (16,32,256,512,1024…).</td></tr>
+<tr><td>0x12</td><td>0x2</td><td>uint16_t</td><td>height</td><td>Texel height.</td></tr>
+<tr><td>0x14</td><td>0x2</td><td>uint16_t</td><td>depth</td><td>Always <code>0x0001</code> for these 2D textures (array/face depth = 1).</td></tr>
+<tr><td>0x16</td><td>0x2</td><td>uint16_t</td><td>pad1</td><td>Always <code>0x0000</code>.</td></tr>
+<tr><td>0x18</td><td>0x4</td><td>uint32_t</td><td>sizeUnits</td><td>A size/stride field that scales with dimensions (16×16 DXT1→<code>0x08</code>, 1024×2048 DXT1→<code>0x200</code>) but whose exact unit is not pinned down. <span class="badge theory">Theory</span> — likely a per-texel/row pitch or block count, not a plain byte size.</td></tr>
+<tr><td>0x1C</td><td>0x4</td><td>uint32_t</td><td>pad2</td><td>Always <code>0x00000000</code> in samples.</td></tr>
+<tr><td>0x20</td><td>0x4</td><td>uint32_t</td><td>payloadSize</td><td>Total pixel allocation for this texture, in bytes. In single-texture files it equals the whole pixel region: the 1024×2048 DXT1 damageMap stores <code>0x00155580</code> (1,398,144 B) here, matching (file&minus;header)≈ the DXT1 mip-chain size. In the multi-texture Frontend stub the inline 16×16 thumbnails carry <code>0x0</code>. <span class="badge partial">Partial</span> — confirmed for the single-texture case; the stub semantics are not fully decoded.</td></tr>
+</table>
+
+<h3>Worked example — Frontend Musclecar_01.textures (14 descriptors)</h3>
+<p>This frontend stub lists the <em>same seven</em> textures twice: a small inline thumbnail set
+(descriptors 0–6, mostly 16×16) and the full-resolution set (descriptors 7–13) whose pixels live in
+<code>Musclecar_01.streamtex</code>. The repeated CRCs are the proof (the seven names from the
+<code>C2NM</code> trailer are paraboloid_back, paraboloid_front, Musclecar_01, Musclecar_01_DamageMap,
+DirtMap, ScratchMap, MetalMap):</p>
+<table>
+<tr><th>#</th><th>CRC</th><th>Format</th><th>Size</th><th>Mips</th><th>Name (from C2NM)</th></tr>
+<tr><td>0</td><td><code>86640e7e</code></td><td>DXT1</td><td>16×16</td><td>5</td><td>paraboloid_back (thumb)</td></tr>
+<tr><td>7</td><td><code>86640e7e</code></td><td>DXT1</td><td>512×512</td><td>10</td><td>paraboloid_back (full)</td></tr>
+<tr><td>9</td><td><code>b7b2a83b</code></td><td>DXT1</td><td>1024×2048</td><td>12</td><td>Musclecar_01 (full)</td></tr>
+<tr><td>11</td><td><code>2502de16</code></td><td>DXT1</td><td>256×256</td><td>9</td><td>DirtMap (full)</td></tr>
+</table>
+<div class="tip">Summing the full-resolution DXT1 mip chains for descriptors 7–13
+(2×512² + 2×(1024×2048) + 3×256², all DXT1 with mips) gives 3,276,904 bytes; the actual
+<code>Musclecar_01.streamtex</code> is 3,277,312 bytes — a 408-byte difference attributable to per-texture
+block alignment. That near-exact match is what confirms both the pixel format <em>and</em> the
+stub→stream relationship.</div>
+
+<h2>Pixel formats (gcmFormat enum)</h2>
+<p>The high byte is the CELL GCM texture format. Each was confirmed by reconstructing the expected on-disk
+byte size and comparing it to the real file (single-texture files make this unambiguous).</p>
+<table>
+<tr><th>Name</th><th>Value</th><th>Notes</th></tr>
+<tr><td>DXT1 (BC1)</td><td><code>0x86</code></td><td>4 bpp block compression. <code>damageMap</code> 1024×2048: DXT1 full mip chain = 1,398,120 B; the file is 1,398,298 B with its <code>C2NM</code> trailer at byte 1,398,264, so pixels+header consume 1,398,264 B (≈144 B header+tables ahead of pixels). Remap <code>0xAAE4</code>.</td></tr>
+<tr><td>DXT5 (BC3)</td><td><code>0x88</code></td><td>8 bpp block compression (alpha). The code is present and in use — many descriptors in <code>Downtown_po.textures</code> carry <code>88 &lt;mip&gt; 02 00</code> — and the eboot ships UI assets named <code>…_DXT5</code>. Remap <code>0xAAE4</code>. <span class="badge partial">Partial</span> — code observed in real descriptors but not isolated to a single-texture file for exact byte-size verification here.</td></tr>
+<tr><td>A8R8G8B8</td><td><code>0xA5</code></td><td>32-bpp uncompressed. <code>Downtown/Skydome/Skydome_Midday</code> 512×512 (single mip): 512·512·4 = 1,048,576 B vs file 1,048,718 B (<code>C2NM</code> at 1,048,696). <code>ColorCubes</code> holds three 1024×32 textures: 3·1024·32·4 = 393,216 B vs file 393,498 B. Remap <code>0xAA1B</code>.</td></tr>
+</table>
+<div class="warn">Other high-byte values surely exist (cube maps, R5G6B5, the <code>FMT_A8R8G8B8</code> /
+<code>R5G6B5</code> names appear in the eboot's image library). Only the three above have been size-verified
+here; treat unseen codes as <span class="badge theory">Theory</span> until checked.</div>
+
+<h2>Placement table &amp; pixel payload</h2>
+<p>The dword at header <code>0x0C</code> (<code>payloadTableOff</code>) points past the descriptor array to a
+secondary table of dword pairs — an ascending list of placement offsets the loader uses to map each
+mip block into RSX local memory (in the Frontend stub the second column climbs <code>0x210, 0x218, 0x220,
+0x228 …</code> in step with the sub-header's <code>0x210</code> value). The pixel payload follows, then the
+<code>C2NM</code> trailer at end-of-file. The exact pair semantics are <span class="badge partial">Partial</span>.
+Compressed pixels are stored in RSX swizzled order (the repeated <code>55 55 55 55</code> / <code>ef 19</code>
+patterns are the swizzle of flat colour fields), not linear, which is why a raw
+<a href="format-streamtex.html">.streamtex</a> is not a plain DDS.</p>
+
+<h2>C2NM name trailer</h2>
+<p>Every TEXS file ends with a <code>C2NM</code> ("Crayon2 Name") table mapping each CRC back to a
+human-readable texture name. Records are tightly packed: <code>CRC(4) · length(4) · ASCII name(length)</code>,
+big-endian.</p>
+<pre class="hex">000920  43 32 4e 4d 86 64 0e 7e 00 00 00 0f 70 61 72 61   C2NM.d.~....para
+000930  62 6f 6c 6f 69 64 5f 62 61 63 6b 88 da ce c4 00   boloid_back.....
+000940  00 00 10 70 61 72 61 62 6f 6c 6f 69 64 5f 66 72   ...paraboloid_fr
+000950  6f 6e 74 b7 b2 a8 3b 00 00 00 0c 4d 75 73 63 6c   ont...;....Muscl
+000960  65 63 61 72 5f 30 31 …                            ecar_01…</pre>
+<p><strong>Annotation:</strong> <code>43 32 4e 4d</code> = "C2NM". Then <code>86 64 0e 7e</code> = CRC,
+<code>00 00 00 0f</code> = length 15, <code>"paraboloid_back"</code>. Next <code>88 da ce c4</code> /
+len 16 / <code>"paraboloid_front"</code>, then <code>b7 b2 a8 3b</code> / len 12 / <code>"Musclecar_01"</code>.
+Those CRCs are exactly the descriptor CRC fields above — the same 32-bit keys collected in
+<a href="format-crcs.html">.crcs reference tables</a>.</p>
+
+<h2>How we know</h2>
+<ul>
+<li><strong>Magic / header constants:</strong> identical first 24 bytes across 0/1/5/14/27-entry files (vehicle, frontend, environment).</li>
+<li><strong>Descriptor stride (0x24):</strong> distance between consecutive CRC fields; CRCs round-trip to the C2NM names.</li>
+<li><strong>mipCount = log2(maxdim)+1:</strong> holds for every observed dimension (16,32,256,512,1024,2048).</li>
+<li><strong>Pixel formats:</strong> single-texture files reproduce DXT1 and A8R8G8B8 byte sizes to within the header+name overhead (damageMap 1024×2048 DXT1, Skydome 512×512 ARGB8888); DXT5 (<code>0x88</code>) is seen in real descriptors but not yet isolated for a clean size check.</li>
+<li><strong>Stub→stream link:</strong> Frontend stub's full-res descriptor sizes sum to the matching <code>.streamtex</code> size.</li>
+<li><strong>GCM constants:</strong> <code>0x0200</code> dimension, <code>0xAAE4</code>/<code>0xAA1B</code> remap words are standard CELL GCM values; the eboot references <code>FMT_A8R8G8B8</code>, <code>R5G6B5</code>, RSX shader patching in <code>libs/Render/Support/Crayon2</code>.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="format-streamtex.html">Streaming (.stream / .streamtex)</a> — full-resolution pixel payloads referenced by frontend stubs.</li>
+<li><a href="format-crcs.html">CRC Tables (.crcs / .tex.crcs)</a> — lists of the same 32-bit texture CRCs.</li>
+<li><a href="format-model.html">Model (.model)</a> — the Crayon2 mesh container these textures bind to.</li>
+<li><a href="format-shaders.html">Shaders (.shaders / .shaderinst)</a> — shader sets that sample these textures.</li>
+<li><a href="format-fxc.html">FX Compiled (.fxc)</a> — compiled material data.</li>
+<li><a href="engine-rendering.html">Rendering Pipeline</a> — the deferred G-Buffer renderer.</li>
+<li><a href="engine-resources.html">Resources &amp; Streaming</a> — residency &amp; loader threads.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

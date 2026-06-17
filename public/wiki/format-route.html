@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Route Data (.checkpoints / .sideways / .splitlength / .linkorigins) — Split/Second RE Wiki</title>
+<meta name="description" content="The TrackLogic route/AI-line data: the node/link graph that defines the racing line, lap geometry, lateral overtaking lanes and checkpoints.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Route Data (.checkpoints / .sideways / .splitlength / .linkorigins)" data-category="Formats · Track & Route">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Route Data <small>(.checkpoints / .sideways / .splitlength / .linkorigins)</small></h1>
+<p>Every race route in Split/Second is described by a small bundle of binary files under
+<code>Environments/Levels/&lt;Level&gt;/Event/RACING/TrackLogic/&lt;Route&gt;/</code>. Together they form the
+<b>TrackLogic</b> graph: a set of <i>Nodes</i> (waypoints), the directed <i>Links</i> between them (the racing
+line and its branches), lateral "sideways" connections used by the AI to change lanes, the per-section split
+distances, and the lap checkpoints. The same graph drives the
+<a href="system-ai.html">SSAI</a> <code>FollowRacingLine</code> / <code>FollowCloseRacingLine</code> behaviour
+and lap timing.</p>
+
+<div class="infobox"><div class="ib-title">TrackLogic route bundle</div><table>
+  <tr><th>Category</th><td>AI racing-line / route graph</td></tr>
+  <tr><th>Location</th><td><code>…/Event/RACING/TrackLogic/&lt;A…D&gt;/</code></td></tr>
+  <tr><th>Files</th><td><code>.linkorigins</code> <code>.sideways</code> <code>.splitlength</code> <code>.checkpoints</code></td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3 PowerPC)</td></tr>
+  <tr><th>Companions</th><td><code>Track.debug.txt</code>, <code>Track.sideways.txt</code> (human-readable dumps)</td></tr>
+  <tr><th>Loaded by</th><td><code>AITrack</code> / TrackLogic (see EBOOT)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span> (origins/sideways/splitlength)<br><span class="badge partial">Partial</span> (checkpoints)</td></tr>
+</table></div>
+
+<div class="note">A route folder is named per <b>sub-track</b> (<code>A</code>, <code>B</code>, <code>C</code>, <code>D</code>) — the
+alternate routes a level exposes (the EBOOT log line <code>SubTrack 'A', LightRig 'default'</code> uses the same A…D
+naming). On this build Downtown carries routes <code>A/B/C</code>, docks <code>A/B/C/D</code>, etc.; a level may carry up
+to four route folders. The EBOOT loads them via the path templates
+<code>environment(noassert)|Event/%s/TrackLogic/%s</code> then <code>%s/Track.linkorigins</code>,
+<code>%s/Track.checkpoints</code>, <code>%s/Track.logicinfo</code>, <code>%s/Track.nis</code>, <code>%s/Track.lip</code>.</div>
+
+<h2>The route graph (Nodes &amp; Links)</h2>
+<p>The shipping build keeps <b>plaintext debug dumps</b> next to the binaries, which document the model exactly.
+<code>Track.debug.txt</code> lists every <i>Node</i> with its world position and per-node flags; it then lists every
+<i>Link</i> as an ordered <code>Node A → Node B</code> pair, grouped into numbered <code>SECTION</code> blocks with a
+<code>Helicopter Only</code> flag. <code>Track.sideways.txt</code> states the link count and the sideways adjacency of
+each link.</p>
+
+<pre class="hex">Track.debug.txt                         Track.sideways.txt
+---------------                         ------------------
+Node [0]                                Total Links = 283
+Pos (-1342, 8, 254)                     link [0] sideways links to ()
+Crash zone [ ]                          link [6] sideways links to ([244][231])
+Can respot [x]                          link [7] sideways links to ([245][231])
+DropZone False                          ...
+TriggerZone False                       SECTION 0 BEGIN
+...                                       Link [31]  Node A [36] Node B [37]
+SECTION 18 BEGIN                          ...
+  Link [279] Node A [98]  Node B [273]    Helicopter Only False
+  Link [282] Node A [275] Node B [229]  SECTION 0 END
+SECTION 18 END</pre>
+
+<p>For the Downtown route <code>A</code> the dumps report <b>276 Nodes</b>, <b>283 Links</b> and
+<b>19 Sections</b> — numbers that the binary files reproduce exactly (see below), which is how each file's count field
+was identified. A "Node" is a point on the route; a "Link" is a directed spline segment between two nodes; a "Section"
+is a contiguous run of links forming one route branch (and is the unit used by lap timing and the
+<a href="system-difficulty.html">respot</a> system).</p>
+
+<h2>Track.linkorigins — per-link arc-length origins</h2>
+<p><span class="badge ok">Confirmed</span> A 4-byte big-endian <b>link count</b> followed by one
+<code>float32</code> per link. The count equals the "Total Links" in <code>Track.sideways.txt</code> for every sample
+checked, and the file size is exactly <code>4 + count×4</code>. The floats rise roughly monotonically along the route,
+so they are the <b>arc-length distance at which each link begins</b> — i.e. where each link "originates" on the spline
+(hence the name). The AI's <code>RouteTaking</code> / <code>TrackNavigator</code> skills convert a distance-down-track
+into a link via this table.</p>
+
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>0x4</td><td>uint32_t</td><td>linkCount</td><td>Number of links. = "Total Links" in the txt dump.</td></tr>
+<tr><td>0x4</td><td>0x4 × N</td><td>float32_t[]</td><td>origin[N]</td><td>Arc-length distance (metres) of each link's start along the route spline.</td></tr>
+</table>
+
+<pre class="hex">$ od -A d -t x1z Track.linkorigins | head -2     # Downtown route A
+0000000 00 00 01 1b 43 3d 6c ed 43 5d 30 42 43 6f 2c f5  >....C=l.C]0BCo,.<
+        └──count──┘ └origin[0]┘ └origin[1]┘ └origin[2]┘
+        0x11b = 283 links      189.43      221.19      239.18   (big-endian float32)</pre>
+
+<div class="tip">Verification: Downtown&nbsp;A 1136&nbsp;bytes → (1136−4)/4 = <b>283</b> links ✓; docks&nbsp;A header
+<code>00 00 01 21</code> = 289 = its "Total Links" ✓; Graveyard&nbsp;A header <code>00 00 01 50</code> = 336 ✓.</div>
+
+<h2>Track.sideways — lateral adjacency table</h2>
+<p><span class="badge ok">Confirmed</span> A 4-byte big-endian <b>link count</b> (identical to
+<code>.linkorigins</code>) followed by one variable-length record per link: a single <code>uint8</code> count
+<i>N</i>, then <i>N</i> <code>uint16</code> link indices. Each record lists the links that run <b>alongside</b> the
+current one — the lanes the AI may slide into when overtaking, blocking or dodging a <a href="system-powerplay.html">powerplay</a>.
+This decodes <code>Track.sideways.txt</code> byte-for-byte.</p>
+
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>0x4</td><td>uint32_t</td><td>linkCount</td><td>Number of links (matches <code>.linkorigins</code>).</td></tr>
+<tr><td>0x4</td><td>—</td><td>record[]</td><td>sideways[N]</td><td>One record per link, in link order. See record layout.</td></tr>
+</table>
+
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>+0x0</td><td>0x1</td><td>uint8_t</td><td>count</td><td>Number of sideways links for this link (0 = none).</td></tr>
+<tr><td>+0x1</td><td>0x2 × count</td><td>uint16_t[]</td><td>linkIndex[]</td><td>Indices of the laterally-adjacent links.</td></tr>
+</table>
+
+<pre class="hex">$ od -A d -t x1z Track.sideways | head -4         # Downtown route A
+0000000 00 00 01 1b 00 00 00 00 00 00 02 00 f4 00 e7 02  >................<
+        └──count──┘ │  │  │  │  │  │  └245┘ └231┘
+        283 links   l0 l1 l2 l3 l4 l5  └─ link[6]: count=2 → (244,231) ─┘
+                    (all 0 = empty)        ↳ matches "link [6] sideways links to ([244][231])"</pre>
+
+<div class="note">Sideways targets are <b>link</b> indices, not node indices — the txt dump's
+<code>([244][231])</code> notation lists link IDs. A value pair like <code>(244,231)</code> means link 6 can change
+lane onto either link 244 or link 231.</div>
+
+<h2>Track.splitlength — per-section split lengths</h2>
+<p><span class="badge ok">Confirmed (layout)</span> <span class="badge partial">Partial (units)</span> A 4-byte big-endian
+<b>section count</b> followed by one <code>float32</code> per section. The count equals the number of
+<code>SECTION&nbsp;n&nbsp;BEGIN</code> blocks in <code>Track.debug.txt</code> for every sample
+(Downtown&nbsp;A&nbsp;19, Graveyard&nbsp;A&nbsp;18, Powerplant&nbsp;A&nbsp;31, docks&nbsp;A&nbsp;41 — each matching its
+<code>SECTION</code> block count), and the size is exactly <code>4 + count×4</code>. The values cluster around <code>1.0</code>
+(<code>3f 80 00 00</code>) with small deviations (1.087, 1.069…), so they read as <b>per-section length multipliers /
+split weights</b> rather than raw metres — most likely scaling how each section contributes to the lap "split" used by
+the HUD split timer and the AI <code>distUpSection</code> calculations (cf. EBOOT
+<code>distUpSection greater than section length</code>).</p>
+
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>0x4</td><td>uint32_t</td><td>sectionCount</td><td>Number of sections (= <code>SECTION</code> blocks in the debug dump).</td></tr>
+<tr><td>0x4</td><td>0x4 × N</td><td>float32_t[]</td><td>splitLength[N]</td><td>Per-section length weight (≈ 1.0). Exact unit unconfirmed.</td></tr>
+</table>
+
+<pre class="hex">$ od -A d -t x1z Track.splitlength               # Downtown route A (80 bytes)
+0000000 00 00 00 13 3f 80 00 00 3f 8b 1a a1 3f 89 80 a8  >....?...?...?...<
+        └──count──┘ └─ 1.0 ─┘ └ 1.0874 ┘ └ 1.0742 ┘
+        0x13 = 19 sections   (80 = 4 + 19×4)  ✓ matches 19 SECTION blocks</pre>
+
+<h2>Track.checkpoints — lap checkpoint table</h2>
+<p><span class="badge partial">Partial</span> Unlike the three files above, <code>Track.checkpoints</code> is a
+<b>fixed-size serialized record</b> — exactly <b>348 bytes</b> on every route in the game — and uses Black Rock's
+tagged serialization framing rather than a plain count+array. The 12-byte header is constant
+(<code>00 03 00 00 cd&nbsp;ab&nbsp;0d&nbsp;f0 00&nbsp;00&nbsp;01&nbsp;50</code>) and the body always ends with the
+sentinel <code>ba&nbsp;dc&nbsp;ad&nbsp;de</code>. The sibling <a href="format-logicinfo.html">Track.logicinfo</a> shares
+the identical framing (and an identical opening payload word), confirming both come from the same serializer.</p>
+
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>0x4</td><td>uint32_t</td><td>version</td><td><code>0x00030000</code> = version 3.0. Constant across all routes.</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>uint32_t</td><td>beginTag</td><td><code>0xCDAB0DF0</code> — serializer "begin object" sentinel (shared with <code>.logicinfo</code>).</td></tr>
+<tr><td>0x8</td><td>0x4</td><td>uint32_t</td><td>bodySize</td><td><code>0x150</code> = 336 = file size − 12. Byte length of the payload that follows (it <b>includes</b> the body's own closing sentinel).</td></tr>
+<tr><td>0xC</td><td>0x150</td><td>—</td><td>body</td><td>Checkpoint sub-objects (see below). A run of nested <code>cd ab 0d f0</code> … <code>ba dc ad de</code> tagged blocks. The body's final 4 bytes (offset 0x158) are the closing <code>0xBADCADDE</code> sentinel, so the file ends exactly at 0x15C = 348.</td></tr>
+</table>
+<div class="note">There is no separate trailing <code>endTag</code> field <em>after</em> the body: <code>bodySize</code> (0x150)
+already accounts for the closing <code>ba dc ad de</code>, and <code>0xC + 0x150 = 0x15C = 348</code> lands exactly on EOF.
+The last 12 bytes of every file are in fact <em>three</em> stacked <code>ba dc ad de</code> sentinels, closing the nested
+sub-objects.</div>
+
+<pre class="hex">$ od -A d -t x1z Track.checkpoints | head -2     # any route — always 348 bytes
+0000000 00 03 00 00 cd ab 0d f0 00 00 01 50 49 39 a9 9a  >...........PI9..<
+        └ver 3.0 ┘ └begin tag┘ └ 0x150  ┘ └ payload starts (49 39 a9 9a = 760473.6f) ┘
+                                = 336 = 348-12</pre>
+
+<p>The EBOOT exposes the checkpoint record field names directly, which lets us name the payload contents even though
+the exact byte offsets inside the 336-byte body are not yet fully pinned:</p>
+
+<table>
+<tr><th>EBOOT symbol</th><th>Value</th><th>Notes</th></tr>
+<tr><td><code>mFirstCheckpoint</code></td><td>ptr/index</td><td>First checkpoint on the route.</td></tr>
+<tr><td><code>mLapCheckpoint</code></td><td>ptr/index</td><td>The start/finish checkpoint that increments the lap.</td></tr>
+<tr><td><code>mpCheckpoint</code></td><td>ptr</td><td>Checkpoint object pointer.</td></tr>
+<tr><td><code>mLinkIndex</code></td><td>uint</td><td>Link a checkpoint sits on.</td></tr>
+<tr><td><code>mHitFraction</code></td><td>float</td><td>0–1 position along that link where the plane crosses.</td></tr>
+<tr><td><code>mCircuitLength</code></td><td>float</td><td>Total route length.</td></tr>
+<tr><td><code>mStartingOffset</code></td><td>float</td><td>Distance of the start line from link 0.</td></tr>
+<tr><td><code>mFirstLapLength</code> / <code>mSecondLapLength</code></td><td>float</td><td>Distinct first-lap vs subsequent-lap lengths (rolling start).</td></tr>
+<tr><td><code>mLapLinkToCPLength</code></td><td>float</td><td>Distance from a lap link to its checkpoint.</td></tr>
+</table>
+
+<div class="warn">The 336-byte body holds several nested <code>cd ab 0d f0</code>-tagged sub-objects, each closed by its own
+<code>ba dc ad de</code> sentinel (so the framing is recursive, not a single begin/end pair), interleaved with float
+triples — e.g. <code>48 4d c9 b4</code> = 210726.8 recurs as a constant across the sub-objects. These read as checkpoint
+placement transforms (position + plane normal) but their precise order is <span class="badge theory">Theory</span>
+pending a cross-reference against a level whose checkpoints are visible in-game.</div>
+
+<h2>Relationship to the rest of the level</h2>
+<ul>
+<li><b><a href="format-logicinfo.html">Track.logicinfo</a></b> — same serializer and framing
+(<code>00 03 00 00 cd ab 0d f0 …</code>), and like <code>.checkpoints</code> it is a <b>fixed-size</b> record:
+<b>288 bytes on every route</b>, with a constant body-size field <code>0x114</code>=276 (= 288−12). <span class="warn"
+style="font-weight:bold">Caveat:</span> 276 is <em>not</em> a per-route node count — it is identical on all routes,
+whereas node counts vary (Downtown 276, docks 274, Graveyard 330, Powerplant 265); the Downtown coincidence aside, the
+body is mostly zero-padded and holds only a short header of floats plus a couple of nested sub-objects. Its exact
+contents are <span class="badge theory">Theory</span>.</li>
+<li><b><a href="format-nis.html">Track.nis</a></b> — maps named non-interactive sequences (e.g. <code>PA03-1</code>,
+<code>PP08-2</code>) to link indices, triggering <a href="system-cameras.html">takedown/powerplay cameras</a> as the
+pack passes.</li>
+<li><b><a href="format-lip.html">Track.lip</a></b> — the largest file in the folder; voice lip-sync for the commentary
+tied to the route.</li>
+<li><b><a href="format-sectors.html">.sectorInfo</a></b> — streaming partition the route runs through.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="system-ai.html">AI (SSAI)</a> — FollowRacingLine, TrackNavigator, RouteTaking skills that consume this graph.</li>
+<li><a href="format-logicinfo.html">Logic Info (.logicinfo)</a> — companion node table, same serialization.</li>
+<li><a href="format-nis.html">Sequences (.nis/.gbx)</a> — link-indexed sequence triggers.</li>
+<li><a href="format-sectors.html">Sectors (.sectorInfo)</a> — streaming/visibility partitioning.</li>
+<li><a href="system-tracks.html">Tracks &amp; Levels</a> — level pipeline, sub-tracks, route folders.</li>
+<li><a href="system-difficulty.html">Difficulty &amp; Race Director</a> — respotting/teleport use node respot flags.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

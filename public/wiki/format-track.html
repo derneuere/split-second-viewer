@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrackTivity Telemetry (.track) — Split/Second RE Wiki</title>
+<meta name="description" content="Recorded driving telemetry / ghost path stream — Split/Second's TrackTivity QA capture format.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="TrackTivity Telemetry (.track)" data-category="Formats · Telemetry">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>TrackTivity Telemetry (.track)</h1>
+<p><strong>TrackTivity</strong> is Black Rock's in-house QA telemetry / replay subsystem. The
+<code>.track</code> files left loose in the <code>Deferred/</code> root are its simplest on-disk
+artefact: a captured <strong>driving path</strong> — a flat list of world-space line segments
+tracing where a vehicle drove during a session. Each file is a tiny, self-describing binary blob:
+a single 32-bit count followed by that many 24-byte records, with no magic and no embedded strings.
+The format is fully recovered here — every byte is accounted for across all 111 samples on disk.</p>
+
+<div class="infobox"><div class="ib-title">.track</div><table>
+  <tr><th>Category</th><td>Driving telemetry / path capture</td></tr>
+  <tr><th>Subsystem</th><td>TrackTivity (QA / replay)</td></tr>
+  <tr><th>Container</th><td>Raw flat array (no chunking)</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3 PPC)</td></tr>
+  <tr><th>Magic</th><td>none (starts with a count)</td></tr>
+  <tr><th>Header</th><td><code>uint32</code> record count (4 bytes)</td></tr>
+  <tr><th>Record</th><td>24 bytes = 6 × <code>float32</code> (two XYZ points)</td></tr>
+  <tr><th>Size law</th><td><code>filesize = 4 + count × 24</code></td></tr>
+  <tr><th>XML twin</th><td>none (separate ASCII export exists)</td></tr>
+  <tr><th>Count</th><td>111 files (67–478 records each)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<p>Do not confuse this format with the richer <em>TrackTivity Replay</em> serialization (the
+<code>cTrackTivityEvent</code> / <code>cITracktivitySerializable</code> object stream used for the
+keyframed ghost-replay system). That is a typed, named event buffer; the <code>.track</code> files
+on disk are the plain geometry dump only. Both are produced by the same subsystem — see
+<a href="#replay">Relationship to the replay system</a> below.</p>
+
+<div class="note">All multi-byte values are <strong>big-endian</strong> (PS3 PowerPC). Offsets in the
+tables are byte offsets from the start of the file. Verified against the full set of 111
+<code>.track</code> files in <code>USRDIR/Deferred/</code>, ranging from 1&nbsp;612&nbsp;bytes
+(67 records) to 11&nbsp;476&nbsp;bytes (478 records).</div>
+
+<h2 id="where">Where the files come from</h2>
+<p>The EBOOT string table (<code>eboot_strings.txt</code>) carries the exact <code>printf</code>
+templates used to name these files:</p>
+<pre class="hex">TracktivityData_%c_%s_%d_%d_%d_%d_%d_%d.%s
+TracktivityData/TTTData_%c_%s_%d_%d_%d_%d_%d_%d.%s</pre>
+<p>Decoding against a real filename
+<code>TracktivityData_<b>P</b>_<b>PS3-</b>_<b>2010</b>_<b>1</b>_<b>10</b>_<b>14</b>_<b>18</b>_<b>32</b>.<b>track</b></code>:
+<code>%c</code> is a single platform/category char (always <code>P</code> in the samples),
+<code>%s</code> is a build/branch tag, the six <code>%d</code> are <em>year&nbsp;/ month&nbsp;/ day&nbsp;/
+hour&nbsp;/ minute&nbsp;/ second</em> of capture, and the trailing <code>%s</code> is the extension
+(<code>track</code>). The branch tags seen on disk are <code>PS3-</code> (81 files),
+<code>Unkn</code> (28) and <code>boff</code> (2). The first template writes straight into
+<code>Deferred/</code>; the second (<code>TTTData_…</code>) targets the
+<code>Deferred/TracktivityData/</code> subfolder, which exists but is empty in this build.</p>
+
+<p>The same code path references a Disney QA upload endpoint —
+<code>http://brmilk.emea.wdpr.disney.com/add_tracktivity_file/</code> — and the toggle
+<code>game_setup/enable_TrackTivity</code>, confirming these are <strong>automatically captured QA
+session recordings</strong> meant to be harvested off devkits, not shipping game content. A live
+profiler timer <code>"Tracktivity Update"</code> (alongside <code>"Tracktivity Replay System
+Update"</code> and <code>"Nemesis Update"</code>) shows the capture runs every frame.</p>
+
+<h2 id="layout">File layout</h2>
+<p>There is no header beyond a single count. The body is a tightly packed array; there is no
+trailing data, no alignment padding, and no footer.</p>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x0</td><td>0x4</td><td>uint32_t</td><td>recordCount</td><td>Number of segment records that follow. Big-endian; the high two bytes are <code>00 00</code> in every sample (max observed 478 = <code>0x01DE</code>).</td></tr>
+<tr><td>0x4</td><td>recordCount × 0x18</td><td>TrackSegment[]</td><td>records</td><td>The path itself — see <a href="#record">segment record</a>.</td></tr>
+</tbody>
+</table>
+
+<div class="tip"><strong>Size invariant (how the record size is known):</strong> for every one of the
+111 files, <code>4 + recordCount × 24 == filesize</code> holds <em>exactly</em>, with zero trailing
+bytes. Dividing <code>(filesize − 4) / recordCount</code> yields a clean <code>24</code> in all
+cases (e.g. <code>(1612 − 4) / 67 = 24</code>, <code>(11476 − 4) / 478 = 24</code>). That is what
+pins the record at 24 bytes and the header at 4.</div>
+
+<h2 id="record">Segment record (24 bytes)</h2>
+<p>Each record is six big-endian <code>float32</code> values: <strong>two 3D points</strong>, a
+segment <em>start</em> and <em>end</em>, in world space. Decoding the records and plotting them
+confirms a connected driving line: within a continuous stroke the <em>end</em> of record N equals the
+<em>start</em> of record N+1, so consecutive segments share an endpoint (this is the "duplicated
+pairs" pattern visible in the raw bytes). Y is the vertical axis and stays nearly constant within a
+run (ground height); X and Z sweep across the track.</p>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x00</td><td>0x4</td><td>float32_t</td><td>start.x</td><td>Segment start, world X (metres).</td></tr>
+<tr><td>0x04</td><td>0x4</td><td>float32_t</td><td>start.y</td><td>Segment start, world Y (vertical; ≈ ground height).</td></tr>
+<tr><td>0x08</td><td>0x4</td><td>float32_t</td><td>start.z</td><td>Segment start, world Z (metres).</td></tr>
+<tr><td>0x0C</td><td>0x4</td><td>float32_t</td><td>end.x</td><td>Segment end, world X. Equals <code>start.x</code> of the next record within a stroke.</td></tr>
+<tr><td>0x10</td><td>0x4</td><td>float32_t</td><td>end.y</td><td>Segment end, world Y.</td></tr>
+<tr><td>0x14</td><td>0x4</td><td>float32_t</td><td>end.z</td><td>Segment end, world Z.</td></tr>
+</tbody>
+</table>
+
+<div class="note"><strong>Why "two points" and not "pos + previous pos per sample":</strong> if the
+six floats were <em>(position, previous-position)</em> of one moving sample, the <em>second</em>
+triple of record N would equal the <em>first</em> triple of record N+1. The data shows the opposite —
+the <em>first</em> triple of N+1 equals the <em>second</em> triple of N — i.e. records are directed
+edges <code>(A→B), (B→C), (C→D)…</code>. So a record is a line <em>segment</em>, not a doubled
+sample.</div>
+
+<h3 id="strokes">Strokes (path breaks)</h3>
+<p>The end-equals-next-start chaining holds for most records but not all: in the small sample below
+56 of 66 adjacencies chain cleanly, and in the largest file 426 of 477 do. The breaks are not
+corruption — they are genuine "pen-up" jumps where one captured stroke ends and another begins
+(e.g. respawns, restarts, or separate path layers within one session). A reader should therefore
+treat the array as a <strong>set of polyline strokes</strong>: walk the records, and start a new
+polyline whenever <code>record[i].start ≠ record[i-1].end</code>. There is no explicit stroke-count
+or per-stroke length field — stroke boundaries are inferred purely from endpoint continuity.</p>
+
+<div class="warn">Because stroke boundaries are implicit, the file format alone cannot tell you which
+stroke belongs to which lap, vehicle, or event. That association lives in the richer
+<a href="#replay">replay event stream</a>, not in the <code>.track</code> geometry.</div>
+
+<h2 id="hex">Annotated hex excerpt</h2>
+<p>The first 7 lines (112 bytes) of
+<code>TracktivityData_P_PS3-_2010_1_2_19_55_29.track</code> (1&nbsp;612&nbsp;bytes, 67 records):</p>
+<pre class="hex">offset    bytes                                              ascii
+0000000   <b>00 00 00 43</b>  c3 45 3b 6a bf 40 26 19 c3 20 00 00   >...C.E;j.@&.. ..&lt;
+0000016   c3 45 3b 6a bf 40 26 19 c3 0e ae f6  c3 45 3b 6a   >.E;j.@&......E;j&lt;
+0000032   bf 40 26 19 c3 0e ae f6  c3 44 fc c4 bf 40 26 19   >.@&......D...@&.&lt;
+0000048   c3 01 ff ff c2 fa 00 00  bf 40 55 69 c3 69 0e 2b   >.........@Ui.i.+&lt;
+0000064   c3 0f 69 a1 bf 40 52 77 c3 67 0c 14  c3 0f 69 a1   >..i..@Rw.g....i.&lt;
+0000080   bf 40 52 77 c3 67 0c 14  c3 24 b9 06 bf 40 49 2c   >.@Rw.g...$...@I,&lt;
+0000096   c3 60 03 f8 c3 24 b9 06  bf 40 49 2c c3 60 03 f8   >.`...$...@I,.`..&lt;</pre>
+<p>Reading it as the structure above:</p>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Bytes</th><th>Value</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>0x00</td><td><code>00 00 00 43</code></td><td>67</td><td><code>recordCount</code> = 0x43.</td></tr>
+<tr><td>0x04</td><td><code>c3 45 3b 6a</code></td><td>−197.232</td><td>record 0 · start.x</td></tr>
+<tr><td>0x08</td><td><code>bf 40 26 19</code></td><td>−0.751</td><td>record 0 · start.y (ground)</td></tr>
+<tr><td>0x0C</td><td><code>c3 20 00 00</code></td><td>−160.000</td><td>record 0 · start.z</td></tr>
+<tr><td>0x10</td><td><code>c3 45 3b 6a</code></td><td>−197.232</td><td>record 0 · end.x</td></tr>
+<tr><td>0x14</td><td><code>bf 40 26 19</code></td><td>−0.751</td><td>record 0 · end.y</td></tr>
+<tr><td>0x18</td><td><code>c3 0e ae f6</code></td><td>−142.683</td><td>record 0 · end.z</td></tr>
+<tr><td>0x1C</td><td><code>c3 45 3b 6a …</code></td><td>(−197.232, −0.751, −142.683)</td><td>record 1 · start — note it equals record 0's <em>end</em>: the segments chain.</td></tr>
+</tbody>
+</table>
+<p>The Y component <code>bf 40 26 19</code> (−0.7506) repeats verbatim for many consecutive records,
+which is exactly what a near-flat ground path produces. Across this file the bounds are
+X∈[−222, 252], Y∈[−0.8, −0.7], Z∈[−233, 163] — a single track's footprint in metres.</p>
+
+<h2 id="replay">Relationship to the replay system</h2>
+<p>The <code>.track</code> geometry is the visible tip of a larger telemetry/replay system. The
+EBOOT string table also lists a typed, serialized event hierarchy — all subclasses of
+<code>cTrackTivityEvent</code> / <code>cITracktivitySerializable</code> — that the replay loader
+deserializes into a time-indexed events buffer:</p>
+<table>
+<thead><tr><th>Class</th><th>Records</th></tr></thead>
+<tbody>
+<tr><td><code>cDrivingStateEvent</code></td><td>Per-tick driving model state (position / orientation / steering — drives the keyframed ghost).</td></tr>
+<tr><td><code>cLapFinishedEvent</code> / <code>cRaceFinishedEvent</code></td><td>Lap and race completion markers.</td></tr>
+<tr><td><code>cPowerplayTriggeredEvent</code></td><td>A <a href="system-powerplay.html">Powerplay</a> firing; carries a <code>powerplay_transform_xx/xy/xz…</code> matrix.</td></tr>
+<tr><td><code>cCrashEvent</code></td><td>Crash / takedown marker (rendered with <code>mCrashEventColor</code>).</td></tr>
+<tr><td><code>cPlayerScoreEvent</code>, <code>cGameInfoEvent</code></td><td>Scoring and game-info samples.</td></tr>
+<tr><td><code>cPlayerContactVehicle</code> / <code>cPlayerContactEnvironment</code></td><td>Contact events vs. other cars / the world.</td></tr>
+</tbody>
+</table>
+<p>This stream is what the debug-menu <em>TrackTivity / Replay</em> page replays — its tuning keys
+(<code>Use Keyframed recording</code>, <code>Use Sweep Position (in the physics) instead of Set
+Position</code>, interpolation error thresholds, <code>Time size of the events buffer (in secs)</code>)
+all describe how the recorded driving model is played back over the live one. A separate
+<em>ASCII serializer</em> (the "<code>ASCII File To HDD Serializer Worker Thread</code>") can dump the
+same data as text using the tagged form
+<code>&lt;&lt;&lt;type="TrackTivity", name="…", value0="…"&gt;&gt;&gt;</code> with helpers
+<code>%s v3(%f %f %f)</code> / <code>%s v2(%f %f)</code> / <code>%s c(%d %d %d %d)</code>. Neither the
+serialized event stream nor the ASCII export ships in this build's <code>Deferred/</code> root — only
+the binary path dumps do.</p>
+
+<div class="warn"><strong>Confidence split.</strong> The <code>.track</code> <em>binary geometry</em>
+is <span class="badge ok">Confirmed</span> (size law holds for all 111 files; floats decode to a
+sensible world-space path; chaining is consistent). The <em>event-stream layout</em> of
+<code>cTrackTivityEvent</code> subclasses is <span class="badge theory">Theory</span> here — the class
+names and field names are known from the EBOOT, but no serialized event file is present on disk to
+verify their byte layout.</div>
+
+<h2 id="rendering">Playback rendering</h2>
+<p>When played back in the debug build, TrackTivity draws the path and overlays per-sample telemetry.
+The renderer's tunables (also from the EBOOT) name the channels it can visualise:
+<code>mShowVelocity</code> / <code>mVelocityScale</code>, <code>mShowOrientation</code> /
+<code>mOrientationScale</code>, <code>mShowSteering</code> / <code>mSteeringScale</code> /
+<code>mSteeringColor</code>, <code>mUseColorsForAccelAndBrake</code> (<code>mAccelColor</code> /
+<code>mBrakeColor</code>), plus per-player toggles <code>mShowPlayer[%d]</code> and time controls
+<code>mCurrentTime</code> / <code>mMinTimeToRender</code> / <code>mMaxTimeToRender</code>. The plain
+<code>.track</code> file only carries the path line; the velocity/steering/colour overlays come from
+the richer event stream above.</p>
+
+<h2 id="related">Related pages</h2>
+<ul>
+  <li><a href="format-highlighttags.html">Highlight Tags (.highlighttags)</a> — the shipping replay/highlight tagging system (TrackTivity is its QA-time cousin).</li>
+  <li><a href="format-route.html">Route Data (.checkpoints…)</a> — authored track geometry, for contrast with this <em>recorded</em> path.</li>
+  <li><a href="format-sectors.html">Sectors (.sectorInfo)</a> — track-space partitioning the telemetry is captured within.</li>
+  <li><a href="system-powerplay.html">Powerplay System</a> — source of <code>cPowerplayTriggeredEvent</code> records.</li>
+  <li><a href="system-ai.html">AI (SSAI)</a> — driving-model captures feed AI tuning and the evolution test harness.</li>
+  <li><a href="format-havok.html">Havok Packfiles</a> — the physics/driving model whose state <code>cDrivingStateEvent</code> samples (contrast: this format is <em>not</em> a Havok packfile — no <code>57 E0 E0 57</code> magic).</li>
+  <li><a href="engine-networking.html">Networking &amp; Online</a> — the same driving-state replication appears in the <code>cATVNet*</code> duplicated-object system.</li>
+  <li><a href="build-layout.html">Build &amp; File Layout</a> — why loose QA capture files like these exist in this devkit build.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

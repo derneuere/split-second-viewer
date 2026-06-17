@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FMOD Sound Banks (.fsb) — Split/Second RE Wiki</title>
+<meta name="description" content="FMOD FSB4 sample/stream banks: container header, per-sample headers, and how Split/Second packs vehicle, speech, music and locale audio.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="FMOD Sound Banks (.fsb)" data-category="Formats · Audio & Video">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>FMOD Sound Banks (.fsb)</h1>
+<p>An <code>.fsb</code> file is an <strong>FMOD Sample Bank</strong> — the container that holds the actual compressed audio waveforms for Split/Second. The game ships banks in the <strong>FSB4</strong> revision produced by FMOD&nbsp;Ex&nbsp;4.28 (<code>contrib/FmodEx/42800</code>), wrapped by the in-house <a href="engine-audio.html">LLAudio2</a> layer. Each <code>.fsb</code> is paired with a <a href="format-fev.html">.fev</a> event project that references its samples by index.</p>
+
+<div class="infobox"><div class="ib-title">.fsb</div><table>
+  <tr><th>Category</th><td>Audio sample/stream bank</td></tr>
+  <tr><th>Middleware</th><td>FMOD Ex 4.28</td></tr>
+  <tr><th>Magic</th><td><code>46 53 42 34</code> ("FSB4")</td></tr>
+  <tr><th>Endianness</th><td><b>Little-endian header</b> (FMOD convention) on a big-endian console</td></tr>
+  <tr><th>Version</th><td><code>0x00040000</code> (FSB v4)</td></tr>
+  <tr><th>Sample codec</th><td>MPEG layer-3 (MP3) frames</td></tr>
+  <tr><th>Twin</th><td><a href="format-fev.html">.fev</a> event project</td></tr>
+  <tr><th>Count</th><td>73 banks under <code>Deferred/Audio/</code></td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>Where banks live</h2>
+<p>Banks are loose on disk under <code>Deferred/Audio/</code>, grouped by purpose. Most folders contain a non-streamed bank, an optional <code>_Streamed</code> bank for long sounds, and a <code>DEBUG_</code> variant used by the QA build:</p>
+<ul>
+  <li><b>Vehicles/CPU/</b> — per-car engine/exhaust samples, e.g. <code>Hypercar_03.fsb</code>, <code>Muscle_08_Corvette_C6_v3.fsb</code>. These pair with the <a href="format-tonic.html">Tonic</a> granular engine model.</li>
+  <li><b>Music/Music.fsb</b> — the largest bank in the game (~158&nbsp;MB), holding the dynamic race-music layers.</li>
+  <li><b>Speech/Speech.fsb</b> — co-driver / announcer voice clips (the eboot references localised <code>Speech/&lt;Lang&gt;/Speech.fsb</code> variants).</li>
+  <li><b>Locales/&lt;level&gt;/</b> — per-track ambience (airport, docks, downtown, graveyard, powerplant, nem).</li>
+  <li><b>Collision, Scrapes, Surface, Swooshes, Particles, GenericPowerPlays, Menu, Global</b> — gameplay SFX categories.</li>
+</ul>
+<div class="note">A bank can hold one sample (most vehicle banks) or many (<code>Speech.fsb</code> has 13, <code>Music.fsb</code> has 133). Examining a one-sample bank next to a 133-sample bank is how the constant container header was separated from the repeating per-sample record below.</div>
+
+<h2>Container header (FSB4)</h2>
+<p>The first <strong>0x30 bytes</strong> are a fixed FSB4 header (a 0x20-byte field block followed by a 16-byte bank GUID). <strong>All multi-byte header fields are little-endian</strong> even though the PS3 and the rest of the engine are big-endian — this is an FMOD design choice and was verified by reading the sample count and header-size fields (see "How we know" below). The first sample record then begins at <code>0x30</code>, and in the single-sample <code>Hypercar_03.fsb</code> the MP3 payload begins at <code>0x30 + 0x50 = 0x80</code>, exactly as the hex excerpt shows.</p>
+
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x00</td><td>0x4</td><td>char[4]</td><td>magic</td><td>Always <code>"FSB4"</code> (<code>46 53 42 34</code>).</td></tr>
+<tr><td>0x04</td><td>0x4</td><td>uint32_t (LE)</td><td>numSamples</td><td>Number of sample-header records that follow. 1 for vehicle banks, 13 for Speech, 0x85=133 for Music.</td></tr>
+<tr><td>0x08</td><td>0x4</td><td>uint32_t (LE)</td><td>sampleHeadersSize</td><td>Total bytes of all sample headers. = 0x50 for one mono sample; 0x410=1040 for Speech (13 × 0x50). Confirms an 80-byte base record.</td></tr>
+<tr><td>0x0C</td><td>0x4</td><td>uint32_t (LE)</td><td>sampleDataSize</td><td>Total bytes of packed waveform data after the header block.</td></tr>
+<tr><td>0x10</td><td>0x4</td><td>uint32_t (LE)</td><td>version</td><td>FSB version. Constant <code>0x00040000</code> = FSB&nbsp;4.0 across every bank.</td></tr>
+<tr><td>0x14</td><td>0x4</td><td>uint32_t (LE)</td><td>mode</td><td>Bank-wide mode flags. Constant <code>0x00000020</code> in all Split/Second banks (FMOD <code>FSB_SOURCE_BASICHEADERS</code>-style flag set).</td></tr>
+<tr><td>0x18</td><td>0x8</td><td>uint8_t[8]</td><td>padding</td><td>Zero in every sample seen.</td></tr>
+<tr><td>0x20</td><td>0x10</td><td>uint8_t[16]</td><td>hash / GUID</td><td>16-byte bank identity hash (differs per bank, e.g. <code>90 47 95 dd …</code>). Used to match the bank to its FEV.</td></tr>
+</tbody>
+</table>
+
+<h2>Per-sample header</h2>
+<p>Immediately after the container header comes <em>numSamples</em> sample records. Each begins with its own 16-bit size, so the array is walkable even when records vary in length (Music adds an extra <code>SYNC</code> sub-chunk — see below). The base record is 0x50 bytes:</p>
+
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>+0x00</td><td>0x2</td><td>uint16_t (LE)</td><td>size</td><td>Length of this record. 0x50 for a plain sample; 0x5C for Music samples (extra chunk).</td></tr>
+<tr><td>+0x02</td><td>0x1E</td><td>char[30]</td><td>name</td><td>Null-terminated sample name, e.g. <code>Hypercar_03_Skyline_v3.wav</code>, <code>when_you_see.wav</code>, <code>intensity_3_b.wav</code>.</td></tr>
+<tr><td>+0x20</td><td>0x4</td><td>uint32_t (LE)</td><td>lengthSamples</td><td>Decoded length in PCM samples.</td></tr>
+<tr><td>+0x24</td><td>0x4</td><td>uint32_t (LE)</td><td>lengthCompressedBytes</td><td>Size of this sample's compressed data block. Matches <code>sampleDataSize</code> for single-sample banks.</td></tr>
+<tr><td>+0x28</td><td>0x4</td><td>uint32_t (LE)</td><td>loopStart</td><td>Loop start in samples (0 when unused).</td></tr>
+<tr><td>+0x2C</td><td>0x4</td><td>uint32_t (LE)</td><td>loopEnd</td><td>Loop end in samples.</td></tr>
+<tr><td>+0x30</td><td>0x4</td><td>uint32_t (LE)</td><td>mode</td><td>FMOD sample mode flags (codec, loop, channel layout).</td></tr>
+<tr><td>+0x34</td><td>0x4</td><td>uint32_t (LE)</td><td>defaultFreq</td><td>Sample rate in Hz. <code>0xBB80</code>=48000 (vehicles), <code>0xAC44</code>=44100 (music/streamed).</td></tr>
+<tr><td>+0x38</td><td>0x2</td><td>uint16_t (LE)</td><td>defVol</td><td>Default volume (<code>0x00FF</code> = full).</td></tr>
+<tr><td>+0x3A</td><td>0x2</td><td>int16_t (LE)</td><td>defPan</td><td>Default pan (<code>0x0080</code> = centre).</td></tr>
+<tr><td>+0x3C</td><td>0x2</td><td>uint16_t (LE)</td><td>defPri</td><td>Default priority (<code>0x0080</code>).</td></tr>
+<tr><td>+0x3E</td><td>0x2</td><td>uint16_t (LE)</td><td>numChannels</td><td>Channel count: <code>0x0001</code> mono (speech, vehicle), <code>0x0002</code> stereo (music, streamed ambience).</td></tr>
+<tr><td>+0x40</td><td>0x4</td><td>float32_t (LE)</td><td>minDistance</td><td>3D rolloff min distance. Constant <code>1.0</code> (<code>00 00 80 3f</code>).</td></tr>
+<tr><td>+0x44</td><td>0x4</td><td>float32_t (LE)</td><td>maxDistance</td><td>3D rolloff max distance. Constant <code>10000.0</code> (<code>00 40 1c 46</code>).</td></tr>
+<tr><td>+0x48</td><td>0x8</td><td>uint8_t[8]</td><td>varFreq/Vol/Pan + size echo</td><td>Per-sample variation fields; the trailing <code>0x50</code> echoes the record size.</td></tr>
+</tbody>
+</table>
+
+<div class="tip">The two distance constants <code>1.0</code> and <code>10000.0</code> and the centred pan/priority bytes appear <em>identically</em> in every record of every bank, which is exactly what you expect for a default 3D rolloff — strong evidence the field interpretation above is correct.</div>
+
+<h3>The <code>SYNC</code> sub-chunk (Music only)</h3>
+<p>In <code>Music.fsb</code> the per-sample size is 0x5C, not 0x50, because each music sample carries a trailing <code>SYNC</code> chunk used to place beat/section sync points for the dynamic music director (the eboot drives <code>Music/&lt;track&gt;/RaceSection0&lt;n&gt;</code> events). The chunk literally starts with the ASCII tag <code>SYNC</code>.</p>
+
+<h2>Hex excerpt — a one-sample vehicle bank</h2>
+<p><code>Vehicles/CPU/Hypercar_03.fsb</code> (80,192 bytes). Container header (LE), then the single sample header, then the MP3 payload:</p>
+<pre class="hex">000000  46 53 42 34 01 00 00 00 50 00 00 00 c0 38 01 00  FSB4....P....8..   magic | numSamples=1 | hdrSize=0x50 | dataSize=0x138c0
+000010  00 00 04 00 20 00 00 00 00 00 00 00 00 00 00 00  .... ...........   version 4.0 | mode 0x20 | pad
+000020  1d 57 b4 ce 1d 13 85 48 b5 78 59 51 77 28 c0 21  .W.....H.xYQw(.!   16-byte bank GUID
+000030  50 00 48 79 70 65 72 63 61 72 5f 30 33 5f 53 6b  P.Hypercar_03_Sk   rec size=0x50 | name "Hypercar_03_Sk
+000040  79 6c 69 6e 65 5f 76 33 2e 77 61 76 00 00 00 00  yline_v3.wav....   yline_v3.wav"
+000050  00 e3 04 00 c0 38 01 00 00 00 00 00 ff e2 04 00  .....8..........   lenSamples | lenBytes=0x138c0 | loop 0
+000060  20 22 00 00 80 bb 00 00 ff 00 80 00 80 00 01 00   "..............   mode | freq=0xBB80(48000) | vol/pan/pri | ch=1
+000070  00 00 80 3f 00 40 1c 46 50 00 00 00 00 00 00 00  ...?.@.FP.......   minDist=1.0 | maxDist=10000.0 | size echo
+000080  ff fb 74 c0 00 00 0c 78 ef 76 e6 0c 6b 9a 41 ad  ..t....x.v..k.A.   MP3 frame (sync 0xFFFB) — payload begins</pre>
+<p>The <code>ff fb</code> at 0x80 is an MPEG-1 Layer&nbsp;III frame header, confirming the codec. The <code>lengthCompressedBytes</code> field (<code>0x138c0</code>) equals the container's <code>sampleDataSize</code> — exactly what a single-sample bank should report — which is how the per-sample length field was pinned down.</p>
+
+<h2>Multi-sample banks</h2>
+<p><code>Speech.fsb</code> demonstrates the walkable array: after the 0x410-byte header block (13 × 0x50), the records sit back-to-back. Names read out plainly as <code>when_you_see.wav</code>, <code>if_the_target.wav</code>, <code>ok_kid.wav</code>, <code>come_on.wav</code> — co-driver call-outs. <code>Music.fsb</code>'s first samples are <code>intensity_3_b.wav</code>, <code>intensity_2_b.wav</code> (dynamic music intensity layers).</p>
+
+<div class="warn">FMOD reports an error string in the eboot — <em>"FSB mismatches the FEV it was compiled with, the stream/sample mode it was meant to be created with was different, or the FEV was built for a different platform"</em> — so a bank and its <a href="format-fev.html">.fev</a> are a tightly-coupled pair; the 16-byte GUID and per-platform build keep them in sync.</div>
+
+<h2>How we know</h2>
+<ul>
+  <li><b>Magic / version constant:</b> <code>FSB4</code> and version <code>0x00040000</code> are byte-identical across Menu, Music, Speech, Hypercar_03 and the streamed banks.</li>
+  <li><b>Header-size arithmetic:</b> a 1-sample bank reports <code>sampleHeadersSize=0x50</code>; the 13-sample Speech bank reports <code>0x410=13×0x50</code> — proving both the 80-byte record size and that the count field is little-endian.</li>
+  <li><b>Names &amp; codec:</b> ASCII <code>.wav</code> names and <code>0xFFFB</code> MP3 sync bytes are directly readable in the hexdump.</li>
+  <li><b>Endianness:</b> reading the count/size fields as big-endian gives absurd values (e.g. 0x01000000); little-endian gives the correct small counts that match the file layout.</li>
+  <li><b>Middleware:</b> the eboot strings <code>EventSystem::unloadFSB</code>, <code>FMOD_OPENMEMORY_POINT</code>, and <code>PluginMiddlewareFMOD.inl</code> confirm FMOD Ex.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-fev.html">FMOD Events (.fev)</a> — the event project that references these samples.</li>
+  <li><a href="format-tonic.html">Tonic (.tonic / .tonic2)</a> — the granular engine-sound model that complements the per-car FSBs.</li>
+  <li><a href="engine-audio.html">Audio Engine</a> — LLAudio2, DynamicMixer, reverb, bank management.</li>
+  <li><a href="engine-middleware.html">Middleware Stack</a> — FMOD Ex 4.28 in context.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Skeletons (.skel) — Split/Second RE Wiki</title>
+<meta name="description" content="The .skel format: Black Rock's 'ftsc' bone-hierarchy container for powerplay animation rigs — parent indices, bind-pose matrices, and fixed-length joint names that map onto Havok hkaSkeleton at load.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Skeletons (.skel)" data-category="Formats · Geometry & Render">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Skeletons (.skel)</h1>
+<p>The <code>.skel</code> file is the bone hierarchy (rig) for an animated mesh. In Split/Second it is
+used almost exclusively by <a href="system-powerplay.html">powerplay</a> set-pieces — collapsing
+buildings, exploding tanks, helicopters, rolling vans — where each destructible chunk is a joint
+driven by baked animation. It is a Black Rock container with the ASCII magic <code>ftsc</code>, and
+it maps onto Havok's <code>hkaSkeleton</code> (Havok Animation) at load time.</p>
+
+<div class="infobox"><div class="ib-title">.skel</div><table>
+  <tr><th>Category</th><td>Animation skeleton / rig</td></tr>
+  <tr><th>Container</th><td>Black Rock <code>ftsc</code></td></tr>
+  <tr><th>Runtime class</th><td>Havok <code>hkaSkeleton</code></td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Magic</th><td><code>66 74 73 63</code> ("ftsc")</td></tr>
+  <tr><th>Bone name</th><td><code>char[64]</code>, NUL-padded</td></tr>
+  <tr><th>Matrix</th><td>4×4 <code>float32</code>, row-major</td></tr>
+  <tr><th>Found in</th><td><code>Powerplays/Animations/…</code></td></tr>
+  <tr><th>Count</th><td>705 files (2–481 bones)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>Identification</h2>
+<p>The first four bytes are <code>66 74 73 63</code> = ASCII <code>ftsc</code>, constant across every
+sample. (Read little-endian it spells <code>cstf</code> — plausibly a Crayon-family "structure file"
+tag.) It is followed by two 16-bit fields that are also constant: <code>00 64</code> (100) and
+<code>00 10</code> (16), most likely a version and an alignment/stride. The format is
+<b>not</b> a Havok packfile — there is no <code>57 E0 E0 57</code> magic and no embedded class
+strings — so the data is parsed by Black Rock's own reader and handed to Havok.</p>
+
+<div class="note">The EBOOT confirms the Havok-Animation backing: the string table contains
+<code>hkaSkeleton</code>, <code>hkaSkeletonUtils</code>, <code>hkaSkeletonMapper</code>,
+<code>hkaSkeletonMapperData…</code> and the assert <i>"None of the bones in skeleton have
+translations locked — did you forget to lock translations?"</i> from
+<code>Rig/hkaSkeletonUtils.cpp</code>. The <code>ftsc</code> file is the cooked, big-endian rig that
+populates an <code>hkaSkeleton</code> (parent map + reference pose). See
+<a href="format-havok.html">Havok Packfiles</a> for the wider Havok 5.5 stack.</div>
+
+<h2>Header &amp; offset table</h2>
+<p>After the 12-byte preamble comes a 16-bit <b>bone count</b>, then an 8-entry <b>offset table</b>
+of 32-bit absolute file offsets. Each table entry points at one parallel array (all indexed by bone),
+followed by a final entry pointing at the name block. The layout was verified against three samples
+with bone counts 2, 24 and 58 — every offset lands exactly where the next array begins, and the array
+lengths scale linearly with the bone count.</p>
+
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x00</td><td>0x4</td><td>char[4]</td><td>magic</td><td>Always <code>"ftsc"</code> (<code>66 74 73 63</code>).</td></tr>
+<tr><td>0x04</td><td>0x2</td><td>uint16_t</td><td>version</td><td>Always <code>0x0064</code> (100). Constant across all samples.</td></tr>
+<tr><td>0x06</td><td>0x2</td><td>uint16_t</td><td>stride / align</td><td>Always <code>0x0010</code> (16). <span class="badge theory">Theory</span></td></tr>
+<tr><td>0x08</td><td>0x4</td><td>uint32_t</td><td>reserved</td><td>Always <code>0</code>.</td></tr>
+<tr><td>0x0C</td><td>0x2</td><td>uint16_t</td><td>bone_count</td><td>Number of joints. <code>0x02</code>, <code>0x18</code> (24), <code>0x3A</code> (58) in the probes. Drives every array length below.</td></tr>
+<tr><td>0x0E</td><td>0x2</td><td>uint16_t</td><td>pad</td><td>Always <code>0</code>.</td></tr>
+<tr><td>0x10</td><td>0x4 × 8</td><td>uint32_t[8]</td><td>offset_table</td><td>Absolute offsets to each per-bone array; last entry → name block. See below.</td></tr>
+<tr><td>0x30</td><td>0x4</td><td>uint32_t</td><td>end_offset</td><td>A 9th offset that duplicates <code>offset_table[7]</code> (the name-block start) — i.e. the end of the per-bone arrays. Verified equal in the 2-bone and 24-bone probes.</td></tr>
+</tbody>
+</table>
+
+<h3>Offset-table entries</h3>
+<p>The eight offsets describe the per-bone arrays. Lengths below are <i>per bone</i> × <code>bone_count</code>,
+padded to 16 bytes. (Values shown are the 2-bone <code>PG02_Helicopter_A.skel</code> probe.)</p>
+
+<table class="struct">
+<thead><tr><th>Entry</th><th>Points at</th><th>Element</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>[0]</td><td>0x40</td><td>uint16_t</td><td>parent_index[]</td><td>Parent bone index per joint; <code>0xFFFF</code> marks the root. This is the hierarchy.</td></tr>
+<tr><td>[1]</td><td>0x50</td><td>uint16_t</td><td>bone_order[]</td><td>A second index array — bone ordering / remap (sequential <code>0,1,2,…</code> in flat rigs).</td></tr>
+<tr><td>[2]</td><td>0x60</td><td>float32[16]</td><td>matrix_A[]</td><td>4×4 reference-pose matrix per bone (identity in flat rigs — diagonal <code>3F800000</code>=1.0).</td></tr>
+<tr><td>[3]</td><td>0xE0</td><td>float32[16]</td><td>matrix_B[]</td><td>Second 4×4 per bone — likely the world / inverse-bind matrix (carries the bone translation).</td></tr>
+<tr><td>[4]</td><td>0x160</td><td>float32[4]</td><td>vec_C[]</td><td>16-byte vector per bone (quaternion or translation+pad). <span class="badge theory">Theory</span></td></tr>
+<tr><td>[5]</td><td>0x180</td><td>float32[4]</td><td>vec_D[]</td><td>16-byte vector per bone.</td></tr>
+<tr><td>[6]</td><td>0x1A0</td><td>float32[4]</td><td>vec_E[]</td><td>16-byte vector per bone.</td></tr>
+<tr><td>[7]</td><td>0x1C0</td><td>char[64]</td><td>names[]</td><td>Bone names, one fixed 64-byte NUL-padded string per joint. Runs to EOF.</td></tr>
+</tbody>
+</table>
+
+<div class="tip">File-size sanity check (58-bone <code>PG05_MultiBus_1_A.skel</code>): the name block
+starts at <code>0x2920</code> and there are 58 × <code>0x40</code> = <code>0xE80</code> bytes of
+names → end <code>0x37A0</code> = 14 240 bytes = the exact file size. Every array offset in the table
+was confirmed the same way.</div>
+
+<h2>Hex walkthrough</h2>
+<p>The complete 576-byte <code>PG02_Helicopter_A.skel</code> (2 bones) is small enough to read whole:</p>
+
+<pre class="hex">
+        magic 'ftsc'  ver  stride  reserved   count
+000000  66 74 73 63   00 64 00 10  00 00 00 00  00 02 00 00
+000010  00 00 00 40   00 00 00 50  00 00 00 60  00 00 00 e0   ← offset table [0..3]
+000020  00 00 01 60   00 00 01 80  00 00 01 a0  00 00 01 c0   ← offset table [4..7]
+000030  00 00 01 c0   00 00 00 00  00 00 00 00  00 00 00 00
+000040  ff ff 00 00   00 00 …                                 ← parent_index: bone0=root(ffff), bone1=0
+000060  3f 80 00 00   00 00 00 00  00 00 00 00  00 00 00 00   ← matrix_A: identity (diagonal 1.0)
+…
+0001c0  72 6f 6f 74   5f 67 72 6f  75 70 31 5f  65 78 70 6f   ← "root_group1_expo
+0001d0  72 74 00 00   00 00 …                                    rt"  (64-byte slot)
+000200  6a 6f 69 6e   74 5f 45 78  70 6c 6f 73  69 76 65 31   ← "joint_Explosive1"
+</pre>
+<p class="cap">Annotated: <code>ftsc</code> magic; version <code>0x64</code>; stride <code>0x10</code>;
+<code>bone_count=2</code>; the 8-entry offset table; <code>parent_index[0]=0xFFFF</code> (root) and
+<code>[1]=0</code> (child of bone 0); identity <code>matrix_A</code>; then the two 64-byte joint
+names <code>root_group1_export</code> and <code>joint_Explosive1</code>.</p>
+
+<h2>Bone naming conventions</h2>
+<p>Joint names are authored in the modelling tool and exported verbatim. Two patterns dominate:</p>
+<table>
+<thead><tr><th>Pattern</th><th>Example</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>root_…_export</code> / <code>root_…_rig</code></td><td><code>root_PA03_Car1_A_rig</code></td><td>The root bone; embeds the animation/asset name.</td></tr>
+<tr><td><code>joint_Explosive&lt;n&gt;</code></td><td><code>joint_Explosive1</code></td><td>A chunk that flies apart in an explosion.</td></tr>
+<tr><td><code>joint_nxRigidBody&lt;n&gt;</code></td><td><code>joint_nxRigidBody48</code></td><td>A bone bound to a physics rigid body (the <code>nx</code> prefix points at the DCC physics-rig exporter).</td></tr>
+<tr><td><code>Game_joint&lt;n&gt;</code></td><td><code>Game_joint36</code></td><td>Generic numbered joint (bulk destructible pieces).</td></tr>
+</tbody>
+</table>
+<p>The presence of dozens of independent <code>joint_nxRigidBody*</code> / <code>Game_joint*</code>
+bones — rather than a humanoid skeleton — confirms these rigs animate <em>shattering scenery</em>:
+each bone is one rigid fragment whose motion is baked into the paired animation. This matches the
+folder location (<code>Powerplays/Animations/&lt;Level&gt;/…</code>) and the
+<a href="system-powerplay.html">powerplay</a> set-piece system.</p>
+
+<h2>Where they live</h2>
+<p><code>.skel</code> files sit under <code>Deferred/Powerplays/Animations/&lt;Level&gt;/</code>,
+grouped by event — e.g. <code>Downtown/PA01_collapsing_building/</code>,
+<code>Downtown/PA03_Heli_tunnel/</code>, <code>Downtown/Generic/PG05_MultiBus/</code>. Each rig
+is named with the <code>_A</code> suffix (animation take) and is accompanied by the corresponding
+animated <a href="format-model.html">.model</a> mesh and baked animation data that the
+<a href="data-catnip.html">Catnip</a> powerplay timelines trigger.</p>
+
+<div class="warn">Open questions: the role split between <code>matrix_A</code> and <code>matrix_B</code>
+(local bind vs world/inverse-bind) is inferred from the identity-vs-translation contents, not proven;
+and the three 16-byte vectors (<code>vec_C/D/E</code>) are most likely a decomposed
+translation / rotation-quaternion / scale triple but their exact assignment is unconfirmed. The
+constant <code>stride=0x10</code> in the header may be the element size of those vectors. Confirming
+this against a Havok <code>hkaSkeleton</code> tagfile would settle it.</div>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-model.html">Model (.model)</a> — the skinned mesh these bones drive (W4I4 vertex formats)</li>
+  <li><a href="format-havok.html">Havok Packfiles</a> — the Havok 5.5 / <code>hkaSkeleton</code> runtime backing</li>
+  <li><a href="system-powerplay.html">Powerplay System</a> — the set-pieces that use these animation rigs</li>
+  <li><a href="data-catnip.html">Catnip Entity System</a> — timelines that trigger powerplay animations</li>
+  <li><a href="system-nemesis.html">Nemesis &amp; Heli Modes</a> — helicopter/truck rigs (<code>PG02_Helicopter</code>, <code>nxRigidBody</code>)</li>
+  <li><a href="engine-middleware.html">Middleware Stack</a> — Havok 5.5 including Havok Animation</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

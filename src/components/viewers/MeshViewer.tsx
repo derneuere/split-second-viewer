@@ -44,6 +44,62 @@ function asParsedModel(model: unknown): ParsedModel | null {
 	return m as ParsedModel;
 }
 
+/** A Havok packfile model carries `shapes[]` (collision) — used for labelling. */
+type HavokLikeModel = {
+	shapes?: { className: string; geometryComplete?: boolean }[];
+	hasGeometry?: boolean;
+};
+function asHavokModel(model: unknown): HavokLikeModel | null {
+	if (!model || typeof model !== 'object') return null;
+	const m = model as HavokLikeModel;
+	return Array.isArray(m.shapes) ? m : null;
+}
+
+/** A bone with a world-space origin + parent index, used for line-segment draw. */
+type DrawBone = { index: number; parent: number; name?: string; pos: [number, number, number] };
+
+/**
+ * Pull skeleton bones from a ParsedSkel (or any model carrying a `skeleton`
+ * array of {index,parent,pos}). Returns [] when none are present.
+ */
+function asDrawBones(model: unknown): DrawBone[] {
+	if (!model || typeof model !== 'object') return [];
+	const m = model as { skeleton?: unknown };
+	if (!Array.isArray(m.skeleton)) return [];
+	const out: DrawBone[] = [];
+	for (const b of m.skeleton as DrawBone[]) {
+		if (b && Array.isArray(b.pos) && b.pos.length === 3 && b.pos.every((v) => Number.isFinite(v))) {
+			out.push(b);
+		}
+	}
+	return out;
+}
+
+/** Build a THREE line-segment geometry connecting each bone to its parent. */
+function buildSkeletonGeometry(bones: DrawBone[]): THREE.BufferGeometry | null {
+	if (bones.length === 0) return null;
+	const byIndex = new Map<number, DrawBone>();
+	for (const b of bones) byIndex.set(b.index, b);
+	const pts: number[] = [];
+	for (const b of bones) {
+		const parent = byIndex.get(b.parent);
+		if (!parent) continue;
+		pts.push(parent.pos[0], parent.pos[1], parent.pos[2]);
+		pts.push(b.pos[0], b.pos[1], b.pos[2]);
+	}
+	const geom = new THREE.BufferGeometry();
+	if (pts.length === 0) {
+		// No edges (single root) — fall back to a point per joint.
+		const flat = bones.flatMap((b) => b.pos as number[]);
+		geom.setAttribute('position', new THREE.Float32BufferAttribute(flat, 3));
+	} else {
+		geom.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+	}
+	geom.computeBoundingSphere();
+	geom.computeBoundingBox();
+	return geom;
+}
+
 /**
  * Convert a decoded ModelMesh into typed arrays suitable for a BufferGeometry.
  * A base .model often has indices but no positions (the section table is not yet
@@ -176,6 +232,16 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 	const objectUrlRef = useRef<string | null>(null);
 
 	const parsed = useMemo(() => asParsedModel(model), [model]);
+	const havok = useMemo(() => asHavokModel(model), [model]);
+	const bones = useMemo(() => asDrawBones(model), [model]);
+	const skeletonGeom = useMemo(() => buildSkeletonGeometry(bones), [bones]);
+
+	// Dispose the skeleton geometry when replaced/unmounted.
+	useEffect(() => {
+		return () => {
+			skeletonGeom?.dispose();
+		};
+	}, [skeletonGeom]);
 
 	const renderMeshes = useMemo<RenderMesh[]>(() => {
 		if (!parsed) return [];
@@ -232,6 +298,16 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 	// --- Graceful fallbacks -------------------------------------------------
 
 	if (!parsed) {
+		// A .skel parses to a bone hierarchy (no meshes[]) — draw it as a skeleton.
+		if (skeletonGeom && bones.length > 0) {
+			return (
+				<SkeletonScene
+					geometry={skeletonGeom}
+					boneCount={bones.length}
+					hasEdges={bones.some((b) => bones.some((p) => p.index === b.parent))}
+				/>
+			);
+		}
 		return (
 			<Placeholder
 				icon={<AlertTriangle className="h-8 w-8" />}
@@ -249,17 +325,21 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 		// Base .model commonly decodes indices but no positions (the per-section
 		// vertex table is still unmapped) — explain rather than show a void.
 		const isBase = parsed.kind === 'model';
+		const detail = havok
+			? 'This Havok packfile carries no recoverable collision geometry — its ' +
+			  'triangle-mesh vertex/index buffers are SERIALIZE_IGNORED (not written to ' +
+			  'disk). Vehicle .mainColl/.phys convex hulls do render; level .hkColl shows ' +
+			  'only an AABB box. See the field inspector for the decoded physics fields.'
+			: isBase
+				? 'This base .model decoded node/bounds metadata but no vertex positions ' +
+				  '(the per-section vertex format lives in the still-unmapped node tree). ' +
+				  'Open its .model.stream twin to view high-LOD geometry.'
+				: 'The stream payload contained no decodable vertex positions.';
 		return (
 			<Placeholder
 				icon={<Boxes className="h-8 w-8" />}
 				title="No renderable geometry"
-				detail={
-					isBase
-						? 'This base .model decoded node/bounds metadata but no vertex positions ' +
-						  '(the per-section vertex format lives in the still-unmapped node tree). ' +
-						  'Open its .model.stream twin to view high-LOD geometry.'
-						: 'The stream payload contained no decodable vertex positions.'
-				}
+				detail={detail}
 			/>
 		);
 	}
@@ -273,7 +353,7 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 			<div className="flex items-center gap-2 border-b border-border bg-card/50 px-3 py-2">
 				<Boxes className="h-4 w-4 text-accent" />
 				<span className="text-sm font-medium">
-					{parsed.kind === 'stream' ? 'Model stream' : 'Model'}
+					{havok ? 'Collision' : parsed.kind === 'stream' ? 'Model stream' : 'Model'}
 				</span>
 				<span className="text-xs text-muted-foreground">
 					{verts.toLocaleString()} verts · {Math.round(tris).toLocaleString()} tris
@@ -328,6 +408,53 @@ export function MeshViewer({ model, raw, handler }: MeshViewerProps) {
 							flatShading={false}
 						/>
 					</mesh>
+					{/* Paired skeleton overlay (when a .skel rig is attached). */}
+					{skeletonGeom && (
+						<lineSegments geometry={skeletonGeom}>
+							<lineBasicMaterial color="#5ad1ff" />
+						</lineSegments>
+					)}
+					<gridHelper args={[10, 10, '#2a3040', '#1a1f2b']} />
+					<OrbitControls makeDefault enableDamping dampingFactor={0.1} />
+					<AutoFit geometry={geometry} />
+				</Canvas>
+			</div>
+		</div>
+	);
+}
+
+/** Standalone skeleton viewport for a .skel rig (no paired mesh). */
+function SkeletonScene({
+	geometry,
+	boneCount,
+	hasEdges,
+}: {
+	geometry: THREE.BufferGeometry;
+	boneCount: number;
+	hasEdges: boolean;
+}) {
+	return (
+		<div className="flex h-full flex-col">
+			<div className="flex items-center gap-2 border-b border-border bg-card/50 px-3 py-2">
+				<Boxes className="h-4 w-4 text-accent" />
+				<span className="text-sm font-medium">Skeleton</span>
+				<span className="text-xs text-muted-foreground">
+					{boneCount.toLocaleString()} bone{boneCount === 1 ? '' : 's'}
+				</span>
+			</div>
+			<div className="relative min-h-0 flex-1">
+				<Canvas camera={{ position: [3, 2, 3], fov: 50, near: 0.01, far: 5000 }} dpr={[1, 2]}>
+					<color attach="background" args={['#0b0e14']} />
+					<ambientLight intensity={0.8} />
+					{hasEdges ? (
+						<lineSegments geometry={geometry}>
+							<lineBasicMaterial color="#5ad1ff" />
+						</lineSegments>
+					) : (
+						<points geometry={geometry}>
+							<pointsMaterial color="#5ad1ff" size={0.08} sizeAttenuation />
+						</points>
+					)}
 					<gridHelper args={[10, 10, '#2a3040', '#1a1f2b']} />
 					<OrbitControls makeDefault enableDamping dampingFactor={0.1} />
 					<AutoFit geometry={geometry} />

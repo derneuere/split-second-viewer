@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Networking &amp; Online — Split/Second RE Wiki</title>
+<meta name="description" content="Split/Second online: Quazal NetZ duplicated-object replication, Rendez-Vous matchmaking over PSN, the ATVNet wrapper, the cATVNetDO* replicated classes, and LPC10/OpenLPC voice chat.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Networking &amp; Online" data-category="Engine &amp; Tech">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Networking &amp; Online</h1>
+<p>Split/Second's online multiplayer is built on <b>Quazal Net-Z</b> and <b>Quazal Rendez-Vous</b>
+(the same middleware family later rebranded "NEX"), layered on top of Sony's PlayStation Network
+(<code>sceNpMatching2</code>, NPBasic, NPScore). Black Rock wrapped all of it in an in-house module
+called <b>ATVNet</b>, whose source lives at
+<code>c:/Projects/proj_1/ws_0/Code/games/SplitSecond/Shared/ATVNet/…</code>. Game state is shared
+between consoles using Net-Z's <b>Duplicated Object</b> (DO) replication model: every networked thing
+in the race — players, vehicles, the host's game setup, the room, even individual physics objects —
+is a <code>cATVNetDO*</code> class that Net-Z keeps in sync across all stations.</p>
+
+<div class="infobox"><div class="ib-title">Online stack</div><table>
+  <tr><th>Category</th><td>Networking / matchmaking</td></tr>
+  <tr><th>Middleware</th><td>Quazal Net-Z <code>2008.9 SP2</code></td></tr>
+  <tr><th>Matchmaking</th><td>Quazal Rendez-Vous over PSN</td></tr>
+  <tr><th>Transport</th><td>PSN <code>sceNpMatching2</code> rooms</td></tr>
+  <tr><th>Replication</th><td>Duplicated Objects (ObjDup)</td></tr>
+  <tr><th>Wrapper</th><td>ATVNet (Black Rock)</td></tr>
+  <tr><th>Voice</th><td>Net-Z AVStreams · LPC10 / OpenLPC</td></tr>
+  <tr><th>Copyright</th><td>Quazal Technologies 1998–2009</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<div class="note">All strings, class names and debug-menu paths quoted here come from the
+<a href="build-layout.html">devkit/QA EBOOT</a> (<code>eboot_strings.txt</code>). Because this is a
+debug build, the entire matchmaking/replication state machine prints itself, so the online model is
+unusually well documented for a shipped game.</div>
+
+<h2>The middleware: Net-Z and Rendez-Vous</h2>
+<p>The EBOOT carries two distinct Quazal libraries from the <code>contrib/Quazal/</code> tree:</p>
+<ul>
+  <li><b>Net-Z</b> (<code>contrib/Quazal/NetZ</code>) — the peer-to-peer <i>object-duplication</i> engine.
+  Identifies itself at runtime as <code>Quazal Net-Z</code> / <code>Version 2008.9 SP2</code> with
+  <code>Copyright (C) 1998-2009, Quazal Technologies Inc.</code> It owns the
+  <b>DuplicationSpace</b>, the <b>SessionClock</b> (a replicated clock used to timestamp updates),
+  and the <b>ObjDup</b> subsystem.</li>
+  <li><b>Rendez-Vous</b> (<code>contrib/Quazal/RV</code>) — the back-end / matchmaking framework
+  (<code>Quazal Rendez-Vous</code>). It is reached through a Python-flavoured RPC core
+  (<code>PythonCore</code>) and exposes named protocols: <code>RVAuthentication</code>,
+  <code>RVSecure</code>, <code>SessionDiscoveryProtocol</code>, <code>SandBoxMgmt</code>,
+  <code>Routing</code> and <code>NATEcho</code>. The game enforces
+  <i>"You must be logged in to SonyNP prior to logging in to Rendez-Vous."</i></li>
+</ul>
+<p>Secure Rendez-Vous streams can use <b>RC4</b> encryption and <b>ZLib</b> compression, both
+toggleable — the EBOOT logs <i>"set RC4 encryption engine for Rendez-Vous Secure streams"</i> and
+<i>"set ZLib as compression engine for Rendez-Vous Secure streams"</i> (with corresponding
+"no encryption / no compression" variants).</p>
+
+<h3>PSN as the transport layer</h3>
+<p>On PS3, Rendez-Vous rooms ride on top of Sony's matching service. The network manager calls
+<code>sceNpMatching2</code> directly for room lifecycle (create / join / leave / kick / transfer
+owner / hide-or-close room) and pulls room events with
+<code>sceNpMatching2GetEventData</code>. Other PSN services in use:</p>
+<table>
+  <tr><th>PSN service</th><th>Used for</th></tr>
+  <tr><td><code>sceNpMatching2*</code></td><td>Rooms, server lists, member updates, owner migration</td></tr>
+  <tr><td><b>NPBasic</b> (<code>sceNpBasic*</code>)</td><td>Block list, custom game invitations</td></tr>
+  <tr><td><b>NPScore</b> (<code>sceNpScore*</code>)</td><td>Online leaderboards / score reporting</td></tr>
+  <tr><td><code>sceNpProfileCallGui</code></td><td>System "view profile" UI</td></tr>
+  <tr><td><code>sceNpManagerGetNpId</code></td><td>Local <b>NPID</b> identity</td></tr>
+</table>
+<p><code>cATVNetManager</code> spins NPBasic and NPScore up and down on demand
+(<code>EnsureBasicAndScoreRunning()</code> / <code>TerminateBasicAndScore()</code>), so the title only
+holds those PSN contexts open while online features are actually live.</p>
+
+<h2>ATVNet: the Black Rock wrapper</h2>
+<p>Game code never talks to Net-Z directly; it goes through ATVNet. The two top-level managers are:</p>
+<ul>
+  <li><b><code>cNetworkManager</code></b> — owns the matchmaker mode and the NetZ instance lifecycle.
+  It has a four-state matchmaker (<code>MATCHMAKER_LAN</code>, <code>MATCHMAKER_ONLINE</code>, and two
+  transition states <code>MATCHMAKER_SWAPTOLAN</code> / <code>MATCHMAKER_SWAPTOONLINE</code>) and can
+  hot-swap between LAN and Online by tearing down and recreating NetZ. It also drives
+  <code>UpdateNetZ()</code> each frame and asserts loudly if that stalls.</li>
+  <li><b><code>cATVNetManager</code></b> — the ATVNet-level session controller: <code>Start()</code>,
+  host migration (<code>SessionMigrateHost()</code>), score reset broadcasts, and the
+  player-slot bookkeeping below.</li>
+</ul>
+<p>A small helper thread, <b><code>cKeepNetZAlive</code></b>, runs a worker loop
+(<i>"worker running / waiting / quitting"</i>) so Net-Z keeps getting serviced during otherwise-busy
+phases like level loading.</p>
+
+<h3>NetZ creation can be async / deferred</h3>
+<p>Because tearing NetZ down and standing it back up takes time, the manager guards against races:
+creating while already created destroys-and-recreates; creating during a pending termination is held
+up until termination finishes. The QA build exposes these as debug toggles
+<code>debug/AsyncNetIssues/HoldUpNetZCreation</code> and
+<code>debug/AsyncNetIssues/HoldUpNetZTermination</code> for testing the deferred paths.</p>
+
+<h2>Duplicated Objects: the replication model</h2>
+<p>Net-Z's ObjDup keeps a <b>DuplicationSpace</b> in which each replicated object has one
+<i>duplication master</i> (the authoritative station) and any number of <i>duplicas</i> on other
+stations. When a master leaves, the object <b>migrates</b> to a new master ("emigration" /
+"approving emigration" / host migration). Each DO class is defined by a <code>*DDL.cpp</code> file
+(Net-Z's Data Definition Language) and pairs a behaviour class (<code>cATVNetDO*</code>) with a plain
+data struct (<code>cATVNetDS*</code>) holding the replicated fields.</p>
+
+<table>
+  <tr><th>DO class (<code>cATVNetDO…</code>)</th><th>Data struct (<code>cATVNetDS…</code>)</th><th>Replicates</th></tr>
+  <tr><td><code>GameSetup</code></td><td><code>GameSetupData</code></td><td>Host's chosen track / mode / lobby config (the "well-known" <code>gWellKnownGameSetupHandle</code>)</td></tr>
+  <tr><td><code>RoomState</code></td><td><code>RoomStateData</code></td><td>Lobby/room phase + countdown (the "well-known" <code>gWellKnownRoomStateHandle</code>)</td></tr>
+  <tr><td><code>GameModeUpdater</code></td><td><code>GameModeData</code></td><td>Per-mode runtime state during a race</td></tr>
+  <tr><td><code>PeerGameState</code></td><td><code>PeerStateData</code></td><td>Each peer's own progress through the state machine</td></tr>
+  <tr><td><code>PlayerSetup</code></td><td><code>PlayerData</code> + <code>VehicleData</code></td><td>A player's identity and chosen vehicle (<code>mVehicle</code>)</td></tr>
+  <tr><td><code>PlayerUpdater</code></td><td><code>PlayerUpdater</code></td><td>High-frequency, unreliable per-tick state (packed position, velocity, input) — see below</td></tr>
+  <tr><td><code>PlayerDOHandles</code></td><td><code>PlayerDOHandles</code></td><td>Bundle of handles tying a player's other DOs together (one per slot)</td></tr>
+  <tr><td><code>PhysicsObjectUpdater</code></td><td><code>PhysicsObjectUpdater</code></td><td>State of a networked physics object (e.g. a powerplay-spawned hazard)</td></tr>
+  <tr><td><code>EventBase</code></td><td>—</td><td>Base class for the in-race "event updater" DOs</td></tr>
+  <tr><td><code>DOMessages</code></td><td>—</td><td>Reliable RPC channel (<code>ProcessMessage</code> / <code>ProcessMessageWithBuffer</code>)</td></tr>
+</table>
+
+<h3>What a PlayerUpdater actually carries</h3>
+<p>The DDL type table in the EBOOT exposes the replicated field names <i>and</i> their wire types. The
+high-frequency <code>cATVNetDSPlayerUpdater</code> rides the <code>unreliable</code> protocol behind an
+<code>InGameOnlyFilter</code> and packs movement and input into a compact, timestamped payload; the
+updater explicitly rejects stale packets (<i>"out-of-order update detected. last time stamp …
+this time stamp …"</i>). The fields below are exactly the members listed for
+<code>cATVNetDSPlayerUpdater</code> (no more, no less):</p>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Meaning (inferred from name)</th><th>Conf.</th></tr>
+  <tr><td><code>mPackedVelocity</code></td><td><code>uint64</code></td><td>Quantised velocity vector</td><td><span class="badge theory">Theory</span></td></tr>
+  <tr><td><code>mPhysicsTickCount</code></td><td><code>uint32</code></td><td>Physics tick for ordering / extrapolation</td><td><span class="badge ok">Confirmed</span></td></tr>
+  <tr><td><code>mPackedPos</code></td><td><code>uint16</code></td><td>Quantised position</td><td><span class="badge theory">Theory</span></td></tr>
+  <tr><td><code>mSessionClockTime</code></td><td><code>uint16</code></td><td>Net-Z SessionClock timestamp</td><td><span class="badge ok">Confirmed</span></td></tr>
+  <tr><td><code>mTargetSteer</code> / <code>mTargetPitch</code></td><td>—</td><td>Steering &amp; pitch targets</td><td><span class="badge theory">Theory</span></td></tr>
+  <tr><td><code>mPackedThrottleFootbrakeFlags</code></td><td>—</td><td>Bit-packed throttle / brake input</td><td><span class="badge theory">Theory</span></td></tr>
+</table>
+<div class="note"><code>mScore</code> and player <code>mState</code> are <i>not</i> in the PlayerUpdater —
+they live on slower-changing objects: <code>mScore</code> (<code>uint32</code>) is a field of
+<code>cATVNetDSPlayerData</code> (the PlayerSetup struct), and <code>mState</code> is the state field of
+both <code>cATVNetDSRoomStateData</code> (<code>uint64</code>) and <code>cATVNetDSPeerStateData</code>.</div>
+<p>Other replicated DS fields, by owning struct (from the same DDL type table):
+<code>mTrack</code>, <code>mGameModeIndex</code>, <code>mAIDifficulty</code> (<code>GameSetupData</code>);
+<code>mScore</code>, <code>mBuildNumber</code>, <code>mRaceForm</code>, <code>mRaceFormGuide</code>,
+<code>mAnchovies</code> (<code>PlayerData</code>); <code>mVehicleName</code>, <code>mColour</code>
+(<code>VehicleData</code>, referenced from PlayerData's <code>mVehicle</code>); <code>mState</code>,
+<code>mNumPlayers</code>, <code>mNonce</code>, <code>mEventStartTime</code>,
+<code>mRankedMatchStartTime</code>, <code>mHandles</code>, <code>mPhysicsHandle</code>
+(<code>RoomStateData</code>); and <code>mIsHumanPlayer</code>, <code>mPeerState</code>,
+<code>mPlayerSetup</code>, <code>mPlayerUpdater</code>, <code>mEventUpdater</code> (the
+<code>dohandle</code>s in <code>PlayerDOHandles</code>). <code>mAnchovies</code> (<code>uint64</code>,
+a member of PlayerData) is an internal codename consistent with Black Rock's food-themed naming
+(cf. "Catnip", "Megabowles"; the PS3 trophy backend is also <code>cAnchoviesPS3</code>).</p>
+
+<div class="tip">Because AI cars are also full DOs, the game can <b>migrate AI drivers</b> between
+consoles when a host leaves — <code>cATVNetEventSlotManager::HostMigrateAIUpdatersLoadBalanced()</code>
+spreads the bot updaters across remaining peers, and warns if <i>"there's no one we can migrate AI
+players to!"</i></div>
+
+<h2>Slots, host migration &amp; load balancing</h2>
+<p>A race is organised as a fixed array of <b>player slots</b> managed by
+<code>cATVNetEventSlotManager</code>. On the host, <code>Host_PopulateSlots()</code> fills empty slots
+with AI DOs; on a client, <code>Peer_SetupPlayerControls()</code> walks the slots and classifies each
+as <i>my player</i>, <i>one of my AIs</i>, <i>a remote human</i> or <i>a remote AI</i>. Each occupied
+slot points at a <code>cATVNetDOPlayerDOHandles</code> that ties together that player's Setup, Updater
+and PeerState DOs.</p>
+<p>When the duplication master of these objects disappears, Net-Z performs <b>host migration</b>: the
+managers approve/deny emigration and "fault recovery" per object based on whether the local peer is in
+a valid state to accept game DOs, and <code>cATVNetManager::SessionMigrateHost()</code> hands off the
+PSN room ownership in parallel (the PSN side fires
+<code>HandleRoomEventRoomOwnerChanged()</code>).</p>
+
+<h2>State machines: PeerState and RoomState</h2>
+<p>Two replicated state machines drive the lobby→race→results flow. <b>RoomState</b> is the host's
+global view; <b>PeerState</b> is each station's local view. The QA build prints every transition
+(<i>"Room State is now: %s"</i> / <i>"Local Peer State is now: %s"</i>).</p>
+
+<div style="display:flex;gap:1.5rem;flex-wrap:wrap">
+<div>
+<h3>RoomState (<code>cATVNetDORoomState</code>)</h3>
+<table>
+  <tr><th>State</th></tr>
+  <tr><td><code>UNDEFINED</code></td></tr>
+  <tr><td><code>IN_LOBBY</code></td></tr>
+  <tr><td><code>IN_COUNTDOWN</code></td></tr>
+  <tr><td><code>ARBITRATING</code></td></tr>
+  <tr><td><code>ARBITRATION_ABORTED</code></td></tr>
+  <tr><td><code>EXCHANGING_DATA</code></td></tr>
+  <tr><td><code>LOADING</code></td></tr>
+  <tr><td><code>PLAYING</code></td></tr>
+  <tr><td><code>SOMEONE_FINISHED</code></td></tr>
+  <tr><td><code>EVERYONE_FINISHED</code></td></tr>
+</table>
+</div>
+<div>
+<h3>PeerState (<code>cATVNetDOPeerGameState</code>)</h3>
+<table>
+  <tr><th>State</th></tr>
+  <tr><td><code>UNDEFINED</code></td></tr>
+  <tr><td><code>JOINING_ROOM</code></td></tr>
+  <tr><td><code>IN_LOBBY</code></td></tr>
+  <tr><td><code>ARBITRATING</code></td></tr>
+  <tr><td><code>EXCHANGING_DATA</code> / <code>EXCHANGE_DATA_FAILED</code> / <code>EXCHANGED_DATA</code></td></tr>
+  <tr><td><code>LOADING</code></td></tr>
+  <tr><td><code>READY_TO_PLAY</code></td></tr>
+  <tr><td><code>PLAYING</code></td></tr>
+  <tr><td><code>FINISHED</code> / <code>POST_RACE</code></td></tr>
+  <tr><td><code>LOST_CONNECTION</code></td></tr>
+</table>
+</div>
+</div>
+<p><b>Arbitration</b> is the host-authority handshake that gates the start of a ranked match;
+<b>EXCHANGING_DATA</b> is the phase where peers swap their <code>PlayerDOHandles</code> and verify
+everyone's in-game DOs before going to <code>LOADING</code> (<i>"We've got everyone!"</i>). If peers
+time out loading, the host can start early and drop the stragglers, or bounce the room back to the
+lobby (<i>"No peer is at LOADING! Returning room to lobby"</i>).</p>
+
+<h2>Ranked vs. Quick Match</h2>
+<p>ATVNet distinguishes two online flows, and even suppresses error popups differently in each
+(<i>"Not showing error message due to being in ranked mode"</i> /
+<i>"… due to being in quick match"</i>):</p>
+<ul>
+  <li><b>Quick Match</b> — search for an existing room, and if that fails, create one
+  (<i>"QuickMatch menu: search for rooms failed, so maybe create one"</i>). Search vs. create criteria
+  are mapped via <code>ATVNetMappings</code>, which sets a <code>GAME_NAME</code> CRC and a
+  <code>GROUP_NUMBER</code> when building the room descriptor.</li>
+  <li><b>Ranked Match</b> — uses an auto-start countdown (<code>Online/RankedMatchCountdown</code>),
+  records <code>mRankedMatchStartTime</code>, and feeds the <b>Race Form</b> reputation system below.</li>
+</ul>
+
+<h3>Race Form (anti-quit reputation)</h3>
+<p>Online results adjust a per-player "Race Form" rating, with an explicit <b>cheat / quit penalty</b>.
+These are tunable from the debug menu under <code>ATV/Online/Race Form/…</code>:</p>
+<table>
+  <tr><th>Debug parameter</th><th>Effect</th></tr>
+  <tr><td><code>Points Per Player Beaten</code></td><td>Form gained per opponent beaten</td></tr>
+  <tr><td><code>Points Per Player Lost To</code></td><td>Form lost per opponent who beat you</td></tr>
+  <tr><td><code>Cheat Penalty Points</code></td><td>Penalty applied for bad behaviour</td></tr>
+  <tr><td><code>Cheat Penalty Starts On Disconnect</code></td><td>Disconnect mid-race triggers the penalty</td></tr>
+  <tr><td><code>Cheat Penalty Increment Per Disconnect</code></td><td>Escalating penalty for repeat quitters</td></tr>
+  <tr><td><code>Worst / Best Race Form</code></td><td>Clamp range for the rating</td></tr>
+</table>
+<p>The game tracks consecutive disconnects (<i>"Player disconnected in their last race, total
+disconnects: %d"</i> → <i>"too many disconnects so adding cheat penalty"</i>) and reports the trend
+as <code>GETTING BETTER</code> / <code>GETTING WORSE</code> / <code>STAYING THE SAME</code>.</p>
+
+<h2>Bundling &amp; the in-game update rate</h2>
+<p>Net-Z batches DO updates into <b>bundles</b> per network tick. The QA build exposes the bundle
+tuning and per-mode update intervals as debug registers:</p>
+<table>
+  <tr><th>Debug parameter</th><th>Controls</th></tr>
+  <tr><td><code>Online/PerformanceTweaking/MaxBundleSize</code></td><td>Max bytes per bundle</td></tr>
+  <tr><td><code>Online/PerformanceTweaking/MaxBundleDelay</code></td><td>Max time to coalesce updates before sending</td></tr>
+  <tr><td><code>Online/PerformanceTweaking/MixBundleReliability</code></td><td>Mix reliable + unreliable data in one bundle</td></tr>
+  <tr><td><code>Online/InGame/UpdateInterval</code></td><td>In-race DO update cadence</td></tr>
+  <tr><td><code>ATV/Online/RaceEnd/Race End Countdown Length</code></td><td>Post-race countdown</td></tr>
+  <tr><td><code>ATV/Online/RaceEnd/Return To Lobby Countdown Length</code></td><td>Lobby return timer</td></tr>
+</table>
+<p>For QA, there is also a full <b>network emulation</b> layer under <code>Online/Emulation/…</code>
+that can inject artificial <code>BandwidthIn/Out</code>, <code>JitterIn/Out</code>,
+<code>LatencyIn/Out</code> and <code>PacketDropProbabilityIn/Out</code> — i.e. the testers could
+simulate bad connections locally. A <b>PerfMon</b> overlay (<code>ATV/Online/PerfMon/…</code>) can
+<i>ShowDuplicatedObjects</i> and <i>ShowCompression</i> live on screen.</p>
+
+<h2>Voice chat (AVStreams)</h2>
+<p>Voice runs over Net-Z's <b>AVStreams</b> extension
+(<code>contrib/Quazal/NetZ/lib/Extensions/…</code>), <i>not</i> through the game's
+<a href="engine-audio.html">FMOD/LLAudio2</a> engine (the many <code>Audio/Voice/…</code> debug entries
+refer to FMOD audio <i>channels</i>, a separate concept). The voice path is a replicated
+<b>VoiceChannel</b> object plus a pair of low-bitrate speech codecs:</p>
+<ul>
+  <li><b>LPC10</b> — <code>…/AVStreams/Codecs/LPC10/LPC10Codec.cpp</code></li>
+  <li><b>OpenLPC</b> — <code>…/AVStreams/Codecs/OpenLPC/OpenLPCCodec.cpp</code></li>
+</ul>
+<p>Both are classic ~2.4 kbit/s linear-predictive vocoders — tiny, intelligible-but-robotic speech,
+exactly what you want sharing the wire with gameplay traffic. <code>VoiceChannel</code> (with its DDL
+twin) manages stream allocation and routing: <code>OpenLocalStream</code> /
+<code>CloseLocalStream</code>, <code>GetAvailableStream</code> / <code>ReclaimStream</code> /
+<code>ReleaseStream</code>, and packet handling (<code>HandleVoicePacket</code>,
+<code>HandleJoin</code>, <code>HandleLeave</code>). Its replicated <code>ChannelInfo</code> struct
+carries the codec id and stream parameters:</p>
+<table>
+  <tr><th>ChannelInfo field</th><th>Meaning</th></tr>
+  <tr><td><code>m_byCodec</code></td><td>Which codec (LPC10 / OpenLPC)</td></tr>
+  <tr><td><code>m_byNbStreams</code></td><td>Number of concurrent voice streams</td></tr>
+  <tr><td><code>m_byTransmissionFrequency</code></td><td>Send rate</td></tr>
+  <tr><td><code>m_uiPacketSize</code></td><td>Voice packet size</td></tr>
+  <tr><td><code>m_strDescription</code></td><td>Channel description</td></tr>
+  <tr><td><code>m_dsMemberList</code> / <code>m_dsChannelMembers</code></td><td>Replicated member list</td></tr>
+</table>
+<p>On the game side, each talker is a <code>cNetChatParticipant</code> whose
+<code>cNetChatParticipantInfo</code> exposes <code>mActiveIndex</code> and
+<code>mIsHeadsetAttached</code>. The frontend mirrors this with debug flags for both lobby and in-race
+voice: <code>ATV/Online/Voice/Room - Has Headset / Is Talking / Muted</code> and the matching
+<code>… In Game - …</code> set.</p>
+
+<h2>Errors &amp; fault handling</h2>
+<p>Net-Z and Rendez-Vous surface a rich error taxonomy. Rendez-Vous login errors include
+<code>NotAuthenticated</code>, <code>InvalidUsername</code>, <code>InvalidPassword</code>,
+<code>AccountDisabled</code>, <code>AccountExpired</code>, <code>ConcurrentLoginDenied</code>,
+<code>EncryptionFailure</code> and <code>InvalidOperationInLiveEnvironment</code>; transport errors
+include <code>ConnectionFailure</code>, <code>Timeout</code> and <code>NATEcho</code>-related
+connectivity tests. Join failures distinguish <code>JoinDenied</code> from
+<code>ConnectivityTestFailed</code> and report the raw Quazal error code. If a station is orphaned
+(loses its host) it logs <i>"We've become orphaned - leaving room."</i></p>
+
+<div class="warn">This is an offline-only era of PSN: the original Rendez-Vous back-end servers for
+Split/Second are long dead, so none of this is reachable today. The value here is historical /
+reverse-engineering — the build documents the protocol, not a live service.</div>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="engine-middleware.html">Middleware Stack</a> — where Quazal/Net-Z sits among Havok, FMOD, Bink, Scaleform, Edge.</li>
+  <li><a href="engine-audio.html">Audio Engine</a> — the FMOD/LLAudio2 path (distinct from network voice).</li>
+  <li><a href="engine-jobstream.html">Threading &amp; JobStream</a> — main/worker threads, incl. the NetZ keep-alive worker.</li>
+  <li><a href="system-gamemodes.html">Game Modes</a> — the modes a room can host.</li>
+  <li><a href="system-scoring.html">Scoring &amp; Progression</a> — leaderboards reported via NPScore.</li>
+  <li><a href="build-layout.html">Build &amp; File Layout</a> — the devkit build these strings come from.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

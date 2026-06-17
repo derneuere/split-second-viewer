@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>All File Formats (Index) — Split/Second RE Wiki</title>
+<meta name="description" content="Master index of every file extension in the Split/Second devkit build, with counts, sizes and links to its format page.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="All File Formats (Index)" data-category="Overview">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<h1>All File Formats — Master Index</h1>
+<p>Every distinct file extension found under <code>USRDIR/Deferred</code> in the devkit build
+(<strong>15,703 files, ~5.2&nbsp;GB</strong>, ~66 extensions), with file counts, on-disk totals, a
+one-line role, and a link to the page that documents it. Use this as the map; click an extension to
+jump to its full write-up. See <a href="build-layout.html">Build &amp; File Layout</a> for the directory tree.</p>
+
+<div class="note">Sizes are on-disk totals for the loose (uncooked) devkit data. All binary formats are
+<strong>big-endian</strong> (PS3 PowerPC). Confidence badges live on each format's own page.</div>
+
+<h2>Geometry &amp; Render</h2>
+<table>
+<tr><th>Ext</th><th>Files</th><th>Size</th><th>Role</th></tr>
+<tr><td><a href="format-model.html"><code>.model</code></a></td><td>2425</td><td>427.7 MB</td><td>Crayon2 renderable-geometry container (meshes, LODs, vertex/index buffers)</td></tr>
+<tr><td><a href="format-streamtex.html"><code>.model.stream</code></a></td><td>46</td><td>—</td><td>High-LOD vertex payload paired with a stub <code>.model</code></td></tr>
+<tr><td><a href="format-shaders.html"><code>.shaders</code></a></td><td>2357</td><td>10.5 MB</td><td>Shader-set register blocks (SHDR), keyed by material-combo CRC</td></tr>
+<tr><td><a href="format-shaders.html"><code>.shaderinst</code></a></td><td>710</td><td>4.8 MB</td><td>Per-mesh shader-instance bindings &amp; overrides</td></tr>
+<tr><td><a href="format-fxc.html"><code>.fxc</code></a></td><td>2357</td><td>170.6 MB</td><td>Compiled effect/material + texture data paired with each model</td></tr>
+<tr><td><a href="format-textures.html"><code>.textures</code></a></td><td>767</td><td>528.8 MB</td><td>GPU textures (RSX/GTF, DXT); <code>.low.textures</code> = streamed mip</td></tr>
+<tr><td><a href="format-streamtex.html"><code>.streamtex</code></a></td><td>46</td><td>102.0 MB</td><td>Streamed texture payloads</td></tr>
+<tr><td><a href="format-streamtex.html"><code>.stream</code></a></td><td>46</td><td>53.8 MB</td><td>Streamed geometry payloads</td></tr>
+<tr><td><a href="format-skel.html"><code>.skel</code></a></td><td>705</td><td>4.3 MB</td><td>"ftsc" bone-hierarchy skeletons (→ Havok hkaSkeleton)</td></tr>
+<tr><td><a href="format-crcs.html"><code>.crcs</code></a></td><td>1703</td><td>&lt;0.1 MB</td><td>CRC reference lists (<code>.tex.crcs</code>, <code>.texture.crcs</code>)</td></tr>
+</table>
+
+<h2>Physics (Havok 5.5)</h2>
+<p>Most physics files are <a href="format-havok.html">Havok packfiles</a> (magic <code>57 E0 E0 57</code>); the
+<code>*Xml</code> twins are the Havok XML serialization of the same data and document the class layouts exactly.</p>
+<table>
+<tr><th>Ext</th><th>Files</th><th>Size</th><th>Role</th></tr>
+<tr><td><a href="format-phys.html"><code>.phys</code></a></td><td>21</td><td>1.1 MB</td><td>Per-vehicle Havok physics system (rigid body, mass, collision)</td></tr>
+<tr><td><a href="format-hkcoll.html"><code>.hkColl</code></a> / <a href="format-hkcoll.html"><code>.hkCollXml</code></a></td><td>32 / 32</td><td>22.3 / 62.3 MB</td><td>Level &amp; common collision meshes (+ XML twin)</td></tr>
+<tr><td><a href="format-hkcoll.html"><code>.mainColl</code></a></td><td>39</td><td>0.2 MB</td><td>Per-vehicle main collision shape</td></tr>
+<tr><td><a href="format-mcl.html"><code>.mcl</code></a></td><td>1636</td><td>3.6 MB</td><td>Powerplay/prop mesh collision</td></tr>
+<tr><td><a href="format-hkpps.html"><code>.hkPPs</code></a> / <a href="format-hkpps.html"><code>.hkPPsXml</code></a></td><td>19 / 19</td><td>46.2 / 173.8 MB</td><td>Packaged physics systems (+ XML twin)</td></tr>
+<tr><td><a href="format-hkrbs.html"><code>.hkRBs</code></a> / <a href="format-hkrbs.html"><code>.hkRBsXml</code></a></td><td>19 / 19</td><td>4.4 / 22.0 MB</td><td>Rigid-body sets (+ XML twin)</td></tr>
+<tr><td><a href="format-hkrbs.html"><code>.hkRBXs</code></a> / <a href="format-hkrbs.html"><code>.hkRBXsXml</code></a></td><td>10 / 10</td><td>0.3 / 1.7 MB</td><td>Extended rigid-body sets (+ XML twin)</td></tr>
+<tr><td><a href="format-hkrbs.html"><code>.hkHBXs</code></a> / <a href="format-hkrbs.html"><code>.hkHBXsXml</code></a></td><td>1 / 1</td><td>&lt;0.1 / 0.2 MB</td><td>Hinge/constraint body set (+ XML twin)</td></tr>
+<tr><td><a href="format-havok.html"><code>.hk</code></a></td><td>2</td><td>0.3 MB</td><td>Generic Havok packfile</td></tr>
+<tr><td><a href="format-deform.html"><code>.deform</code></a></td><td>46</td><td>1.0 MB</td><td>Vehicle damage/deformation model</td></tr>
+</table>
+
+<h2>Audio &amp; Video</h2>
+<table>
+<tr><th>Ext</th><th>Files</th><th>Size</th><th>Role</th></tr>
+<tr><td><a href="format-fsb.html"><code>.fsb</code></a></td><td>73</td><td>214.7 MB</td><td>FMOD sample/stream sound banks</td></tr>
+<tr><td><a href="format-fev.html"><code>.fev</code></a></td><td>73</td><td>0.5 MB</td><td>FMOD Designer event project data</td></tr>
+<tr><td><a href="format-lip.html"><code>.lip</code></a></td><td>18</td><td>1.5 MB</td><td>Voice lip-sync / viseme data</td></tr>
+<tr><td><a href="format-tonic.html"><code>.tonic</code></a> / <a href="format-tonic.html"><code>.tonic2</code></a></td><td>24 / 24</td><td>61.1 / 30.5 MB</td><td>Custom audio/music streaming format</td></tr>
+<tr><td><a href="format-bik.html"><code>.bik</code></a></td><td>29</td><td>953.4 MB</td><td>RAD Bink video (movies/intros)</td></tr>
+<tr><td><a href="format-nis.html"><code>.nis</code></a> / <a href="format-nis.html"><code>.gbx</code></a></td><td>18 / 18</td><td>&lt;0.1 MB</td><td>Non-interactive sequence metadata</td></tr>
+</table>
+
+<h2>FX &amp; Particles</h2>
+<table>
+<tr><th>Ext</th><th>Files</th><th>Size</th><th>Role</th></tr>
+<tr><td><a href="format-emitter.html"><code>.emitterControllers</code></a></td><td>90</td><td>14.6 MB</td><td>Particle emitter controller data</td></tr>
+<tr><td><a href="format-emitter.html"><code>.emitterSurfaces</code></a></td><td>91</td><td>0.4 MB</td><td>Particle emission surfaces</td></tr>
+<tr><td><a href="format-lights.html"><code>.lights</code></a></td><td>19</td><td>0.4 MB</td><td>Light placement / light-rig data</td></tr>
+</table>
+
+<h2>Gameplay (Catnip)</h2>
+<table>
+<tr><th>Ext</th><th>Files</th><th>Size</th><th>Role</th></tr>
+<tr><td><a href="format-entities.html"><code>.entities</code></a></td><td>19</td><td>&lt;0.1 MB</td><td>Catnip entity instances per level</td></tr>
+<tr><td><a href="format-powerplays.html"><code>.powerplays</code></a></td><td>20</td><td>4.1 MB</td><td>Powerplay definitions per level</td></tr>
+<tr><td><a href="format-triggers.html"><code>.triggers</code></a></td><td>20</td><td>0.2 MB</td><td>Trigger volumes / powerplay trigger buttons</td></tr>
+<tr><td><a href="format-timeline.html"><code>.timelineInfo</code></a></td><td>88</td><td>0.3 MB</td><td>Catnip timeline sequencing</td></tr>
+<tr><td><a href="format-logicinfo.html"><code>.logicinfo</code></a></td><td>18</td><td>&lt;0.1 MB</td><td>Gameplay logic metadata</td></tr>
+<tr><td><a href="format-highlighttags.html"><code>.highlighttags</code></a></td><td>10</td><td>0.1 MB</td><td>Replay / highlight tagging</td></tr>
+</table>
+
+<h2>Track &amp; Route</h2>
+<table>
+<tr><th>Ext</th><th>Files</th><th>Size</th><th>Role</th></tr>
+<tr><td><a href="format-route.html"><code>.checkpoints</code></a></td><td>18</td><td>&lt;0.1 MB</td><td>Checkpoint positions along the route</td></tr>
+<tr><td><a href="format-route.html"><code>.sideways</code></a></td><td>18</td><td>&lt;0.1 MB</td><td>Lateral track-width / racing-line data</td></tr>
+<tr><td><a href="format-route.html"><code>.splitlength</code></a></td><td>18</td><td>&lt;0.1 MB</td><td>Per-split route lengths</td></tr>
+<tr><td><a href="format-route.html"><code>.linkorigins</code></a></td><td>18</td><td>&lt;0.1 MB</td><td>Route-link origin points (branching)</td></tr>
+<tr><td><a href="format-sectors.html"><code>.sectorInfo</code></a></td><td>10</td><td>0.4 MB</td><td>Track sector partitioning (streaming/AI)</td></tr>
+<tr><td><a href="format-names.html"><code>.names</code></a> / <a href="format-names.html"><code>.filenames</code></a></td><td>11 / 5</td><td>&lt;0.1 MB</td><td>String / lookup tables</td></tr>
+<tr><td><a href="format-powerplayinfo.html"><code>.dat</code></a></td><td>10</td><td>&lt;0.1 MB</td><td>Per-level <code>*_powerplayInfo.dat</code></td></tr>
+</table>
+
+<h2>Data &amp; Config</h2>
+<table>
+<tr><th>Ext</th><th>Files</th><th>Size</th><th>Role</th></tr>
+<tr><td><a href="data-params.html"><code>.params</code></a></td><td>727</td><td>10.9 MB</td><td>Plaintext tuning key/value files with slider ranges</td></tr>
+<tr><td><a href="data-globalregs.html"><code>.global_regs</code></a></td><td>1</td><td>0.1 MB</td><td>Master default registry (<code>default.global_regs</code>)</td></tr>
+<tr><td><a href="data-xml.html"><code>.xml</code></a></td><td>680</td><td>16.2 MB</td><td>VehicleDatabase, Cameras, Season, Havok twins, collision_tl…</td></tr>
+</table>
+
+<h2>Archive &amp; Misc</h2>
+<table>
+<tr><th>Ext</th><th>Files</th><th>Size</th><th>Role</th></tr>
+<tr><td><a href="format-ark.html"><code>.ark</code></a></td><td>20</td><td>2,279.0 MB</td><td>Packed asset archive (TOC + blobs)</td></tr>
+<tr><td><a href="format-gfx.html"><code>.gfx</code></a></td><td>82</td><td>2.5 MB</td><td>Scaleform GFx/SWF UI assets</td></tr>
+<tr><td><a href="format-misc.html"><code>.data</code></a> / <a href="format-misc.html"><code>.rdata</code></a></td><td>91 / 42</td><td>1.5 / &lt;0.1 MB</td><td>Generic data / relocation-data blobs</td></tr>
+<tr><td><a href="format-misc.html"><code>.bin</code></a></td><td>3</td><td>10.7 MB</td><td>Generic binary blobs</td></tr>
+<tr><td><a href="format-misc.html"><code>.dct</code></a></td><td>16</td><td>0.2 MB</td><td>Dictionary tables</td></tr>
+<tr><td><a href="format-misc.html"><code>.controllerTemplate</code></a></td><td>1</td><td>&lt;0.1 MB</td><td>Input controller mapping template</td></tr>
+<tr><td><a href="format-misc.html"><code>.ker</code></a> / <a href="format-misc.html"><code>.bed</code></a></td><td>1 / 1</td><td>&lt;0.1 MB</td><td>Small singletons (see Misc &amp; Raw)</td></tr>
+<tr><td><a href="format-misc.html"><code>.png</code></a></td><td>2</td><td>&lt;0.1 MB</td><td>Standard PNG images (source/debug art)</td></tr>
+<tr><td><a href="format-names.html"><code>.txt</code></a></td><td>116</td><td>0.7 MB</td><td>Plain text (ChassisName, dirlist, etc.)</td></tr>
+</table>
+
+<h2>Telemetry</h2>
+<table>
+<tr><th>Ext</th><th>Files</th><th>Size</th><th>Role</th></tr>
+<tr><td><a href="format-track.html"><code>.track</code></a></td><td>111</td><td>0.7 MB</td><td>TrackTivity recorded driving telemetry / ghost streams</td></tr>
+</table>
+
+<hr>
+<h3>Related pages</h3>
+<ul>
+<li><a href="index.html">Home</a> · <a href="engine-overview.html">Engine Architecture</a> · <a href="build-layout.html">Build &amp; File Layout</a></li>
+<li><a href="format-havok.html">Havok Packfiles</a> — the shared container behind all <code>.hk*</code>/<code>.phys</code> files</li>
+<li><a href="data-catnip.html">Catnip Entity System</a> — ties the gameplay formats to the runtime</li>
+</ul>
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

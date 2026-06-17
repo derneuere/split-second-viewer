@@ -8,6 +8,7 @@
 import {
 	parseTextures,
 	decodeLargestTexture,
+	decodeAllInline,
 	TEXS_MAGIC_BYTES,
 	type ParsedTextures,
 } from '../../textures';
@@ -18,9 +19,10 @@ export const texturesHandler: ResourceHandler<ParsedTextures> = {
 	name: 'Texture Set (TEXS)',
 	description:
 		'Black Rock Crayon2 "TEXS" texture-set container: 24-byte header, 0x24-byte ' +
-		'descriptor records (DXT1/DXT5/A8R8G8B8, dims, mips, CRC) and a C2NM name ' +
-		'trailer. Single-texture files store swizzled pixels inline; frontend stubs ' +
-		'point at a sibling .streamtex. Read-only; decodes DXT1/DXT5/A8R8G8B8 to RGBA.',
+		'descriptor records (DXT1/DXT3/DXT5/A8R8G8B8, dims, mips, CRC) and a C2NM name ' +
+		'trailer. Single- and multi-texture files store pixels inline; frontend stubs ' +
+		'point at a sibling .streamtex. Read-only; decodes BC1/BC2/BC3 + A8R8G8B8 to ' +
+		'RGBA (linear, with an RSX Morton de-swizzle fallback).',
 	category: 'Graphics',
 	caps: { read: true, write: false },
 	extensions: ['.textures'], // also claims .low.textures (extensionOf takes the last dot)
@@ -43,7 +45,12 @@ export const texturesHandler: ResourceHandler<ParsedTextures> = {
 	},
 
 	fixtures: [
-		// Single-texture inline DXT1 (1024x2048, full mip chain).
+		// Single-texture inline DXT1 (1024x2048, full mip chain) — vehicle bodyPaint.
+		{
+			file: 'Vehicles/Bodies/Musclecar_01/Musclecar_01_bodyPaint.textures',
+			expect: { parseOk: true },
+		},
+		// Single-texture inline DXT1 (1024x2048) — vehicle damageMap.
 		{
 			file: 'Vehicles/Bodies/Musclecar_01/Musclecar_01_damageMap.textures',
 			expect: { parseOk: true },
@@ -58,9 +65,19 @@ export const texturesHandler: ResourceHandler<ParsedTextures> = {
 			file: 'Vehicles/Frontend/Bodies/Musclecar_01/Musclecar_01.textures',
 			expect: { parseOk: true },
 		},
-		// Single A8R8G8B8 skydome.
+		// Single A8R8G8B8 skydome (256x64, 9 mips).
 		{
 			file: 'Environments/Levels/airport_test_03/ReflectionMap/Skydomes/Skydome_Midday.textures',
+			expect: { parseOk: true },
+		},
+		// Square 512x512 A8R8G8B8 skydome (single mip) — swizzle-eligible, proven linear.
+		{
+			file: 'Environments/Levels/Downtown/Skydome/Skydome_Midday.textures',
+			expect: { parseOk: true },
+		},
+		// Multi-texture inline: 3× A8R8G8B8 1024x32 ColorCube LUTs.
+		{
+			file: 'UI/Frontend/ColorCubes/ColorCubes.textures',
 			expect: { parseOk: true },
 		},
 	],
@@ -91,5 +108,5 @@ export const texturesHandler: ResourceHandler<ParsedTextures> = {
 	],
 };
 
-// Re-export the inline decode helper so a viewport can call it with raw bytes.
-export { decodeLargestTexture };
+// Re-export the inline decode helpers so a viewport can call them with raw bytes.
+export { decodeLargestTexture, decodeAllInline };

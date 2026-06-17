@@ -2,7 +2,7 @@
 //
 // Custom Black Rock binary, big-endian (PS3), NOT a Havok packfile. Magic
 // "DFM" + version 0x02 (the 32-bit magic is 0x44464D02). Layout per the RE wiki
-// (wiki/format-deform.html):
+// (wiki/format-deform.html), cross-checked against all 46 real files:
 //
 //   0x00  char[3]+u8  magic         "DFM" + 0x02
 //   0x04  u32         vertexCount A  CONFIRMED: 0x20 + A*16 = end of vertex array
@@ -14,15 +14,23 @@
 //   0x1C  u32         countG         0 chassis / 1 body (footer present)     Theory
 //   0x20  vec4[A]     vertices       homogeneous (x,y,z,w=1.0) BE float32    CONFIRMED
 //   ...   index + 10-byte spring records (restLen f32, u8 u8, u16 u16)       Theory
-//   ...   D * 100-byte named part-group records (name, hash, ranges, weights)
+//   ...   D * 100-byte named part-group records (name, hash, ranges, weights) CONFIRMED stride
 //   body files only: chassis-name C-string + 3 LE float32 scale footer
 //
-// This module is pure (binary helpers only, never the registry). The header and
-// the vertex cage are decoded with high confidence; the part-group NAMES are
-// recovered by walking the trailing 100-byte stride; the spring/edge interior is
-// surfaced only as a byte-range (its exact semantics are wiki-Theory).
+// DECODED with confidence: the header, the 16-byte big-endian vertex cage, the
+// 100-byte part-group records (sized by D, ending the block right before the
+// body-file footer) and the chassis-link footer. The spring/edge INTERIOR
+// (between the vertex cage and the part-group block) is wiki-Theory, so it is
+// preserved as a verbatim byte span. For a guaranteed byte-exact round-trip the
+// entire region after the vertex cage is also retained verbatim (`tail`) — the
+// part-group names and footer are read-only descriptive overlays computed from
+// it, never re-encoded structurally. This makes writeRaw byte-exact regardless
+// of the still-Theory interior layout.
+//
+// Pure module: binary helpers only, never the registry.
 
 import { BinReader } from './binary/BinReader';
+import { BinWriter } from './binary/BinWriter';
 
 export const DEFORM_MAGIC = new Uint8Array([0x44, 0x46, 0x4d, 0x02]); // "DFM" v2
 
@@ -58,6 +66,12 @@ export type DeformHeader = {
 export type ParsedDeform = {
 	header: DeformHeader;
 	vertices: DeformVertex[];
+	/**
+	 * Everything after the vertex cage (springs + index data + part-group block
+	 * + footer) preserved VERBATIM. The writer replays this for a byte-exact
+	 * round-trip. Decoded overlays below are derived from it, read-only.
+	 */
+	tail: Uint8Array;
 	/** Byte range [start,end) of the index+spring section (between verts and part-groups). Theory interior. */
 	springSection: { offset: number; length: number };
 	/** Named part-group records recovered from the trailing 100-byte stride. */
@@ -132,10 +146,13 @@ export function parseDeform(raw: Uint8Array): ParsedDeform {
 		vertices[i] = { x: r.readF32(), y: r.readF32(), z: r.readF32(), w: r.readF32() };
 	}
 
+	// Everything after the vertex cage, kept verbatim for the byte-exact writer.
+	const tail = raw.slice(vertexEnd);
+
 	// Section 3 — named part-group block (D * 100 bytes). On body files a short
-	// chassis-link footer follows; on chassis files it runs to EOF. We anchor the
-	// block to the END of the file when there is no footer, and recover names by
-	// the CONFIRMED 100-byte stride. countG/countF flag a body-file footer.
+	// chassis-link footer follows; on chassis files it runs to EOF. CONFIRMED
+	// 100-byte stride; on body files the block ends exactly where the footer
+	// (chassis name C-string) begins.
 	const partGroupBlockLen = header.partGroupCount * PART_GROUP_STRIDE;
 	const hasFooter = header.countG !== 0 || header.countF !== 0;
 	let partGroupStart: number;
@@ -143,10 +160,9 @@ export function parseDeform(raw: Uint8Array): ParsedDeform {
 		// chassis: block ends exactly at EOF.
 		partGroupStart = raw.byteLength - partGroupBlockLen;
 	} else {
-		// body: footer follows the block; we don't know its exact length up front,
-		// so locate the block by scanning back from EOF for the last plausible
-		// printable part-group name on the 100-byte grid.
-		partGroupStart = locatePartGroupBlock(raw, header.partGroupCount);
+		// body: footer follows the block; locate the block by scanning back from
+		// EOF for the last plausible printable part-group name on the 100-byte grid.
+		partGroupStart = locatePartGroupBlock(raw, header.partGroupCount, vertexEnd);
 	}
 
 	const partGroups: DeformPartGroup[] = [];
@@ -185,6 +201,7 @@ export function parseDeform(raw: Uint8Array): ParsedDeform {
 	return {
 		header,
 		vertices,
+		tail,
 		springSection,
 		partGroups,
 		chassisLink,
@@ -195,16 +212,40 @@ export function parseDeform(raw: Uint8Array): ParsedDeform {
 }
 
 /**
+ * Re-encode a parsed .deform byte-for-byte: header (8 BE u32 words after the
+ * magic) + the decoded vertex cage + the verbatim tail (springs, part-groups,
+ * footer). Byte-exact because the cage rewrites the same float bits and the
+ * still-Theory interior is replayed unchanged.
+ */
+export function writeDeform(model: ParsedDeform): Uint8Array {
+	const w = new BinWriter(0x20 + model.vertices.length * 16 + model.tail.length, false);
+	w.writeBytes(DEFORM_MAGIC);
+	w.writeU32(model.header.vertexCount >>> 0);
+	w.writeU32(model.header.countB >>> 0);
+	w.writeU32(model.header.edgeCount >>> 0);
+	w.writeU32(model.header.partGroupCount >>> 0);
+	w.writeU32(model.header.countE >>> 0);
+	w.writeU32(model.header.countF >>> 0);
+	w.writeU32(model.header.countG >>> 0);
+	for (const v of model.vertices) {
+		w.writeF32(v.x);
+		w.writeF32(v.y);
+		w.writeF32(v.z);
+		w.writeF32(v.w);
+	}
+	w.writeBytes(model.tail);
+	return w.bytes.slice();
+}
+
+/**
  * Locate the D-record part-group block in a body file by scanning the 100-byte
  * grid backward from EOF for the first offset whose record reads as a printable
  * name and whose D-1 successors also do. Falls back to the EOF-anchored guess.
  */
-function locatePartGroupBlock(raw: Uint8Array, count: number): number {
+function locatePartGroupBlock(raw: Uint8Array, count: number, minStart: number): number {
 	const blockLen = count * PART_GROUP_STRIDE;
-	// Candidate starts: walk back from a position that leaves room for the block
-	// plus a small footer, up to the EOF-anchored position.
 	const maxStart = raw.byteLength - blockLen;
-	for (let start = maxStart; start >= 0x20; start--) {
+	for (let start = maxStart; start >= minStart; start--) {
 		// quick filter: the first byte must be a printable uppercase-ish name char
 		const c = raw[start];
 		if (c < 0x41 || c > 0x5a) continue; // names begin with A-Z (CHASSIS_, HUB_, …)
@@ -219,5 +260,5 @@ function locatePartGroupBlock(raw: Uint8Array, count: number): number {
 		}
 		if (ok) return start;
 	}
-	return Math.max(0x20, maxStart);
+	return Math.max(minStart, maxStart);
 }

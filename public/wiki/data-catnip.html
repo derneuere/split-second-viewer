@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Catnip Entity System — Split/Second RE Wiki</title>
+<meta name="description" content="Catnip: Black Rock's data-driven entity / timeline / scripting system that drives powerplays, triggers, interactive objects, audio events, lens flares and FX.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Catnip Entity System" data-category="Data &amp; Config">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Catnip Entity System</h1>
+<p><b>Catnip</b> is Black Rock Studio's in-house, data-driven entity / timeline / scripting layer. It is the
+glue that turns the game's loose data files — <a href="format-entities.html">entities</a>,
+<a href="format-powerplays.html">powerplays</a>, <a href="format-triggers.html">triggers</a>,
+<a href="format-timeline.html">timelines</a> and the interactive-object physics meshes — into the runtime
+behaviour you see on track: a trigger volume fires a powerplay, the powerplay plays a <b>timeline</b>, and the
+timeline sequences keyframed model animations, particle/light/screen FX, lens flares, area-of-effect explosions,
+audio events and AI route changes against a single clock. Almost every spectacular set-piece in Split/Second
+(the exploding jets, the collapsing crane, the falling silo) is a Catnip timeline.</p>
+
+<div class="infobox"><div class="ib-title">Catnip</div><table>
+  <tr><th>Role</th><td>Entity / timeline / scripting system</td></tr>
+  <tr><th>Codename</th><td>"Catnip" (a.k.a. "Nipplecat" live-update)</td></tr>
+  <tr><th>Authoring fmt</th><td>XML (<code>&lt;Root FileVersion="..."&gt;</code>)</td></tr>
+  <tr><th>Runtime fmt</th><td>XML + binary (<code>ENTS</code>, timeline/logic blobs)</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3) for binary blobs</td></tr>
+  <tr><th>Drives</th><td>Powerplays, triggers, FX, audio, AOE, AI routes</td></tr>
+  <tr><th>Source paths</th><td><code>Catnip/Powerplay/…</code>, <code>Catnip/Trigger/…</code>, <code>Catnip/Audio/…</code></td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<div class="note">The "Catnip" name only survives in the <a href="engine-overview.html">EBOOT</a> as a set of serialiser
+namespaces — <code>Catnip/Powerplay/Powerplay/</code>, <code>Catnip/Trigger/Trigger/</code>,
+<code>Catnip/Powerplay/Timeline/</code>, <code>Catnip/Audio/Timeline/AudioEvent/</code>,
+<code>Catnip/Physics/InteractiveObjects/</code>, <code>Catnip/LensFlare/</code>, <code>Catnip/Lighting/</code> and
+<code>Catnip/PowerplayTimelines/</code>. These strings are the per-class registration tags Catnip uses when it
+reads each block; there is no monolithic ".catnip" file. The data simply lives next to each level.</div>
+
+<h2>What Catnip is</h2>
+<p>Catnip is not a scripting language in the bytecode sense — there is no VM. It is a <b>declarative event
+graph</b>: data files describe <i>entities</i> (boxes, spheres, triggers, start positions, pickups),
+<i>powerplays</i> (named set-pieces with a power level and event list), <i>triggers</i> (spatial volumes that own
+powerplays), and <i>timelines</i> (an ordered list of timed effects). Everything is keyed by a stable
+<b>id</b> string of the form <code>&lt;authoring-session&gt;.&lt;ordinal&gt;</code> (e.g. <code>1223996260.2</code>)
+and a 32-bit <b>idCRC</b> (e.g. <code>0x9C5AA2F4</code>). The CRC is what the runtime actually resolves; the
+human-readable id survives only for tooling and debugging.</p>
+
+<p>The EBOOT's subsystem registry lists the runtime owners that consume Catnip data, each tagged with the team
+that authored it:</p>
+<table>
+  <tr><th>Runtime class / subsystem</th><th>Team tag</th><th>Consumes</th></tr>
+  <tr><td><code>cPowerplayManager</code> (new / load)</td><td>Powerplays</td><td><code>.powerplays</code> XML</td></tr>
+  <tr><td><code>cPowerplayController</code></td><td>Powerplay Controller</td><td>runtime powerplay state machine</td></tr>
+  <tr><td><code>cPowerplayMaterialManager</code></td><td>Powerplays</td><td><code>MasterMaterial</code> ids</td></tr>
+  <tr><td><code>PowerplaySequenceDirector</code></td><td>Camera Director</td><td>takedown camera sequences</td></tr>
+  <tr><td><code>cTimelineManager</code></td><td>System</td><td>timeline <code>_T.xml</code> + <code>.timelineInfo</code></td></tr>
+  <tr><td><code>cAudioTimelineManager</code></td><td>Effects Code</td><td>Timeline Audio Entries</td></tr>
+  <tr><td><code>cMovingAssetsManager</code></td><td>Effects Code</td><td>keyframed model animations</td></tr>
+  <tr><td>Trigger Manager / Entities</td><td>Gameplay</td><td><code>.triggers</code> XML, <code>.entities</code> (<code>ENTS</code>)</td></tr>
+  <tr><td><code>cAreaOfEffectManager</code></td><td>Action Zone</td><td>Timeline AOE effects</td></tr>
+  <tr><td>Lens Flare Resources</td><td>Effects Art</td><td><code>Catnip/LensFlare</code> entries</td></tr>
+  <tr><td><code>cMegabowlesController</code></td><td>—</td><td>automated powerplay test harness</td></tr>
+</table>
+<blockquote>Source: <code>eboot_strings.txt</code> subsystem-registry block (lines ~17726–18072) and the Catnip
+namespace strings (lines 19240, 19258–19259, 21745, 21959–21960, 24092, 27644, 27721–27723, 30834).</blockquote>
+
+<h2>The data flow: trigger → powerplay → timeline</h2>
+<p>A single set-piece chains together three files, all stored under a level's subtrack folder
+(<code>Environments/Levels/&lt;level&gt;/Subtracks/&lt;A–D&gt;/</code>):</p>
+<table class="struct">
+  <tr><th>Step</th><th>File</th><th>What it provides</th></tr>
+  <tr><td>1 — Spatial volume</td><td><code>&lt;level&gt;.triggers</code></td><td>A position+radius volume that <i>owns</i> one powerplay and lists the timelines to fire</td></tr>
+  <tr><td>2 — Set-piece definition</td><td><code>&lt;level&gt;.powerplays</code></td><td>The powerplay's name, power level, master material, world matrix and <code>EventParams</code></td></tr>
+  <tr><td>3 — Sequence</td><td><code>Powerplays/Timelines/&lt;level&gt;/&lt;name&gt;_T.xml</code></td><td>The ordered list of timed effects (anim, FX, audio, AOE, route changes)</td></tr>
+  <tr><td>4 — Geometry / physics</td><td><code>Powerplays/Animations/&lt;level&gt;/&lt;pp&gt;/*.mcl, *.model</code></td><td>Interactive-object collision (<code>.mcl</code>) and renderable assets the timeline shows/hides/animates</td></tr>
+</table>
+
+<p>Concretely, in <code>docks.triggers</code> a trigger declares its volume and the powerplay it fires:</p>
+<pre>&lt;Trigger nameCRC="0x86AE958D" id="1224175005.4" idCRC="0x4D76B619" triggerType="Standard"
+         enabled="true" autoTrigger="false" enableForOwningPlayer="false"
+         enableForOpponents="false" dontSetOwner="false" notActiveOnLastLap="false"&gt;
+   &lt;posAndScale X="-933.56476" Y="0.0000000" Z="222.84633" W="100.00000"/&gt;
+   &lt;Powerplay id="1224174882.2" idCRC="0x9FC2B522"&gt;
+      &lt;Timeline id="1224174577.4"  idCRC="0xD099061B"/&gt;
+      &lt;Timeline id="1256748727.1565529610" idCRC="0x1573DBA"/&gt;
+   &lt;/Powerplay&gt;
+&lt;/Trigger&gt;</pre>
+<p>The matching powerplay in <code>docks.powerplays</code> is the <i>PA01 ship-to-shore crane</i>
+(<code>idCRC="0x9FC2B522"</code>), and the <code>Timeline name="Powerplays\Timelines\docks\PA01_ship_to_shore_crane_T.xml"</code>
+inside it points at the actual sequence. The <code>posAndScale.W</code> field is the trigger radius (here 100 m).</p>
+
+<div class="tip"><b>The id is a date stamp.</b> The left half of every Catnip id (e.g. <code>1224174882</code>) is a
+Unix-style authoring timestamp — these are 2008–2010 dates from when the level designer first placed the object.
+The right half is a per-session ordinal. The 32-bit <code>idCRC</code> is the only part the runtime hashes.</div>
+
+<h2>Powerplays (<code>.powerplays</code>, XML)</h2>
+<p>The <code>.powerplays</code> file is an XML list (<code>&lt;Root FileVersion="1.0000000"&gt;</code>) of
+<code>&lt;Powerplay&gt;</code> elements. Each powerplay carries the gameplay metadata exposed in the
+<a href="system-powerplay.html">powerplay system</a> debug menu (<code>Select PowerPlay</code>). The attribute
+names match the EBOOT serialiser tags exactly (<code>NiceName</code>, <code>PowerLevel</code>, <code>Repeatable</code>,
+<code>AICanTrigger</code>, <code>OpenShortcut</code>, <code>ForwardEffect</code>, <code>BackwardEffect</code>,
+<code>RouteChanging</code>, <code>TotallyUndriveable</code>, <code>MasterMaterial</code>, <code>contextual</code>).</p>
+<table>
+  <tr><th>Attribute</th><th>Example</th><th>Meaning</th></tr>
+  <tr><td><code>name</code></td><td><code>..\Powerplays\Powerplays\RCA2_listing_ship_P</code></td><td>Authoring path / asset key</td></tr>
+  <tr><td><code>NiceName</code></td><td><code>RCA2_ListingShip</code></td><td>Designer-facing label (shown in debug menu)</td></tr>
+  <tr><td><code>PowerLevel</code></td><td><code>3</code></td><td>Power-bar cost: 1 = blue (Level 1), 3 = purple (Level 3 / route changer)</td></tr>
+  <tr><td><code>Repeatable</code></td><td><code>false</code></td><td>Can fire more than once per race</td></tr>
+  <tr><td><code>AICanTrigger</code></td><td><code>true</code></td><td>AI cars may spend power on it</td></tr>
+  <tr><td><code>RouteChanging</code></td><td><code>true</code></td><td>Opens/closes an AI route (Level 3 shortcut)</td></tr>
+  <tr><td><code>OpenShortcut</code></td><td><code>false</code></td><td>Reveals a new path rather than blocking the old one</td></tr>
+  <tr><td><code>TotallyUndriveable</code></td><td><code>false</code></td><td>Marks the result as a hard wall (instant wreck)</td></tr>
+  <tr><td><code>MasterMaterial</code></td><td><code>7</code></td><td>Index into <code>cPowerplayMaterialManager</code> for the glow/highlight shader</td></tr>
+  <tr><td><code>contextual</code></td><td><code>0</code></td><td>Contextual / "near miss" variant flag</td></tr>
+</table>
+<p>The body of each powerplay holds a <code>&lt;worldmtx&gt;</code> (4×3 placement matrix), an
+<code>&lt;EventParams&gt;</code> list, one or more <code>&lt;Timeline&gt;</code> references each with its own
+<code>transform</code>, and an <code>&lt;Ambient&gt;</code> <code>NODE_FACTORY</code> block for any always-on
+instances. The <code>EventParams</code> wire one event to another by id and pass typed parameters:</p>
+<pre>&lt;EventParams&gt;
+   &lt;Event idString="1223996260.2,1223568975.4,1233056780.3" id="0xDB7A586E"&gt;
+      &lt;Param Name="Route" Type="5" Value="0xFC92D0F0"/&gt;
+   &lt;/Event&gt;
+&lt;/EventParams&gt;</pre>
+<p>The <code>idString</code> is a comma-separated path of ids (powerplay → timeline → effect) describing where the
+event lives; <code>id</code> is its CRC. Each <code>&lt;Param&gt;</code> has a name, a <b>Type</b> tag and a CRC
+<b>Value</b> — the EBOOT debug formatters confirm the param model with the strings
+<code>name %s : type %d : value %d</code>, <code>… value %f</code> and <code>name %s string crc : %x</code>.</p>
+
+<h3>Param types</h3>
+<p>The <code>Type</code> field selects how <code>Value</code> is interpreted. The two seen throughout the level
+data are route and trigger references:</p>
+<table>
+  <tr><th>Type</th><th>Param name (observed)</th><th>Value is</th></tr>
+  <tr><td><code>5</code></td><td><code>Route</code></td><td>CRC of an AI route to switch on/off</td></tr>
+  <tr><td><code>6</code></td><td><code>Trigger</code> / <code>Model0</code></td><td>CRC / id of a trigger or model entity</td></tr>
+</table>
+<div class="warn"><span class="badge partial">Partial</span> Only types 5 and 6 appear in the shipped level data;
+the int/float/string-CRC distinction from the EBOOT formatters implies the full enum is larger (at least int,
+float and string-CRC variants). The exact numeric assignment of the others is unconfirmed.</div>
+
+<h2>Triggers (<code>.triggers</code>, XML)</h2>
+<p>A <code>.triggers</code> file lists spatial <code>&lt;Trigger&gt;</code> volumes. Each is a sphere defined by
+<code>posAndScale</code> (X/Y/Z centre, W radius) plus a flag set that controls who and when can fire it. The
+attribute order is fixed by the serialiser (EBOOT: <code>Trigger</code>, <code>triggerType</code>,
+<code>enabled</code>, <code>autoTrigger</code>, <code>enableForOwningPlayer</code>, <code>enableForOpponents</code>,
+<code>notActiveOnLastLap</code>, <code>dontSetOwner</code>).</p>
+<table>
+  <tr><th>Attribute</th><th>Meaning</th></tr>
+  <tr><td><code>triggerType</code></td><td><code>Standard</code> is the only value in shipped data</td></tr>
+  <tr><td><code>enabled</code></td><td>Active at race start (route-changer triggers often ship <code>false</code> until enabled by a prior powerplay)</td></tr>
+  <tr><td><code>autoTrigger</code></td><td>Fires on overlap with no power spend (scripted, not player-driven)</td></tr>
+  <tr><td><code>enableForOwningPlayer</code> / <code>enableForOpponents</code></td><td>Per-side gating</td></tr>
+  <tr><td><code>notActiveOnLastLap</code></td><td>Disable on the final lap</td></tr>
+  <tr><td><code>dontSetOwner</code></td><td>Don't credit the firing car as the powerplay's owner (for kill attribution)</td></tr>
+</table>
+<p>Note that one trigger volume (idCRC <code>0x2EE8C43E</code> in <code>docks.triggers</code>, which ships
+<code>enabled="false"</code>) can be armed at runtime by another powerplay's timeline: the
+<code>PA10_sideways_ship_launch</code> powerplay in <code>docks.powerplays</code> carries an
+<code>&lt;Param Name="Trigger" Type="6" Value="0x2EE8C43E"/&gt;</code> that turns that disabled trigger on — that is
+how one powerplay opens up a normally-disabled shortcut trigger. The eboot debug menu exposes this directly under
+<code>Powerplays/TriggerButtons/%s</code> with sub-commands <code>a; Trigger Index</code> and
+<code>b; Reset Trigger</code>.</p>
+
+<h2>Timelines (<code>_T.xml</code> + <code>.timelineInfo</code>)</h2>
+<p>A timeline is the heart of Catnip. The authoring form is an XML file
+<code>Powerplays/Timelines/&lt;level&gt;/&lt;name&gt;_T.xml</code> (there are <b>317</b> of them on disk). A
+<code>&lt;TimeLine&gt;</code> has a total duration, a looping flag and a count, followed by that many
+<code>&lt;TimeLine_Effect&gt;</code> entries, each with a name, an <b>Effect_Type</b>, an event id, a 4×3
+<code>Effect_Transform</code> and an <code>&lt;Effect_Timer&gt;</code> (start, end, stretch):</p>
+<pre>&lt;TimeLine TimeLine_ID="" TimeLine_Total_Time="16.500000" TimeLine_Looping="false"
+          TimeLine_Number_Effects="32"&gt;
+   &lt;TimeLine_Effect Effect_Name="...\PA04_ExplodingJets_A" Effect_Type="5"
+                    Effect_EventIDString="1224256817.10" Effect_EventID="0xEF258EC"&gt;
+      &lt;ModelOffset X="0.0325935" Y="7.8628039" Z="1.8642635"/&gt;
+      &lt;Effect_Transform&gt; ...4×3 matrix... &lt;/Effect_Transform&gt;
+      &lt;Effect_Timer Timer_Start="0.1643275" Timer_End="11.897661" Effect_Stretch="1.0000000"/&gt;
+   &lt;/TimeLine_Effect&gt;
+   ...
+&lt;/TimeLine&gt;</pre>
+<p>The element/attribute names line up exactly with the EBOOT timeline serialiser strings:
+<code>TimeLine</code>, <code>TimeLine_ID</code>, <code>TimeLine_Total_Time</code>,
+<code>TimeLine_Number_Effects</code>, <code>TimeLine_Effect</code>, <code>Effect_Name</code>,
+<code>Effect_Type</code>, <code>Effect_Transform</code>, <code>Effect_EventID</code>,
+<code>Effect_EventIDString</code>.</p>
+
+<h3>Effect types</h3>
+<p>The <code>Effect_Type</code> integer selects which sub-system plays the effect. The mapping below is read off the
+EBOOT timeline-class registration block (the "Timeline …" labels at lines 21903–21919) cross-checked against the
+actual integer values used in the shipped <code>_T.xml</code> files:</p>
+<table>
+  <tr><th>Type</th><th>EBOOT label</th><th>Effect_Name example</th></tr>
+  <tr><td><code>0</code></td><td>Timeline Standard Particle</td><td><code>...\Particles\Fire\FIR_Medium_L.cat</code></td></tr>
+  <tr><td><code>1</code></td><td>Timeline Light Particles</td><td><code>...\Lights\LIT_Fire_Flickering_S.cat</code></td></tr>
+  <tr><td><code>2</code> <span class="badge theory">Theory</span></td><td>Timeline Flare Particles</td><td>lens-flare emitter</td></tr>
+  <tr><td><code>3</code> <span class="badge theory">Theory</span></td><td>Timeline Geometry Particles</td><td>geometry-spawning particle</td></tr>
+  <tr><td><code>4</code> <span class="badge theory">Theory</span></td><td>Timeline Screen Particles</td><td>screen-space FX</td></tr>
+  <tr><td><code>5</code></td><td>Timeline Animation</td><td><code>Powerplays\Animations\...\PA04_ExplodingJets_A</code></td></tr>
+  <tr><td><code>7</code></td><td>Timeline Entry Event</td><td><code>EnableTrigger</code>, <code>HidePreTimelineModels</code>, …</td></tr>
+  <tr><td><code>8</code></td><td>Timeline Audio Entry</td><td><code>AudioEvent 'EXPL'</code></td></tr>
+  <tr><td><code>9</code></td><td>Timeline AOE</td><td><code>AreaOfEffect</code></td></tr>
+  <tr><td><code>11</code></td><td>Timeline Action Zone</td><td><code>ActionZone</code> (camera/scoring box)</td></tr>
+</table>
+<div class="note">Types 0, 1, 5, 7, 8, 9 and 11 are <span class="badge ok">Confirmed</span>: every one is observed
+with a matching <code>Effect_Name</code> in the <code>PA04_ExplodingJets_T.xml</code> sample (type 0 →
+<code>.cat</code> particles, type 1 → <code>LIT_*.cat</code> light, type 5 → animation, type 7 → empty-name entry
+events, type 8 → <code>AudioEvent</code>, type 9 → <code>AreaOfEffect</code>, type 11 → <code>ActionZone</code>).
+Types 2/3/4 are <b>theory</b>: the EBOOT lists the labels <code>Timeline Flare/Geometry/Screen Particles</code>
+alongside the confirmed particle/light labels, but those labels are interleaved with team tags
+(<code>Powerplay Code</code>, <code>Effects Code</code>, <code>Gameplay</code>) rather than being a clean ordered
+enum, so their exact integers are not readable off the list. The remaining EBOOT labels — <code>Timeline Camera
+Helper</code>, <code>Timeline PP Hit Box</code>, <code>Timeline Moving Assets</code>, <code>Timeline Danger
+Zone</code> — likely occupy the unused values (6, 10, 12…), also unverified.</div>
+
+<h3>Entry events (Type 7) — the closest thing to scripting</h3>
+<p>Type-7 effects carry an inline <code>&lt;Event Type="…"&gt;</code> with parameters and are how a timeline mutates
+game state at a precise time. The full verb list is enumerated in the EBOOT (lines 21746–21765):</p>
+<table>
+  <tr><th>Event verb</th><th>Effect</th></tr>
+  <tr><td><code>EnableTrigger</code> / <code>DisableTrigger</code></td><td>Arm/disarm a trigger volume by CRC</td></tr>
+  <tr><td><code>SwitchAIRouteOn</code> / <code>SwitchAIRouteOff</code></td><td>Open/close an AI route (the route-changer mechanic)</td></tr>
+  <tr><td><code>PauseTimeline</code> / <code>ResetTimeline</code></td><td>Control nested timelines</td></tr>
+  <tr><td><code>ShowAnimation</code> / <code>HideAnimation</code></td><td>Toggle a keyframed model</td></tr>
+  <tr><td><code>SetAnimationClip</code></td><td>Select an animation clip</td></tr>
+  <tr><td><code>HidePreTimelineModels</code> / <code>ShowPostTimelineModels</code></td><td>Swap "before" geometry for "after" geometry</td></tr>
+  <tr><td><code>ShowStandardTimelineModels</code> / <code>HideStandardTimelineModels</code></td><td>Toggle the mid-sequence model set</td></tr>
+  <tr><td><code>SwitchToDamageModel</code></td><td>Replace a model with its damaged variant</td></tr>
+  <tr><td><code>SetPowerLevel</code></td><td>Retag the powerplay's power-bar cost mid-sequence</td></tr>
+</table>
+<p>The pre/standard/post model swap is exactly what you see in <code>PA04_ExplodingJets_T.xml</code>: two
+type-7 effects at <code>Timer 0</code> call <code>HidePreTimelineModels</code> +
+<code>ShowStandardTimelineModels</code> (each with a <code>&lt;Param Name="Model0" Type="6"&gt;</code> naming the
+model id), then two more at <code>Timer 16.5</code> call <code>ShowPostTimelineModels</code> +
+<code>HideStandardTimelineModels</code> — flipping the intact jets for the wreckage as the timeline ends. A fifth
+type-7 effect in the same file (<code>Effect_Name="instance|box.cat"</code>) fires <code>EnableTrigger</code> at
+<code>Timer 14.0</code>, showing that entry events are scattered across the timeline, not just at its bounds.</p>
+
+<h3>Audio entries (Type 8) — <code>Catnip/Audio/Timeline/AudioEvent</code></h3>
+<p>A type-8 effect embeds a complete <code>&lt;Audio&gt;</code> spec that feeds <code>cAudioTimelineManager</code>
+and the <a href="engine-audio.html">LLAudio2</a> engine. Each carries an FMOD sound path
+(<code>sound_name="locale/GENERIC/BIG_EXPL"</code>), inner/outer radii, omni & reverb amounts, a falloff response
+(<code>Exponential</code> / <code>Linear</code>), and a long list of focus / distance-filter / panning booleans
+that match the EBOOT audio-attribute strings (<code>force_2d_panning</code>, <code>activate_only_if_listener_inside</code>,
+<code>force_head_shot</code>, <code>override_distance_filter</code>, <code>force_event_persistance</code>,
+<code>hyperreal_experience</code>, …):</p>
+<pre>&lt;Audio label="EXPL" sound_name="locale/GENERIC/BIG_EXPL" mixer_gain="1.0"
+       inner_radius="20.000000" outer_radius="300.00000" inner_volume="1.0" outer_volume="0.0"
+       falloff_volume_response="Exponential" falloff_reverb_response="Linear"
+       is_looping_sound="false" hyperreal_experience="false" .../&gt;</pre>
+<p>The same Catnip audio layer also owns the standalone audio entities — <code>Catnip/Audio/Trigger</code>,
+<code>Catnip/Audio/Portal</code> and <code>Catnip/Audio/SwooshBox</code> — authored per level in
+<code>Audio/Locales/&lt;level&gt;/&lt;level&gt;_Audio_Swooshes.xml</code>. A swoosh box is the whoosh you hear when
+you brush past overhead scenery:</p>
+<pre>&lt;AudioSwoosh id="-47434963" label="gantry 2"
+   fmod_event_name="Swooshes/Swooshes/OVERHEAD_GANTRY" asset_name="SwooshGeneric"
+   inner_radius="0.0" outer_radius="10.000000" volume="1.0"
+   trigger_fmod_event="true" track_filter="" transform="..."/&gt;</pre>
+
+<h3>Area-of-effect (Type 9) and Action Zones (Type 11)</h3>
+<p>A type-9 effect is the explosion's gameplay payload — it ties into the
+<a href="system-areaofeffects.html">Area of Effects</a> system. The shipped data exposes a rich tuning surface per
+AOE: separate radius/time proportions for <b>camera</b>, <b>post-process</b>, <b>handling slip</b>,
+<b>fire</b>, <b>props</b>, <b>crash</b> and <b>track damage</b>, plus flags such as
+<code>allow_self_kills</code>, <code>disable_danger_zone</code> and <code>allow_player_kills</code>:</p>
+<pre>&lt;TimeLine_Effect Effect_Name="AreaOfEffect" Effect_Type="9" area_of_effect_type="Standard"
+   camera_radius_proportion="1.0" camera_shake_scale="1.0" camera_shake_time="2.0"
+   post_process_effect_time="2.0" handling_impulse_scale="1.0"
+   crash_radius_proportion="0.25" track_damage_intensity="1.0"
+   allow_self_kills="false" disable_danger_zone="false" allow_player_kills="false"&gt;</pre>
+<p>Type-11 <b>Action Zones</b> are oriented boxes (<code>IsBox="true"</code>, <code>ActionZoneIndex</code>,
+<code>Size</code>) that the camera director and scorer watch — the EBOOT pairs them with
+<code>ActionZones/Debug</code> and the <a href="system-cameras.html">PowerplaySequenceDirector</a> takedown logic.</p>
+
+<h2>Entities (<code>.entities</code>, binary <code>ENTS</code>)</h2>
+<p>Unlike powerplays/triggers (which ship as XML), the per-subtrack <code>.entities</code> file is a compact
+<b>big-endian binary</b> blob with magic <code>ENTS</code>. Every one in the build is exactly <b>808 bytes</b> and
+holds the eight player <b>start positions</b> — the runtime list whose entity classes are enumerated in the EBOOT:
+<code>cBoxEntity</code>, <code>cSphereEntity</code>, <code>cGenTrigger</code>/<code>cTriggerVol</code>,
+<code>cTriggerSphere</code>, <code>cStartPositionEntity</code>, <code>cInstantRespottingTriggerBox/Sphere</code>,
+<code>cFreestyleTimePickUp</code>/<code>cFreestyleScorePickUp</code>, <code>cPostProcessTrigger</code>,
+<code>cStartGridEntity</code> and <code>cEndPositionEntity</code> (editor-side: <code>cEditableBox</code>,
+<code>cEditableSphere</code>):</p>
+<pre class="hex">000000  45 4e 54 53 00 00 00 00 00 00 00 03 00 00 00 08  ENTS............
+000010  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................
+000020  45 6e 74 69 74 79 5f 53 74 61 72 74 50 6f 73 69  Entity_StartPosi
+000030  74 69 6f 6e 5f 50 6c 61 79 65 72 32 00 00 00 00  tion_Player2....
+000040  40 c4 4a 51 fe 3d 39 27 60 c3 ce a1 6e 3f 80 00  @.JQ.=9'`...n?..</pre>
+<table class="struct">
+  <tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+  <tr><td><code>0x0</code></td><td>4</td><td><code>char[4]</code></td><td>magic</td><td><code>"ENTS"</code> (constant across all 19 files)</td></tr>
+  <tr><td><code>0x4</code></td><td>4</td><td><code>uint32</code></td><td>file id</td><td>0 here; checked against <i>"entities file id mismatch"</i></td></tr>
+  <tr><td><code>0x8</code></td><td>4</td><td><code>uint32</code></td><td>major version</td><td><code>0x03</code>; hard-fail on <i>"major version mismatch"</i></td></tr>
+  <tr><td><code>0xC</code></td><td>4</td><td><code>uint32</code></td><td>entity count</td><td><code>0x08</code> (eight start positions)</td></tr>
+  <tr><td><code>0x10</code></td><td>16</td><td>—</td><td>reserved/minor</td><td>zero-filled; minor-version mismatch is a warning, not fatal</td></tr>
+  <tr><td><code>0x20</code></td><td>var</td><td>records</td><td>entities</td><td>NUL-terminated name (<code>Entity_StartPosition_PlayerN</code>) + 4×3 float transform</td></tr>
+</table>
+<div class="note">The EBOOT spells out the three-tier version contract: a mismatched id or <b>major</b> version
+aborts the load (<i>"Error: entities file id/major version mismatch"</i>), while a <b>minor</b> mismatch only warns
+and <i>"attempting to load"</i>. Full byte-level coverage of the per-record body lives on
+<a href="format-entities.html">Entities (.entities)</a>.</div>
+
+<h2>Interactive objects &amp; moving assets</h2>
+<p><code>Catnip/Physics/InteractiveObjects</code> is the physics half of Catnip — the breakable / pushable props a
+timeline animates or knocks down. Their collision ships as <a href="format-mcl.html">mesh-collision</a>
+<code>.mcl</code> files (the build contains <b>1,636</b> of them) alongside a <code>.model</code>, <code>.fxc</code>,
+<code>.shaders</code> and a <code>.tex.crcs</code> per object, organised under
+<code>Powerplays/Animations/&lt;level&gt;/&lt;powerplay&gt;/</code>. The <code>AA/</code> subfolder holds the
+"ambient animated" assets (e.g. <code>AA_jumbo_01.mcl</code>, <code>AA_skycrane_rotor_01.mcl</code>,
+<code>AA_Bell206B.mcl</code>); the <code>Pre/</code>, <code>Post/</code> and <code>Generic/</code> folders hold the
+before/after geometry swapped by the type-7 model events above.</p>
+<p>An <code>.mcl</code> opens with a chunked header — <code>SDRI</code> / <code>INSS</code> tags, an object name
+(<code>unnamed</code>), a CRC string and material parameter names (e.g.
+<code>Diffuse_IPR_2_fresnel_power</code>):</p>
+<pre class="hex">000000  53 44 52 49 00 00 00 08 49 4e 53 53 00 00 00 06  SDRI....INSS....
+000010  cf 52 30 32 00 00 00 08 75 6e 6e 61 6d 65 64 00  .R02....unnamed.
+000020  00 00 00 0b 30 78 65 30 62 64 38 36 61 64 00 00  ....0xe0bd86ad..</pre>
+<p>Keyframed scenery that is <i>not</i> a powerplay (rotating fans, idle cranes) is handled by
+<code>cMovingAssetsManager</code> from a level-wide <code>moving_assets.xml</code>, with the EBOOT exposing
+<code>MovingAsssets/Enable animation</code> [sic] and the <code>../Powerplays/Animations/</code> asset root.</p>
+
+<h2>Lens flares &amp; lighting</h2>
+<p><code>Catnip/LensFlare</code> registers the lens-flare entities. The per-level flare meshes live under
+<code>Environments/Levels/&lt;level&gt;/LensFlare/</code> as <code>FlareSun</code>, <code>FlareKicker</code> and
+<code>FlareEnvironment</code> renderables. The flare <i>data</i> serialiser fields are visible in the EBOOT —
+<code>NumFlares</code>, <code>diffuse_r/g/b</code>, <code>radius</code> — and the loader resolves
+<code>LensFlares/&lt;name&gt;/&lt;name&gt;.flares</code> and a paired <code>.params</code> via the
+<code>LensFlareNames.names</code> table.</p>
+<p><code>Catnip/Lighting</code> is the timeline-spawnable dynamic light entity: the EBOOT lighting serialiser lists
+<code>NumLights</code>, <code>diffuse_r/g/b</code>, <code>specular_r/g/b</code> and <code>falloff_scale</code> —
+exactly the parameters a type-1 (Light Particle) timeline effect drives when, say, a fire lights up its surroundings.</p>
+<div class="warn"><span class="badge raw">Opaque</span> The shipped build ships only the flare <i>renderables</i>
+under each level's <code>LensFlare/</code> folder; the standalone <code>.flares</code>/<code>.params</code> data
+files the EBOOT references are not loose on disk in this devkit drop, so the flare data layout is documented from
+the EBOOT serialiser strings rather than a sample file.</div>
+
+<h2>Megabowles — the Catnip test harness</h2>
+<p><code>cMegabowlesController</code> is Black Rock's automated powerplay-scenario profiler. It drives the Catnip
+event graph through scripted runs to catch broken timelines and measure per-set-piece cost — the same role
+<a href="system-ai.html">EvolutionConfig</a> plays for the AI. It pairs with the
+<code>DebugTimelineLog</code> debug page (<code>Display Debug Timeline Log</code>, <code>Clear Log</code>) and the
+<code>ENABLE_TIMELINE_NIPPLECAT_LIVE_UPDATE</code> live-reload path that lets designers hot-swap a
+<code>_T.xml</code> while the game runs.</p>
+
+<h2>Live update ("Nipplecat")</h2>
+<p>The EBOOT string <code>ENABLE_TIMELINE_NIPPLECAT_LIVE_UPDATE is enabled</code> reveals Catnip's editor-link
+feature: in the devkit build, the timeline system can receive updated timeline data from the authoring tool over
+the wire and reload it without restarting the level. This is why the data ships as readable XML — the same files
+the tool writes are what the game reads.</p>
+
+<h2>Why XML <i>and</i> binary?</h2>
+<p>Catnip uses two serialisations for two different access patterns:</p>
+<ul>
+  <li><b>XML</b> for data the designer edits and the live-update path streams — powerplays, triggers,
+  timelines (<code>_T.xml</code>), highlight tags, audio swooshes. Human-readable, diff-able, tool-writable.</li>
+  <li><b>Binary</b> for data the runtime must load fast and validate hard — <code>.entities</code> (<code>ENTS</code>),
+  the per-subtrack <code>.timelineInfo</code> index and <code>Track.logicinfo</code> (both big-endian id+CRC
+  tables). These carry strict id/major/minor version checks because a bad load would corrupt the race.</li>
+</ul>
+<p>See <a href="data-xml.html">XML Conventions</a> for the shared <code>&lt;Root FileVersion="…"&gt;</code> wrapper
+and <a href="data-params.html">.params Tuning System</a> for the slider-range tuning files that the AOE and flare
+systems read.</p>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-entities.html">Entities (.entities)</a> — the <code>ENTS</code> binary layout</li>
+  <li><a href="format-powerplays.html">Powerplays (.powerplays)</a> — powerplay XML in full</li>
+  <li><a href="format-triggers.html">Triggers (.triggers)</a> — trigger volume XML</li>
+  <li><a href="format-timeline.html">Timelines (.timelineInfo)</a> — the binary timeline index</li>
+  <li><a href="format-logicinfo.html">Logic Info (.logicinfo)</a> — gameplay logic metadata</li>
+  <li><a href="format-highlighttags.html">Highlight Tags (.highlighttags)</a> — replay/highlight tagging</li>
+  <li><a href="format-mcl.html">Mesh Collision (.mcl)</a> — interactive-object collision</li>
+  <li><a href="format-powerplayinfo.html">Powerplay Info (.dat)</a> — per-level powerplayInfo.dat</li>
+  <li><a href="system-powerplay.html">Powerplay System</a> — power bar, danger zones, sequences</li>
+  <li><a href="system-areaofeffects.html">Area of Effects</a> — explosion forces &amp; handling FX</li>
+  <li><a href="system-cameras.html">Cameras &amp; Director</a> — PowerplaySequenceDirector takedowns</li>
+  <li><a href="engine-audio.html">Audio Engine</a> — LLAudio2 / cAudioTimelineManager</li>
+  <li><a href="data-xml.html">XML Conventions</a> · <a href="data-params.html">.params Tuning System</a> · <a href="glossary.html">Glossary &amp; Codenames</a></li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

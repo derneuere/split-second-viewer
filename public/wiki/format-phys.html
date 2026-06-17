@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vehicle Physics (.phys) — Split/Second RE Wiki</title>
+<meta name="description" content="The per-car .phys file: a Havok 5.5 packfile carrying the vehicle's hkpPhysicsSystem — rigid body, mass/inertia, collision shapes and the wheel constraint.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Vehicle Physics (.phys)" data-category="Formats · Physics (Havok)">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Vehicle Physics (.phys)</h1>
+<p>Each drivable car in Split/Second ships a <code>.phys</code> file beside its
+<a href="format-model.html">.model</a> and <a href="format-hkcoll.html">.mainColl</a>. It is a
+<a href="format-havok.html">Havok 5.5 packfile</a> whose top-level object is an
+<strong><code>hkpPhysicsSystem</code></strong> — i.e. the car's simulated rigid body, its collision
+shapes, its mass &amp; inertia, and a wheel constraint. Read the
+<a href="format-havok.html">Havok Packfiles</a> page first; this page only documents the
+vehicle-specific payload that lives in the packfile's <code>__data__</code> section.</p>
+
+<div class="infobox"><div class="ib-title">.phys</div><table>
+  <tr><th>Category</th><td>Vehicle physics</td></tr>
+  <tr><th>Container</th><td><a href="format-havok.html">Havok 5.5 packfile</a></td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Magic</th><td><code>57 E0 E0 57</code></td></tr>
+  <tr><th>Root object</th><td><code>hkpPhysicsSystem</code></td></tr>
+  <tr><th>userTag</th><td><code>5</code></td></tr>
+  <tr><th>XML twin</th><td>none</td></tr>
+  <tr><th>Location</th><td><code>Vehicles/Bodies/&lt;Car&gt;/&lt;Car&gt;.phys</code></td></tr>
+  <tr><th>Count</th><td>21 (one per body)</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<p>There are 21 <code>.phys</code> files — eleven Musclecars (incl. <code>Musclecar_Drone</code>) and ten
+Supercars — sizes ranging ~51&nbsp;KB (<code>Supercar_05</code>, 51&nbsp;312 B) to ~62&nbsp;KB
+(<code>Musclecar_01</code>, 62&nbsp;208 B). Across the five samples diffed (Musclecar 01/02/Drone,
+Supercar 01/10) the <em>packfile header, the two section headers for
+<code>__classnames__</code>/<code>__types__</code>, and the entire
+<code>__classnames__</code> and <code>__types__</code> payloads (bytes <code>0x00</code>–<code>0x51A0</code>)
+are byte-identical between cars</em>. Only the <code>__data__</code> section — its header (sizes/fixup
+offsets) and its payload — differs. That tells us the per-car tuning lives entirely in the data
+section; every <code>.phys</code> shares the same 41-class schema and the same <code>__data__</code>
+start offset of <code>0x51A0</code>.</p>
+
+<div class="warn"><strong>Important scope note.</strong> Despite the name, a <code>.phys</code> file does
+<em>not</em> contain the high-level handling model (engine torque curve, gearbox, aerodynamics,
+suspension stiffness, steering). The Havok Vehicle Kit classes
+(<code>hkpVehicleData</code>, <code>hkpVehicleDefaultEngine</code>, <code>hkpVehicleDefaultSuspension</code>,
+<code>hkpVehicleDefaultAerodynamics</code>, <code>hkpVehicleDefaultSteering</code> …) exist in the EBOOT
+but are <strong>not serialized in the .phys</strong> — none of those class names appear in the file's
+embedded registry. The car's <code>hkpVehicleInstance</code> is built at runtime by Black Rock code,
+most likely fed from <a href="data-params.html">.params</a> tuning. The <code>.phys</code> supplies the
+rigid-body chassis it attaches to.</p></div>
+
+<h2>What's actually in the file</h2>
+<p>The embedded <code>__classnames__</code> registry (41 classes) is the ground truth for what a
+<code>.phys</code> serializes. Grouped by role:</p>
+<table>
+<thead><tr><th>Role</th><th>Classes present</th></tr></thead>
+<tbody>
+<tr><td>Root container</td><td><code>hkpPhysicsSystem</code> (rigidBodies, constraints, actions, phantoms)</td></tr>
+<tr><td>Rigid body</td><td><code>hkpRigidBody</code>, <code>hkpEntity</code>, <code>hkpWorldObject</code></td></tr>
+<tr><td>Motion / mass</td><td><code>hkpMaxSizeMotion</code>, <code>hkpKeyframedRigidMotion</code>, <code>hkpMotion</code>, <code>hkMotionState</code>, <code>hkSweptTransform</code></td></tr>
+<tr><td>Collision</td><td><code>hkpCollidable</code>, <code>hkpLinkedCollidable</code>, <code>hkpCollidableBoundingVolumeData</code>, <code>hkpCdBody</code>, <code>hkpBroadPhaseHandle</code>, <code>hkpTypedBroadPhaseHandle</code>, <code>hkAabbUint32</code></td></tr>
+<tr><td>Shapes</td><td><code>hkpSphereShape</code>, <code>hkpSphereRepShape</code>, <code>hkpConvexShape</code>, <code>hkpShape</code>, <code>hkpConvexVerticesShape</code>, <code>hkpConvexVerticesShapeFourVectors</code>, <code>hkpConvexVerticesConnectivity</code></td></tr>
+<tr><td>Material</td><td><code>hkpMaterial</code> (friction, restitution, responseType)</td></tr>
+<tr><td>Constraint</td><td><code>hkpConstraintInstance</code>, <code>hkpConstraintData</code>, <code>hkpModifierConstraintAtom</code>, <code>hkpConstraintAtom</code></td></tr>
+<tr><td>Properties</td><td><code>hkpProperty</code>, <code>hkpPropertyValue</code></td></tr>
+<tr><td>Reflection/base</td><td><code>hkClass</code>, <code>hkClassMember</code>, <code>hkClassEnum</code>, <code>hkClassEnumItem</code>, <code>hkReferencedObject</code>, <code>hkBaseObject</code>, <code>hkMultiThreadCheck</code>, …</td></tr>
+</tbody>
+</table>
+<p>So a <code>.phys</code> is one chassis rigid body, with sphere/convex collision shapes and exactly the
+constraint plumbing for a wheel. The <code>__types__</code> section spells out the members of each of
+these — the field names quoted below are taken verbatim from that registry.</p>
+
+<h2>Top object: <code>hkpPhysicsSystem</code></h2>
+<p>The packfile header's <code>contentsClassNameSectionOffset</code> resolves to
+<code>hkpPhysicsSystem</code> (see <a href="format-havok.html">Havok Packfiles</a> for the resolution
+method). Its members, per the embedded registry, are:</p>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>—</td><td>ptr32</td><td>hkArray</td><td>rigidBodies</td><td>The chassis rigid body (and any sub-bodies).</td></tr>
+<tr><td>—</td><td>ptr32</td><td>hkArray</td><td>constraints</td><td>Constraint instances — where the wheel constraint lives.</td></tr>
+<tr><td>—</td><td>ptr32</td><td>hkArray</td><td>actions</td><td>hkpAction list (usually empty here).</td></tr>
+<tr><td>—</td><td>ptr32</td><td>hkArray</td><td>phantoms</td><td>Phantom volumes (usually empty here).</td></tr>
+<tr><td>—</td><td>ptr32</td><td>char*</td><td>name</td><td>System name string.</td></tr>
+<tr><td>—</td><td>0x4</td><td>uint32_t</td><td>userData</td><td>App-defined tag.</td></tr>
+<tr><td>—</td><td>0x1</td><td>_hkBool</td><td>active</td><td>Whether the system starts active.</td></tr>
+</tbody>
+</table>
+<div class="note">Member <em>names and order</em> are confirmed from the file's own
+<code>__types__</code> reflection; exact byte offsets within the object are left as <code>—</code>
+because they depend on Havok's runtime layout/padding and were not all byte-traced. Treat the offsets
+as <span class="badge theory">Theory</span> and the field set as <span class="badge ok">Confirmed</span>.</div>
+
+<h2>Rigid body, mass &amp; inertia</h2>
+<p>The <code>hkpRigidBody</code> (via <code>hkpEntity</code> → <code>hkpMotion</code>) carries the
+dynamics state. The mass/inertia data is in the motion object, whose registry members include:</p>
+<table class="struct">
+<thead><tr><th>Field</th><th>Type</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>type</td><td>enum MotionType</td><td>Solver model — e.g. <code>MOTION_BOX_INERTIA</code> (see enum below).</td></tr>
+<tr><td>motionState</td><td>hkMotionState</td><td>Transform, swept transform, <code>objectRadius</code>, <code>linearDamping</code>, <code>angularDamping</code>, <code>maxLinearVelocity</code>, <code>maxAngularVelocity</code>.</td></tr>
+<tr><td>inertiaAndMassInv</td><td>hkVector4</td><td>Packed <strong>inverse</strong> inertia tensor diagonal + inverse mass — the core mass property for the chassis.</td></tr>
+<tr><td>linearVelocity / angularVelocity</td><td>hkVector4</td><td>Initial velocities (zero at rest).</td></tr>
+<tr><td>deactivationRefPosition / RefOrientation</td><td>hkVector4 / hkQuaternion</td><td>Sleep reference pose.</td></tr>
+</tbody>
+</table>
+<p>The motion's <code>centerOfMassLocal</code> (in the nested <code>hkSweptTransform</code>) sets the
+chassis CoM — a key handling lever even though it lives in the rigid body rather than a "handling"
+struct.</p>
+
+<h3>MotionType enum</h3>
+<p>Taken verbatim from the file's embedded enum (<code>hkpMotion::MotionType</code>):</p>
+<table>
+<thead><tr><th>Name</th><th>Value</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>MOTION_INVALID</td><td>0</td><td></td></tr>
+<tr><td>MOTION_DYNAMIC</td><td>1</td><td>General dynamic body.</td></tr>
+<tr><td>MOTION_SPHERE_INERTIA</td><td>2</td><td>Cheap spherical inertia.</td></tr>
+<tr><td>MOTION_STABILIZED_SPHERE_INERTIA</td><td>3</td><td></td></tr>
+<tr><td>MOTION_BOX_INERTIA</td><td>4</td><td>Box inertia — typical for a car chassis.</td></tr>
+<tr><td>MOTION_STABILIZED_BOX_INERTIA</td><td>5</td><td></td></tr>
+<tr><td>MOTION_KEYFRAMED</td><td>6</td><td>Animation-driven (note <code>hkpKeyframedRigidMotion</code> is also registered).</td></tr>
+<tr><td>MOTION_FIXED</td><td>7</td><td>Static.</td></tr>
+<tr><td>MOTION_THIN_BOX_INERTIA</td><td>8</td><td></td></tr>
+<tr><td>MOTION_CHARACTER</td><td>9</td><td></td></tr>
+</tbody>
+</table>
+
+<h2>Collision shapes</h2>
+<p>The chassis collidable points at a shape. The registry shows both <code>hkpSphereShape</code>
+(a single sphere, members <code>radius</code> + inherited <code>hkpConvexShape.radius</code>) and the
+<code>hkpConvexVerticesShape</code> family (an arbitrary convex hull: <code>aabbHalfExtents</code>,
+<code>aabbCenter</code>, <code>rotatedVertices</code>, <code>numVertices</code>, <code>planeEquations</code>,
+<code>connectivity</code>). A car's broad-phase proxy is a sphere; its actual chassis hull is the convex
+shape. The detailed drivable-surface mesh is in the separate
+<a href="format-hkcoll.html">.mainColl</a>.</p>
+
+<h2>Material (friction &amp; restitution)</h2>
+<p>The <code>hkpMaterial</code> on the body holds three members, in this declared order (confirmed from
+the embedded <code>__types__</code> registry at <code>0x1B28</code>/<code>0x1B40</code>/<code>0x1B50</code>):
+<code>responseType</code>, <code>friction</code>, <code>restitution</code>. They are directly readable
+as adjacent values in the data section, and the values found are the classic Havok defaults — which is
+itself evidence the parse is correct:</p>
+<table class="struct">
+<thead><tr><th>Field</th><th>Type</th><th>Value (Musclecar_01)</th><th>How known</th></tr></thead>
+<tbody>
+<tr><td>responseType</td><td>enum</td><td><code>RESPONSE_SIMPLE_CONTACT</code> (<code>1</code>)</td><td>First member; value <code>0x00000001</code> = index 1 in the <code>ResponseType</code> enum in <code>__types__</code>.</td></tr>
+<tr><td>friction</td><td>float32_t</td><td><code>0.5</code> (<code>3F 00 00 00</code>)</td><td>Second member; decodes to 0.50 big-endian. This is the Havok default friction (0.5).</td></tr>
+<tr><td>restitution</td><td>float32_t</td><td><code>0.4</code> (<code>3E CC CC CD</code>)</td><td>Third member; decodes to 0.40 big-endian. This is the Havok default restitution (0.4).</td></tr>
+</tbody>
+</table>
+<div class="note">Order matters here: the floats appear in memory as <code>responseType=1</code>,
+<code>0.5</code>, <code>0.4</code> — i.e. <code>friction=0.5</code> then <code>restitution=0.4</code>,
+matching both the <code>hkpMaterial</code> member order and Havok's stock defaults. (An earlier draft of
+this page had the two floats swapped.)</div>
+
+<h2>Wheel constraint</h2>
+<p>The registry includes the constraint plumbing classes (<code>hkpConstraintInstance</code>,
+<code>hkpConstraintData</code>, <code>hkpConstraintAtom</code>, <code>hkpModifierConstraintAtom</code>),
+and the <code>ConstraintType</code> enum in <code>__types__</code> spells out the full Havok set —
+<code>CONSTRAINT_TYPE_BALLANDSOCKET</code> … <code>CONSTRAINT_TYPE_WHEEL</code> …
+<code>CONSTRAINT_TYPE_POWERED_CHAIN</code> (21 entries, verified by string scan). In the canonical
+Havok 5.5 ordering <code>CONSTRAINT_TYPE_WHEEL</code> is value 7; the in-file enum value table is
+interleaved and was <em>not</em> cleanly byte-traced, so treat the specific value as
+<span class="badge theory">Theory</span>.</p>
+<div class="warn"><strong>Caveat.</strong> The presence of these classes in the
+<code>__classnames__</code> registry proves the schema is available, <em>not</em> that a wheel
+constraint instance is actually serialized in this file's <code>__data__</code>. Whether
+<code>hkpPhysicsSystem.constraints</code> is non-empty (and, if so, which constraint type it carries)
+was not confirmed by walking the data graph. The wheel <em>simulation</em> proper (raycast wheels,
+suspension spring response) is in any case the runtime <code>hkpVehicle*</code> code referenced in the
+scope note above, which is <em>not</em> in this file.</div>
+
+<h2>Annotated hex — data section start</h2>
+<p>The <code>__data__</code> section of <code>Musclecar_01.phys</code> begins at file offset
+<code>0x51A0</code> (its header's <code>absoluteDataStart</code>). Below is the region where the material
+floats sit; the <code>0.4</code>/<code>0.5</code> pair is what identifies it as the <code>hkpMaterial</code>:</p>
+<pre class="hex"><span class="off">0052e0</span>  00 00 00 01 00 00 00 01 41 e6 64 10 01 00 00 00  <span class="asc">........A.d.....</span>
+<span class="off">0052f0</span>  00 00 00 00 00 00 00 01 41 e6 64 10 01 00 00 00  <span class="asc">........A.d.....</span>
+<span class="off">005300</span>  00 00 00 00 00 00 00 00 3b 83 12 6f 00 00 00 00  <span class="asc">........;..o....</span>
+<span class="off">005330</span>  01 00 00 00 3f 00 00 00 3e cc cc cd 00 00 00 00  <span class="asc">....?...&gt;.......</span></pre>
+<p>Decoding the marked big-endian floats:</p>
+<ul>
+<li><code>41 E6 64 10</code> → <strong>28.799</strong> (appears twice — a shape/AABB extent or radius pair).</li>
+<li><code>3B 83 12 6F</code> → <strong>0.004</strong> (a small tolerance, consistent with
+<code>allowedPenetrationDepth</code>).</li>
+<li><code>01 00 00 00</code> → <strong>1</strong> = <code>responseType</code> (<code>RESPONSE_SIMPLE_CONTACT</code>).</li>
+<li><code>3F 00 00 00</code> → <strong>0.5</strong> = <code>friction</code> (second member).</li>
+<li><code>3E CC CC CD</code> → <strong>0.4</strong> = <code>restitution</code> (third member).</li>
+</ul>
+<div class="tip">The material decode is the cleanest anchor in the file: <code>responseType</code> (=1)
+followed by two textbook Havok defaults (<code>friction</code> 0.5, <code>restitution</code> 0.4)
+sitting adjacent, in exactly the order the <code>hkpMaterial</code> registry declares them. That both
+floats land on round values under a big-endian read is strong confirmation the endianness and field
+mapping are right.</div>
+
+<h2>Confidence</h2>
+<p><span class="badge ok">Confirmed</span>: container/header (see
+<a href="format-havok.html">Havok Packfiles</a>), the root object is <code>hkpPhysicsSystem</code>
+(header offset resolves to it at <code>0x17C</code>), the complete 41-class embedded class set, the
+<code>hkpMaterial</code> values (<code>responseType=RESPONSE_SIMPLE_CONTACT</code>, friction 0.5,
+restitution 0.4 — corrected from an earlier swapped draft), and that header + classnames + types are
+byte-identical across cars while only <code>__data__</code> varies.
+<span class="badge partial">Partial</span>: exact byte offsets of individual members within each
+object (names/order confirmed from <code>__types__</code>, offsets depend on Havok layout rules and were
+not all traced).
+<span class="badge theory">Theory</span>: the <code>28.799</code> and <code>0.004</code> field
+assignments; that an actual wheel-constraint instance is serialized (only the schema is proven present)
+and that <code>CONSTRAINT_TYPE_WHEEL</code> = 7 (canonical, not byte-traced here); and the claim that
+per-car handling is driven from <a href="data-params.html">.params</a> rather than the
+<code>.phys</code> (well-supported — no vehicle-dynamics classes are serialized — but the exact runtime
+wiring was not traced).</p>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="format-havok.html">Havok Packfiles</a> — the container this file uses (read first).</li>
+<li><a href="format-hkcoll.html">Collision (.hkColl/.mainColl)</a> — the car's detailed collision mesh.</li>
+<li><a href="format-deform.html">Deformation (.deform)</a> — the matching damage/deformation model.</li>
+<li><a href="system-vehicles.html">Vehicles</a> — roster, classes (Musclecar/Supercar), and damage.</li>
+<li><a href="data-params.html">.params Tuning System</a> — where the high-level handling tuning lives.</li>
+<li><a href="format-hkrbs.html">Rigid Bodies (.hkRBs)</a> — related rigid-body packfiles.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

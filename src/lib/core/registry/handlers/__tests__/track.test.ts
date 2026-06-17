@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { trackHandler } from '../track';
 import { parseTrack, writeTrack, trackStrokes } from '../../../track';
 import { ssCtx } from '../../handler';
-import { hasSample, readSample } from '@/test/dataRoot';
+import {
+	hasSample,
+	readSample,
+	listSamplesByExt,
+	readFileBytes,
+} from '@/test/dataRoot';
 
 // Inline fixture: the first 2 records of the wiki's worked example
 // TracktivityData_P_PS3-_2010_1_2_19_55_29.track. count=2 then two 24-byte
@@ -80,4 +85,29 @@ describe('track parser', () => {
 			expect(Array.from(out)).toEqual(Array.from(raw));
 		},
 	);
+
+	const ALL = listSamplesByExt('.track');
+	it.skipIf(ALL.length === 0)(
+		`track round-trips real sample byte-for-byte (${ALL.length} files)`,
+		() => {
+			const ctx = ssCtx();
+			const failures: string[] = [];
+			for (const abs of ALL) {
+				const raw = readFileBytes(abs);
+				const m = trackHandler.parseRaw(raw, ctx);
+				// size law holds on every real telemetry capture.
+				expect(m.sizeLawOk, abs).toBe(true);
+				const out = trackHandler.writeRaw!(m, ctx);
+				if (!bytesEqual(out, raw)) failures.push(`${abs} (len ${out.length} vs ${raw.length})`);
+			}
+			expect(failures).toEqual([]);
+			expect(ALL.length).toBeGreaterThan(1);
+		},
+	);
 });
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+	return true;
+}

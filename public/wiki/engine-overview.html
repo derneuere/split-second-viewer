@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Engine Architecture — Split/Second RE Wiki</title>
+<meta name="description" content="Top-level map of the Black Rock Studio engine that powers Split/Second: renderer (Crayon2), job system (JobStream/SPURS), middleware, data-driven systems (Catnip, Powerplay, SSAI) and the codenames that tie them together.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Engine Architecture" data-category="Overview">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Engine Architecture</h1>
+<p><i>Split/Second</i> (2010) runs on <b>Black Rock Studio</b>'s in-house engine — the same technology lineage as the studio's <i>Pure</i> ATV racer, not a licensed or shared engine. This page is the hub: it maps the engine's subsystems, the third-party middleware it wraps, the internal <a href="glossary.html">codenames</a>, and the studio's pervasive <b>data-driven design</b> where almost everything that matters lives outside the executable as plaintext <a href="data-params.html">.params</a> and <a href="data-xml.html">XML</a> files.</p>
+
+<div class="infobox"><div class="ib-title">Black Rock Engine</div><table>
+<tr><th>Studio</th><td>Black Rock Studio (Disney Interactive)</td></tr>
+<tr><th>Platform</th><td>PS3 (this build) / Xbox 360</td></tr>
+<tr><th>CPU</th><td>PowerPC, big-endian; PPU + SPUs</td></tr>
+<tr><th>Renderer</th><td>Crayon2 (deferred, G-Buffer)</td></tr>
+<tr><th>Jobs</th><td>JobStream over SPURS</td></tr>
+<tr><th>Physics</th><td>Havok 5.5.0-r1</td></tr>
+<tr><th>Audio</th><td>FMOD Ex 4.28 via LLAudio2</td></tr>
+<tr><th>Net</th><td>Quazal NetZ / RV (ATVNet)</td></tr>
+<tr><th>UI</th><td>Scaleform GFx</td></tr>
+<tr><th>Source root</th><td><code>c:/Projects/proj_1/ws_0/Code</code></td></tr>
+<tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>Where this knowledge comes from</h2>
+<p>Everything below is verified against an actual <b>devkit / QA debug build</b> (title id <code>NPXX00575</code>) whose data ships <b>loose on disk</b> under <code>USRDIR/Deferred/</code>, plus the clear-text strings extracted from <code>EBOOT.BIN</code>. The executable's symbolized source paths follow a single tree — <code>c:/Projects/proj_1/ws_0/Code/{libs,games,contrib}/…</code> — which is effectively a table of contents for the engine. The module map below is reconstructed from those paths and from class names registered in the binary. See <a href="build-layout.html">Build &amp; File Layout</a> for the build itself and <a href="glossary.html">Glossary &amp; Codenames</a> for the vocabulary.</p>
+
+<div class="note">The <code>Code/</code> tree splits three ways: <b>libs/</b> (reusable Black Rock engine libraries: Render, Audio, System…), <b>games/SplitSecond/</b> (the title-specific layer), and <b>contrib/</b> (third-party middleware: Havok, FMOD, Quazal, Sony Edge, oscpack).</div>
+
+<h2>Subsystem map</h2>
+<p>The engine is a fairly conventional console architecture for its era — a deferred renderer fed by an SPU job system, with middleware for physics, audio, networking, video and UI — wrapped in two distinctively Black Rock layers: <b>Crayon2</b> (render support) and <b>Catnip</b> (data-driven gameplay/FX). The table lists every major subsystem with its in-engine module path and the wiki hub that documents it.</p>
+
+<table>
+<tr><th>Subsystem</th><th>Codename / wrapper</th><th>Backed by</th><th>Source module (in EBOOT)</th><th>Hub page</th></tr>
+<tr><td>Rendering</td><td><b>Crayon2</b></td><td>RSX (deferred / G-Buffer MRT)</td><td><code>libs/Render/Support/Crayon2</code></td><td><a href="engine-rendering.html">Rendering Pipeline</a></td></tr>
+<tr><td>Geometry / SPU decompress</td><td>EdgeModel</td><td>Sony <b>Edge</b> Geom</td><td><code>libs/Render/Model/EdgeModel</code>, <code>contrib/Sony/Edge</code></td><td><a href="engine-rendering.html">Rendering Pipeline</a></td></tr>
+<tr><td>Job / thread system</td><td><b>JobStream</b></td><td>PS3 <b>SPURS</b></td><td><code>libs/System/JobStream/Spurs</code></td><td><a href="engine-jobstream.html">Threading &amp; JobStream</a></td></tr>
+<tr><td>Physics</td><td>—</td><td><b>Havok 5.5.0-r1</b></td><td><code>contrib/Havok/Havok550</code></td><td><a href="format-havok.html">Havok Packfiles</a></td></tr>
+<tr><td>Audio</td><td><b>LLAudio2</b></td><td><b>FMOD Ex</b> 4.28</td><td><code>libs/Audio/Wrappers/LLAudio2/FMOD</code></td><td><a href="engine-audio.html">Audio Engine</a></td></tr>
+<tr><td>Networking</td><td><b>ATVNet</b></td><td><b>Quazal</b> NetZ + Rendez-Vous</td><td><code>games/SplitSecond/Shared/ATVNet/NetZ</code>, <code>contrib/Quazal/NetZ</code></td><td><a href="engine-networking.html">Networking &amp; Online</a></td></tr>
+<tr><td>Voice chat</td><td>VoiceChannel</td><td>LPC10 / OpenLPC codecs (Quazal AVStreams)</td><td><code>contrib/Quazal/NetZ/lib/Extensions/VoiceChat</code></td><td><a href="engine-networking.html">Networking &amp; Online</a></td></tr>
+<tr><td>Video</td><td>MMBinkMovie</td><td>RAD <b>Bink</b></td><td>(eboot: <code>MMBinkMovie</code>, <code>BinkLoad</code>)</td><td><a href="format-bik.html">Bink Video</a></td></tr>
+<tr><td>UI / frontend</td><td>—</td><td><b>Scaleform GFx</b> (Flash)</td><td>(eboot: <code>Scaleform</code>)</td><td><a href="format-gfx.html">Scaleform UI</a> · <a href="system-hud.html">HUD &amp; Frontend</a></td></tr>
+<tr><td>Tooling / OSC</td><td>—</td><td>oscpack (OpenSound Control over UDP)</td><td><code>contrib/oscpack</code></td><td><a href="engine-middleware.html">Middleware Stack</a></td></tr>
+<tr><td>Entity / FX / scripting</td><td><b>Catnip</b></td><td>in-house data system</td><td>(eboot: <code>Catnip/Trigger</code>, <code>Catnip/Powerplay/Timeline</code>…)</td><td><a href="data-catnip.html">Catnip Entity System</a></td></tr>
+<tr><td>Resources / streaming</td><td>—</td><td><code>.ark</code> archives + loader threads</td><td>(eboot: <code>Resident.ark</code>, <code>InGame1.ark</code>…)</td><td><a href="engine-resources.html">Resources &amp; Streaming</a></td></tr>
+</table>
+
+<div class="tip">Middleware versions are quoted directly from the EBOOT: the string <code>Havok-5.5.0-r1</code> appears multiple times; the Havok source lives under <code>contrib/Havok/Havok550</code>; and FMOD is the <b>4.28</b> branch — its source paths read <code>contrib/FmodEx/42800/…</code> (built in a separate <code>ss_audio_dev</code> workspace) and are wrapped by <code>libs/Audio/Wrappers/LLAudio2/…/FMOD</code>. <code>FMOD</code> appears in ≈282 EBOOT strings.</div>
+
+<h2>The rendering core: Crayon2</h2>
+<p><b>Crayon2</b> is Black Rock's render-support library (<code>libs/Render/Support/Crayon2</code>). It drives a <b>deferred renderer</b> built around a multiple-render-target <b>G-Buffer</b>. The debug menu confirms exactly five G-Buffer channels — each has its own "Disable … writes" toggle under <code>Lighting/Debug/GBuffer/</code>:</p>
+<table>
+<tr><th>Toggle (debug menu)</th><th>G-Buffer channel</th></tr>
+<tr><td><code>a;Disable albedo writes</code></td><td>Albedo / base colour</td></tr>
+<tr><td><code>b;Disable unlit writes</code></td><td>"Unlit" (emissive / pre-lit)</td></tr>
+<tr><td><code>c;Disable normal writes</code></td><td>Surface normals</td></tr>
+<tr><td><code>d;Disable motion blur writes</code></td><td>Per-pixel velocity (motion blur)</td></tr>
+<tr><td><code>e;Disable specular writes</code></td><td>Specular</td></tr>
+</table>
+<p>The frame pipeline shows up as named GPU timing stages in the EBOOT: <code>Deferred - GBuffer - Opaque</code> → <code>GBuffer End MRT</code> → <code>GBuffer SSAO</code> → <code>GBuffer Blur</code> → lighting → post (<code>SSMotionBlur</code>, bloom, edge). Two distinctive features: <b>lighting runs on SPUs</b> via "SPULight" jobs (<code>SPULight Build Jobs</code>, <code>SPULight Copy Depth</code>, <code>SPULight Stall Global Light</code>, <code>SPULight Window of opportunity</code>), and the renderer uses RSX <b>ZCull</b> (<code>GBuffer ZCull Restore</code>). Shaders are not statically linked: <code>Crayon2/Shader/PS3/ShaderPatching.cpp</code> patches shaders at runtime, fed by a 2.27&nbsp;MB übershader database <code>global_shader_combos.fxc</code> (exact size <code>2,382,848</code> bytes on disk). Full detail on <a href="engine-rendering.html">Rendering Pipeline</a>.</p>
+
+<h2>The execution core: JobStream over SPURS</h2>
+<p>Work is dispatched through <b>JobStream</b> (<code>libs/System/JobStream</code>), Black Rock's wrapper over Sony's <b>SPURS</b> SPU runtime. The EBOOT contains the literal job-chain setup call:</p>
+<pre class="hex">cellSpursJobChainAttributeInitialize( &amp;attr, mCommandList, mJobSize,
+    mMaxGrab, mPriorities, mNumSPU, true, 0, 1, false, 256, 1 )</pre>
+<p>Above the SPU layer the game runs a small set of named CPU threads, visible as profiler labels: <code>Front End (Main Thread)</code> / <code>Level (Main Thread)</code> and dedicated <code>Front End (Loader Thread)</code> / <code>Level (Loader Thread)</code> plus a generic <code>LoaderThread</code> for asynchronous resource loading. Big consumers of SPU time are SPULight (lighting), EdgeGeom (geometry decompression), and Havok. See <a href="engine-jobstream.html">Threading &amp; JobStream</a>.</p>
+
+<h2>Data-driven design</h2>
+<p>The defining trait of this engine is how little is hard-coded. Tuning, content layout, AI behaviour and FX choreography all live in editable data files that the EBOOT reads at runtime:</p>
+<ul>
+<li><b><a href="data-params.html">.params</a></b> — plaintext key/value tuning with slider ranges, e.g. an <a href="system-ai.html">SSAI</a> driving table reads <code>'002;Multiplier to throttle when accelerating' = 1.0 (0.05, 1.0);</code> where <code>(0.05, 1.0)</code> is the in-tool min/max.</li>
+<li><b><a href="data-xml.html">XML</a></b> — structured databases such as <code>Vehicles/VehicleDatabase.xml</code> (the full car roster), <code>Season/Season.xml</code> and <code>Season/UnlockCriteria.xml</code>.</li>
+<li><b><a href="data-catnip.html">Catnip</a></b> — the entity/timeline system that choreographs <a href="system-powerplay.html">Powerplays</a>, interactive objects, audio events and lens flares (<code>Catnip/PowerplayTimelines/</code>, <code>Catnip/Physics/InteractiveObjects/</code>, <code>Catnip/Audio/Timeline/AudioEvent/</code>, <code>Catnip/LensFlare/</code>).</li>
+<li><b>Havok tagfiles</b> — many physics packfiles ship with an XML twin that documents the same data; see <a href="format-havok.html">Havok Packfiles</a>.</li>
+</ul>
+<p>Because this is a QA build, two test/profiling harnesses are also data-driven: <a href="system-ai.html">SSAI</a>'s <code>EvolutionConfig.params</code> (automated AI fitness scenarios) and <b>Megabowles</b> (<code>cMegabowlesController</code>), an automated Powerplay-scenario test runner with filters like <code>MegabowlesScenarios/Filter/powerplay_name</code> and <code>MegabowlesScenarios/Filter/sector_name</code>.</p>
+
+<h2>The gameplay signature: Powerplay</h2>
+<p>Split/Second's hook — blowing up the track around your rivals — is the <b>Powerplay</b> system, one of the most heavily referenced gameplay systems in the binary (<code>Powerplay</code> appears in ≈226 EBOOT strings). It is a constellation of classes: <code>cPowerplayManager</code>, <code>cPowerplayController</code>, <code>cPowerplayMaterialManager</code>, and <code>PowerplaySequenceDirector</code>, driven by Catnip timelines and a dynamic "danger zone" trigger system (<code>GameplayParameters/Powerplays/Dynamic Trigger</code>). It is tightly coupled to the camera director (<code>CameraDirector/PowerplaySequenceDirector/Debug Takedown Sequences</code>), AI, and the <a href="system-difficulty.html">respot/teleport</a> machinery that keeps the pack cinematic. Documented on <a href="system-powerplay.html">Powerplay System</a>.</p>
+
+<h2>Engine systems &amp; format hubs</h2>
+<p>This page links out to every major hub. Use it as the index.</p>
+<h3>Engine &amp; Tech</h3>
+<ul>
+<li><a href="engine-rendering.html">Rendering Pipeline</a> — Crayon2 deferred G-Buffer, SPULight, HDR, motion blur</li>
+<li><a href="engine-jobstream.html">Threading &amp; JobStream</a> — SPURS job chains, main/loader threads</li>
+<li><a href="engine-middleware.html">Middleware Stack</a> — Havok, FMOD, Quazal, Bink, Scaleform, Edge, oscpack</li>
+<li><a href="engine-audio.html">Audio Engine</a> — LLAudio2, DynamicMixer, reverb, soundbanks</li>
+<li><a href="engine-networking.html">Networking &amp; Online</a> — Quazal duplicated objects, ATVNet, voice</li>
+<li><a href="engine-resources.html">Resources &amp; Streaming</a> — residency, loaders, <code>.ark</code> archives</li>
+</ul>
+<h3>Data &amp; Config</h3>
+<ul>
+<li><a href="data-params.html">.params Tuning System</a> · <a href="data-globalregs.html">Global Registry</a> · <a href="data-catnip.html">Catnip Entity System</a> · <a href="data-xml.html">XML Conventions</a></li>
+</ul>
+<h3>Game Systems</h3>
+<ul>
+<li><a href="system-gamemodes.html">Game Modes</a> · <a href="system-powerplay.html">Powerplay System</a> · <a href="system-ai.html">AI (SSAI)</a> · <a href="system-vehicles.html">Vehicles</a> · <a href="system-cameras.html">Cameras &amp; Director</a></li>
+<li><a href="system-scoring.html">Scoring &amp; Progression</a> · <a href="system-tracks.html">Tracks &amp; Levels</a> · <a href="system-postprocess.html">Post-Processing DB</a> · <a href="system-areaofeffects.html">Area of Effects</a></li>
+<li><a href="system-difficulty.html">Difficulty &amp; Race Director</a> · <a href="system-hud.html">HUD &amp; Frontend</a> · <a href="system-nemesis.html">Nemesis &amp; Heli Modes</a></li>
+</ul>
+<h3>Formats</h3>
+<ul>
+<li>Geometry/render: <a href="format-model.html">.model</a> · <a href="format-shaders.html">.shaders/.shaderinst</a> · <a href="format-fxc.html">.fxc</a> · <a href="format-textures.html">.textures</a> · <a href="format-streamtex.html">.stream/.streamtex</a> · <a href="format-skel.html">.skel</a> · <a href="format-crcs.html">.crcs</a></li>
+<li>Physics (Havok): <a href="format-havok.html">Packfiles</a> · <a href="format-phys.html">.phys</a> · <a href="format-hkcoll.html">.hkColl/.mainColl</a> · <a href="format-hkpps.html">.hkPPs</a> · <a href="format-hkrbs.html">.hkRBs</a> · <a href="format-deform.html">.deform</a> · <a href="format-mcl.html">.mcl</a></li>
+<li>Audio/video: <a href="format-fsb.html">.fsb</a> · <a href="format-fev.html">.fev</a> · <a href="format-lip.html">.lip</a> · <a href="format-tonic.html">.tonic</a> · <a href="format-bik.html">.bik</a> · <a href="format-nis.html">.nis/.gbx</a></li>
+<li>FX/particles: <a href="format-emitter.html">.emitter*</a> · <a href="format-lights.html">.lights</a></li>
+<li>Gameplay (Catnip): <a href="format-entities.html">.entities</a> · <a href="format-powerplays.html">.powerplays</a> · <a href="format-triggers.html">.triggers</a> · <a href="format-timeline.html">.timelineInfo</a> · <a href="format-logicinfo.html">.logicinfo</a> · <a href="format-highlighttags.html">.highlighttags</a></li>
+<li>Track/route: <a href="format-route.html">route data</a> · <a href="format-sectors.html">.sectorInfo</a> · <a href="format-names.html">.names</a> · <a href="format-powerplayinfo.html">powerplayInfo.dat</a></li>
+<li>Archive/misc/telemetry: <a href="format-ark.html">.ark</a> · <a href="format-gfx.html">.gfx</a> · <a href="format-misc.html">misc/raw</a> · <a href="format-track.html">TrackTivity (.track)</a></li>
+</ul>
+
+<h2>Confidence</h2>
+<p>Subsystem identities, codenames and middleware versions are <span class="badge ok">Confirmed</span> from EBOOT strings and source-path symbols. Exact frame-graph ordering and which jobs run on which SPU are <span class="badge partial">Partial</span> (inferred from stage names and job labels). Anything marked <span class="badge theory">Theory</span> on a sub-page is an educated guess.</p>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="build-layout.html">Build &amp; File Layout</a> — the NPXX00575 devkit build and its directory tree</li>
+<li><a href="glossary.html">Glossary &amp; Codenames</a> — Crayon2, Catnip, Megabowles, LDC, Respot…</li>
+<li><a href="data-params.html">.params Tuning System</a> — the plaintext config format used everywhere</li>
+<li><a href="data-catnip.html">Catnip Entity System</a> · <a href="system-powerplay.html">Powerplay System</a></li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

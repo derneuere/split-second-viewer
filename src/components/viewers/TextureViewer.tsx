@@ -21,6 +21,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image as ImageIcon, ZoomIn, ZoomOut, RefreshCw } from 'lucide-react';
 import {
 	decodeLargestTexture,
+	decodeAllInline,
 	type DecodedTexture,
 	type ParsedTextures,
 	type TextureDescriptor,
@@ -150,24 +151,33 @@ export function TextureViewer({ model, raw }: TextureViewerProps) {
 	const canvasRef = useRef<HTMLCanvasElement>(null);
 	const [channels, setChannels] = useState<Channels>(ALL_ON);
 	const [zoomIdx, setZoomIdx] = useState(2); // 1x by default
+	const [texIdx, setTexIdx] = useState(0);
 	const zoom = ZOOM_STEPS[zoomIdx];
 
-	// Decode the largest inline texture once per (model, raw) pair. Wrapped in a
-	// try so a malformed descriptor never crashes the viewport.
+	// Decode every inline texture once per (model, raw) pair (handles multi-texture
+	// inline files like ColorCubes). Falls back to the single-largest decode when
+	// the inline layout doesn't resolve. Wrapped in a try so a malformed descriptor
+	// never crashes the viewport.
 	const decoded = useMemo<{
-		tex: DecodedTexture | null;
+		textures: DecodedTexture[];
 		error: string | null;
 	}>(() => {
-		if (!model || !raw) return { tex: null, error: null };
+		if (!model || !raw) return { textures: [], error: null };
 		try {
-			const tex = decodeLargestTexture(raw, model);
-			return { tex, error: null };
+			const all = decodeAllInline(raw, model);
+			if (all.length > 0) return { textures: all, error: null };
+			// Layout didn't resolve to inline textures (e.g. a stub): try the
+			// single-largest path so we at least report what we can.
+			const one = decodeLargestTexture(raw, model);
+			return { textures: one ? [one] : [], error: null };
 		} catch (err) {
-			return { tex: null, error: String((err as Error)?.message ?? err) };
+			return { textures: [], error: String((err as Error)?.message ?? err) };
 		}
 	}, [model, raw]);
 
-	const tex = decoded.tex;
+	const textures = decoded.textures;
+	const safeIdx = Math.min(texIdx, Math.max(0, textures.length - 1));
+	const tex = textures[safeIdx] ?? null;
 
 	// Paint the (channel-masked) decoded surface to the canvas at native size;
 	// CSS scales it by `zoom` so we keep crisp nearest-neighbour pixels.
@@ -238,6 +248,42 @@ export function TextureViewer({ model, raw }: TextureViewerProps) {
 						<span className="font-mono text-xs text-muted-foreground">
 							{tex.mips} mip{tex.mips === 1 ? '' : 's'}
 						</span>
+						{tex.swizzled && (
+							<span
+								className="rounded bg-accent/20 px-1.5 py-0.5 font-mono text-xs text-accent"
+								title="Surface was RSX Morton-swizzled and de-swizzled for display"
+							>
+								de-swizzled
+							</span>
+						)}
+						{tex.name && (
+							<span
+								className="max-w-[12rem] truncate font-mono text-xs text-muted-foreground"
+								title={tex.name}
+							>
+								{tex.name}
+							</span>
+						)}
+					</>
+				)}
+
+				{textures.length > 1 && (
+					<>
+						<Separator orientation="vertical" className="h-5" />
+						<label className="flex items-center gap-1 text-xs text-muted-foreground">
+							<span>Texture</span>
+							<select
+								className="h-7 rounded border border-border bg-background px-1 font-mono text-xs"
+								value={safeIdx}
+								onChange={(e) => setTexIdx(Number(e.target.value))}
+							>
+								{textures.map((t, i) => (
+									<option key={i} value={i}>
+										{i}: {t.name ?? `${t.format} ${t.width}x${t.height}`}
+									</option>
+								))}
+							</select>
+						</label>
 					</>
 				)}
 

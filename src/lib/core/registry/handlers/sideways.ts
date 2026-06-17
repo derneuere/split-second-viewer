@@ -10,7 +10,7 @@ export const sidewaysHandler: ResourceHandler<ParsedSideways> = {
 	description:
 		'TrackLogic lateral adjacency: BE uint32 linkCount + per-link record (uint8 N then N×uint16 link indices). Decodes Track.sideways.txt.',
 	category: 'World',
-	caps: { read: true, write: false },
+	caps: { read: true, write: true },
 	extensions: ['.sideways'],
 	wikiUrl: 'https://split-second.wiki/format-route.html',
 

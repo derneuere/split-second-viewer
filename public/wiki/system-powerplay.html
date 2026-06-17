@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Powerplay System — Split/Second RE Wiki</title>
+<meta name="description" content="Split/Second's signature mechanic: the Power bar economy, the dynamic trigger system with danger zones, trigger buttons, the Powerplay Sequence Director and cameras, and the per-level powerplay assets.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Powerplay System" data-category="Game Systems">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Powerplay System</h1>
+<p>The <strong>Powerplay</strong> is Split/Second's signature mechanic: you charge a three-tier
+<em>Power bar</em> by driving aggressively, then spend it to detonate the environment — fuel
+trucks, collapsing buildings, exploding planes, derailing trains — under rival cars. This page
+documents the actual runtime economy, the dynamic trigger / "danger zone" targeting system, the
+trigger-button mapping, the camera director that frames each detonation, and the per-level data
+that ships in the devkit build. Almost everything here is read straight out of plaintext
+<a href="data-params.html">.params</a> files and XML, so most facts carry a
+<span class="badge ok">Confirmed</span> badge.</p>
+
+<div class="infobox"><div class="ib-title">Powerplay System</div><table>
+  <tr><th>Category</th><td>Core gameplay mechanic</td></tr>
+  <tr><th>Power tiers</th><td>3 (33% / 66% / 100%)</td></tr>
+  <tr><th>Manager class</th><td><code>cPowerplayManager</code></td></tr>
+  <tr><th>Controller</th><td><code>cPowerplayController</code></td></tr>
+  <tr><th>Camera</th><td><code>PowerplaySequenceDirector</code></td></tr>
+  <tr><th>Targeting</th><td>Dynamic trigger + danger zones</td></tr>
+  <tr><th>Per-level data</th><td><code>.powerplays</code> / <code>powerplayInfo.dat</code></td></tr>
+  <tr><th>Levels with data</th><td>10 (incl. Nemesis variants)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>Architecture at a glance</h2>
+<p>The system is split across a handful of classes named in the <a href="build-layout.html">EBOOT</a>
+strings. The <code>cPowerplayManager</code> owns the loaded set of powerplays for the current
+subtrack; the per-player <code>cPowerplayController</code> drives charging and triggering; the
+<code>cPowerplayMaterialManager</code> handles the on-track highlight shading that paints a
+chargeable object in the player's available colour; and the <code>PowerplaySequenceDirector</code>
+(a sub-component of the <a href="system-cameras.html">Camera Director</a>) frames the cinematic
+shots.</p>
+
+<table>
+<tr><th>Class / component</th><th>Role</th></tr>
+<tr><td><code>cPowerplayManager</code></td><td>Loads &amp; owns the level's powerplay set ("new" / "load" passes seen in EBOOT). Inputs/outputs via <code>cPowerplayManagerInput</code> / <code>cPowerplayManagerOutput</code>.</td></tr>
+<tr><td><code>cPowerplayController</code></td><td>Per-player power-bar charging, trigger eligibility, firing.</td></tr>
+<tr><td><code>cPowerplayMaterialManager</code></td><td>Highlight material shading (Level 1/2/3 Colour A &amp; B).</td></tr>
+<tr><td><code>cPowerplayInfo</code></td><td>Runtime record for one placed powerplay (matches <code>powerplayInfo.dat</code>).</td></tr>
+<tr><td><code>cPowerplayTriggeredEvent</code> / <code>cPowerplayCrashEvent</code></td><td>Telemetry / replay events recorded by <a href="format-track.html">TrackTivity</a>.</td></tr>
+<tr><td><code>PowerplaySequenceDirector</code></td><td>Cinematic camera sequencing for the detonation.</td></tr>
+<tr><td><code>cMegabowlesController</code></td><td>Automated powerplay-scenario test/profiler harness ("Megabowles").</td></tr>
+</table>
+
+<div class="note">The "Powerplay Controller" also appears in the EBOOT alongside the other
+top-level game controllers (<code>HUD Controller</code>, <code>Audio Controller</code>,
+<code>Game Logic Controller</code>, <code>Map Maker</code>, <code>Environment Controller</code>),
+confirming it is a first-class subsystem rather than a script.</div>
+
+<h2>The Power bar economy</h2>
+<p>The bar is a 0–100 percentage. Three activation thresholds carve it into tiers; spending a tier
+fires powerplays of the matching <em>Power Level</em>. The thresholds and penalties live in each
+game mode's <code>RaceSetup/Powerbar</code> block (e.g.
+<code>GameLogic/GameModes/ChampRace.params</code>):</p>
+
+<pre>/RaceSetup/Powerbar:
+    'Power gained on auto-respot'                  = 0.0  (-100.0, 100.0);
+    'Power required to activate level 1 (percentage)' = 33  (0, 100);
+    'Power required to activate level 2(percentage)'  = 66  (0, 100);
+    'Power required to activate level 3(percentage)'  = 100 (0, 100);
+    'Wreck penalty'                                = 33.0 (0.0, 100.0);</pre>
+
+<table>
+<tr><th>Tier</th><th>Power required</th><th>Typical use</th></tr>
+<tr><td>Level 1</td><td>33%</td><td>Small/medium hazards — barrels, doors, small explosions, shortcut openers.</td></tr>
+<tr><td>Level 2</td><td>66%</td><td>(Threshold present; the shipping powerplay data uses mostly L1 and L3 — see below.)</td></tr>
+<tr><td>Level 3</td><td>100%</td><td>Route Changers — collapsing buildings, derailed trains, plane crashes; reshape the track.</td></tr>
+</table>
+
+<p>All three tiers can be individually toggled per mode via <code>RaceSetup/Powerplays</code>
+(<code>Level 1/2/3 powerplays enabled</code>, plus the master <code>Powerplay system
+enabled</code>). The bar drains by the <code>Wreck penalty</code> (33.0, i.e. one full tier) when
+you crash. A debug cheat <code>RaceSetupStatic/Logic/PowerBar/Enable Cheat = true</code> exists in
+this QA build (debug actions <code>DebugCheat_FullPowerbar</code> /
+<code>DebugCheat_AIFullPowerbar</code>).</p>
+
+<h3>How power is earned</h3>
+<p>Power is awarded by the <a href="system-scoring.html">scoring system</a>
+(<code>RaceSetup/Scoring</code>) for a set of skilful actions, each with min/max per-second rates.
+Real ChampRace values:</p>
+
+<table>
+<tr><th>Action</th><th>Power/sec (min → max)</th><th>Conditions</th></tr>
+<tr><td>Drifting</td><td>7.0 → 14.0</td><td>Angle 10°–90°, 50–100 mph; overtake bonus +8.0</td></tr>
+<tr><td>Jumping</td><td>5.0 → 10.0</td><td>50–100 mph; combos enabled; overtake +8.0</td></tr>
+<tr><td>Drafting</td><td>2.0 → 4.0</td><td>Within a 10° half-cone, 0–45 m behind, ≥100 mph, ≥0.2 s</td></tr>
+<tr><td>Near Miss (environmental)</td><td>10.0 (award)</td><td>≥70 mph, ≥0.1 s in box, 0.5 s cooldown</td></tr>
+<tr><td>Speed</td><td>0.0 (mode-tuned)</td><td>≥90 mph; scaled by position</td></tr>
+<tr><td>Victim / Nudge</td><td>16.67 / 66.67 (award)</td><td>Power for being crashed into / nudging a rival into a wreck</td></tr>
+</table>
+
+<p>Two global multipliers in <code>RaceSetup/Scoring</code> reward duration and underdogs:
+<code>Power scale added every second of event duration = 0.05</code> and <code>Power scale for last
+position = 1.15</code>. The <a href="system-ai.html">AI</a> earns power through its own simplified
+table (<code>GameplayParameters/AI Powerbar</code>): Drifting 14.0/s, Jump 10.0/s (after 0.5 s
+airborne), Drafting 4.0/s (≥5 m, ≤5° off the player), Drive-Fast 1.0/s (above 60% top speed).</p>
+
+<h2>Powerplay levels &amp; route changers</h2>
+<p>Each placed powerplay has a <code>PowerLevel</code> (1–3) and flags such as
+<code>RouteChanging</code> and <code>OpenShortcut</code>. Level&nbsp;3 route changers permanently
+reshape the lap — they set <code>RouteChanging="true"</code> and may flag
+<code>TotallyUndriveable</code> for the old path. In the shipping Downtown subtrack A data, the 111
+placed powerplays break down as 26&nbsp;×&nbsp;Level&nbsp;1 and 85&nbsp;×&nbsp;Level&nbsp;3 — the bulk of a
+level is small chargeable hazards plus a handful of dramatic route changers.</p>
+
+<table>
+<tr><th><code>RaceSetup/Powerplays/*</code> sub-toggle</th><th>Meaning</th></tr>
+<tr><td><code>Environmental / Enabled</code></td><td>Trackside detonations (the common case).</td></tr>
+<tr><td><code>RouteChangers / Enabled</code></td><td>Level-altering Level&nbsp;3 powerplays.</td></tr>
+<tr><td><code>AreaOfEffect / Instant crashes enabled</code></td><td>AoE hit forces an immediate wreck. See <a href="system-areaofeffects.html">Area of Effects</a>.</td></tr>
+<tr><td><code>GameEvents</code></td><td>Scripted powerplays for race events: <code>PGE_Start_P</code>, <code>PGE_Lap_P</code>, <code>PGE_End_P</code>, <code>PA13_StartGloryMovie_P</code> (intro).</td></tr>
+</table>
+
+<h2>The dynamic trigger system &amp; danger zones</h2>
+<p>Split/Second shipped a rewritten targeting model: in <code>GameLogic/GameplayParameters.params</code>
+the flag <code>Use the new dynamic trigger system implementation = true</code> selects it. Rather
+than firing on a fixed line, each powerplay carries a <strong>danger zone</strong> — an oriented box
+(the <code>victimMtx</code> transform + <code>victimExtent</code> in the
+<a href="format-powerplays.html">.powerplays</a> file) that defines where a rival must be for the
+hit to count.</p>
+
+<pre>/GameplayParameters/Powerplays/Dynamic Trigger:
+    '000;Use the new dynamic trigger system implementation' = true;
+    '001;Extra extent to add on the danger zones'           = 0.0 (0.0, 50.0);
+
+/GameplayParameters/Powerplays:
+    '000;Allow trigger even if own player could be a victim' = true;</pre>
+
+<p>The static side adds <code>RaceSetupStatic/Logic/SelfFiringPowerPlay/Target Danger Zone Time =
+0.35</code> — how far ahead, in seconds, the system projects a rival into the zone — and
+<code>RaceSetupStatic/Logic/TriggeredPowerPlay/Allow rear-firing = false</code>. The runtime
+debug-render menu exposes the geometry directly:</p>
+
+<pre>powerplays/Render/Victim Boxes
+powerplays/Render/Danger Zones
+powerplays/Render/Enabled Trigger Boxes
+powerplays/Render/Disabled Trigger Boxes
+powerplays/Render/Powerplay Age</pre>
+
+<div class="tip">A single <code>disable_danger_zone</code> flag on an
+<a href="system-areaofeffects.html">AreaOfEffect</a> turns a detonation into pure spectacle that
+can't kill — used by the "NonFatalExplosion", "Wakeup_physics_props" and "depth_charge" effect
+profiles.</div>
+
+<h3>Triggered vs. self-firing</h3>
+<p>Two runtime components consume the danger-zone data. <code>RaceSetup/Logic/TriggeredPowerPlay</code>
+(<code>Enabled = true</code>) handles the normal "fire it on the car behind/ahead of you" case and
+does a wrong-way check (<code>Do Wrong Way Check = true</code>). <code>RaceSetup/Logic/SelfFiringPowerPlay</code>
+(disabled in ChampRace) lets the game auto-trigger powerplays on the holder — used by special modes
+and tutorials, gated by <code>Min/Max % Of Power To Self Trigger</code>.</p>
+
+<h2>Trigger buttons</h2>
+<p>Powerplays are bound to face buttons through a small tweakable group the EBOOT formats as
+<code>Powerplays/TriggerButtons/%s</code> (and <code>%s_%02d</code> for indexed variants). Each
+button entry carries:</p>
+
+<table>
+<tr><th>Field</th><th>Notes</th></tr>
+<tr><td><code>a; Trigger Index</code></td><td>Which powerplay slot this button fires.</td></tr>
+<tr><td><code>b; Reset Trigger</code></td><td>Re-arm / reset behaviour.</td></tr>
+</table>
+
+<p>The HUD shows the available tier's icon (from
+<code>GameLogic/PowerplayIcons.textures</code> / <code>UI/HUD/PowerPlayIcons.gfx</code>) and prints
+prompt messages when <code>RaceSetup/HUD/Powerplay Trigger Messages Enabled = true</code>.</p>
+
+<h2>Per-level powerplay assets</h2>
+<p>Every drivable subtrack ships a <a href="format-powerplays.html">.powerplays</a> XML file plus a
+binary <a href="format-powerplayinfo.html">powerplayInfo.dat</a>, Powerplay cameras, and a draw-distance
+table. Layout under <code>Environments/Levels/&lt;Level&gt;/</code>:</p>
+
+<table>
+<tr><th>File</th><th>Format</th><th>Contents</th></tr>
+<tr><td><code>Subtracks/&lt;A-D&gt;/&lt;Level&gt;.powerplays</code></td><td>XML</td><td>Placed powerplay instances (per subtrack route).</td></tr>
+<tr><td><code>&lt;Level&gt;_powerplayInfo.dat</code></td><td>Binary, big-endian</td><td>Runtime table of <code>.cat</code> timeline refs + transforms + extents.</td></tr>
+<tr><td><code>Cameras/PowerplayCameras.xml</code></td><td>XML</td><td>List of powerplays that own a bespoke camera.</td></tr>
+<tr><td><code>Cameras/PowerplayCameraSubjects.xml</code></td><td>XML</td><td>Camera subjects (animation/bone targets).</td></tr>
+<tr><td><code>Params/PowerPlayDrawDists.params</code></td><td>.params</td><td>Per-asset fade range, max draw distance, bounding-box render.</td></tr>
+</table>
+
+<p>The devkit carries powerplay data for ten levels: <strong>Downtown, Graveyard, Powerplant,
+docks, airport_test_03</strong> and the Nemesis-mode variants <strong>nem_downtown, nem_graveyard,
+nem_storm, nem_training, nem_warehouse</strong>. Shared powerplay definitions and timelines live in
+the top-level <code>Powerplays/</code> folder (Animations, Timelines, VehicleTimelines).</p>
+
+<h3>Inside a .powerplays entry</h3>
+<p>The file is plain XML — a <code>&lt;Root FileVersion="1.0000000"&gt;</code> with one
+<code>&lt;Powerplay&gt;</code> per instance. Each carries identity flags, a world matrix, a danger
+zone, EventParams, and one or more Timeline references. Real entry from Downtown subtrack A:</p>
+
+<pre>&lt;Powerplay name="..\..\..\..\Powerplays\Powerplays\PG07_Taxis_Long_P"
+   NiceName="PG07_Taxis_Long_Freeway_1" Repeatable="false"
+   AICanTrigger="true" RouteChanging="false" OpenShortcut="false"
+   TotallyUndriveable="false" MasterMaterial="7" PowerLevel="1"
+   id="1249478979.197613239..." idCRC="0xCF520610" contextual="0"&gt;
+  &lt;worldmtx&gt; &lt;Row0 .../&gt; ... &lt;/worldmtx&gt;
+  &lt;EventParams/&gt;
+  &lt;Timeline name="Powerplays\Timelines\collision_sparks_T.xml" idCRC="0x96895B69"&gt;...&lt;/Timeline&gt;
+&lt;/Powerplay&gt;</pre>
+
+<table class="struct">
+<tr><th>Attribute</th><th>Type</th><th>Description</th></tr>
+<tr><td><code>name</code></td><td>path</td><td>Reference to the shared powerplay definition under <code>Powerplays\Powerplays\</code>.</td></tr>
+<tr><td><code>NiceName</code></td><td>string</td><td>Designer-friendly label (often empty for collision sparks).</td></tr>
+<tr><td><code>PowerLevel</code></td><td>1–3</td><td>Power tier required to fire.</td></tr>
+<tr><td><code>Repeatable</code></td><td>bool</td><td>Can it fire more than once per race.</td></tr>
+<tr><td><code>AICanTrigger</code></td><td>bool</td><td>Whether AI cars may fire this one.</td></tr>
+<tr><td><code>RouteChanging</code></td><td>bool</td><td>Permanently alters the track route.</td></tr>
+<tr><td><code>OpenShortcut</code></td><td>bool</td><td>Opens a shortcut route.</td></tr>
+<tr><td><code>TotallyUndriveable</code></td><td>bool</td><td>Marks the post-fire region as impassable.</td></tr>
+<tr><td><code>MasterMaterial</code></td><td>int</td><td>Highlight-material id used by <code>cPowerplayMaterialManager</code>.</td></tr>
+<tr><td><code>idCRC</code></td><td>hex</td><td>CRC32 of the string id; the key used by <code>powerplayInfo.dat</code>.</td></tr>
+<tr><td><code>worldmtx</code> / <code>victimMtx</code></td><td>4×3 matrix</td><td>Placement transform / danger-zone transform.</td></tr>
+<tr><td><code>victimExtent</code></td><td>float×3</td><td>Half-extents of the danger-zone box.</td></tr>
+<tr><td><code>Timeline</code></td><td>ref+transform</td><td>One or more <a href="format-timeline.html">timeline</a> XMLs to play (FX, AoE, animation).</td></tr>
+</table>
+
+<h3>powerplayInfo.dat (binary twin)</h3>
+<p>The <code>.dat</code> is the cooked, big-endian runtime form: a record per powerplay holding a
+<a href="data-catnip.html">Catnip</a> <code>.cat</code> timeline name, a transform, and bounds. The
+first bytes of <code>Downtown_powerplayInfo.dat</code>:</p>
+
+<pre class="hex">000000  00 00 00 58 80 73 33 3c  00 00 00 19 70 70 31 32  ...X.s3<....pp12
+000010  5f 72 6f 61 64 5f 65 78  70 6c 6f 64 65 5f 6d 70  _road_explode_mp
+000020  6f 2e 63 61 74 3f 7f ff  ff 00 00 00 00 3a 19 0d  o.cat?.......:..</pre>
+
+<p>You can read <code>00 00 00 19</code> (25) as the length of the string
+<code>pp12_road_explode_mpo.cat</code> that follows, then big-endian floats (<code>3f 7f ff ff</code>
+≈ 0.99998) for the transform — see <a href="format-powerplayinfo.html">Powerplay Info (.dat)</a> for
+the full layout.</p>
+
+<h2>Timelines &amp; the link to Area of Effects</h2>
+<p>What a powerplay actually <em>does</em> is a list of <a href="format-timeline.html">timeline</a>
+XMLs (<code>Powerplays/Timelines/*_T.xml</code>, 106 of them in the build). A timeline sequences
+particle <code>.cat</code> effects, animations, audio and — critically — an
+<code>AreaOfEffect</code> that applies forces to nearby cars. Excerpt from
+<code>CarExplode_1_T.xml</code>:</p>
+
+<pre>&lt;TimeLine TimeLine_Total_Time="5.0" TimeLine_Number_Effects="2"&gt;
+  &lt;TimeLine_Effect Effect_Name="AreaOfEffect" Effect_Type="9"
+     area_of_effect_type="Standard"
+     camera_shake_scale="1.0" handling_impulse_scale="1.0"
+     crash_radius_proportion="0.5" disable_danger_zone="false"
+     allow_self_kills="false" allow_player_kills="false"&gt; ... &lt;/TimeLine_Effect&gt;
+  &lt;TimeLine_Effect Effect_Name="...\EXP_FireBall_L.cat" Effect_Type="0"&gt; ... &lt;/TimeLine_Effect&gt;
+&lt;/TimeLine&gt;</pre>
+
+<p>The <code>area_of_effect_type</code> attribute names one of the profiles defined in
+<code>AreaOfEffects/EffectParams.params</code> (Standard, Crash, NonFatalExplosion,
+Wakeup_physics_props, depth_charge…). Across the 106 timelines the AoE types break down as 14&nbsp;×
+<code>Standard</code>, 11&nbsp;×&nbsp;<code>custom_type</code>, 1&nbsp;×&nbsp;<code>Wakeup_physics_props</code>.
+The full force model is documented on the <a href="system-areaofeffects.html">Area of Effects &amp;
+Handling</a> page.</p>
+
+<h2>Powerplay Sequence Director &amp; cameras</h2>
+<p>When a powerplay fires, the <a href="system-cameras.html">Camera Director</a> hands off to its
+<code>PowerplaySequenceDirector</code>, which plays a multi-shot cinematic. Its tweakables (EBOOT
+strings under <code>CameraDirector/PowerplaySequenceDirector</code>):</p>
+
+<table>
+<tr><th>Tweak</th><th>Role</th></tr>
+<tr><td><code>Sequence Length</code></td><td>Total cinematic duration.</td></tr>
+<tr><td><code>Powerplay Age To Rewind Time</code></td><td>How old a powerplay can be and still get a "rewind" shot.</td></tr>
+<tr><td><code>Loop Sequence</code> / <code>Lock Start Times</code></td><td>Sequence looping / fixed shot timing.</td></tr>
+<tr><td><code>Intro Camera</code> + <code>Intro Camera Shot Length</code></td><td>Opening shot.</td></tr>
+<tr><td><code>Shot%d</code> (Enabled, Start Time, Transition Length, Non Linear Transition, Transition Effect Name, Time Offset)</td><td>Per-shot configuration of the sequence.</td></tr>
+</table>
+
+<p>Whether a takedown cinematic plays is gated by a set of <em>camera conditions</em>
+(<code>CameraDirector/CameraConditions/*</code>): "Use Drifting Or Jumping Condition", "Use Min Time
+Between Takedowns Condition", "Use Can Trigger Other Powerplay Condition", "Use Victim To Close
+Condition", "Use Victim Is In Loaded Sector Condition", "Use Victim Powerplay Is Most Recent
+Condition". A global <code>CameraDirector/Min Time Between Takeout Cameras</code> rate-limits them, and
+<code>game_setup/min_distance_to_victim_for_takedown</code> sets a minimum range. Named powerplay
+camera styles include <code>Powerplay_Trackside</code>, <code>Powerplay_Detonation</code>,
+<code>Powerplay_Scrolling</code> and the <code>Powerplay_Sequence1_Shot%d</code> chain.</p>
+
+<p>Per level, <code>PowerplayCameras.xml</code> lists which powerplays own a bespoke camera (e.g.
+Downtown: <code>PA01_Collapsing_Building_P</code>, <code>PP10_PierExplode_Bridge</code>,
+<code>RC02_Train_Derailment_P</code>, <code>PP08_SkyScraper_P</code>…), and
+<code>PowerplayCameraSubjects.xml</code> binds each to an <code>AnimationName</code> /
+<code>BoneName</code> subject to track.</p>
+
+<h2>Highlight materials</h2>
+<p>Chargeable objects glow in the player's available colour via the
+<code>cPowerplayMaterialManager</code>. The colours are tweaks
+<code>Powerplays/Highlight/Level 1–3 - Colour A</code> and <code>… - Colour B</code> (an A/B pair per
+tier), selected by the powerplay's <code>MasterMaterial</code> id. Draw distances and bounding-box
+debug rendering per asset come from <code>Params/PowerPlayDrawDists.params</code>
+(<code>Default Draw Dist</code>, <code>Fade Range</code>, <code>Max Draw Dist</code>,
+<code>Render Bounding Box</code>).</p>
+
+<h2>Testing: the Megabowles harness</h2>
+<p>Black Rock automated powerplay QA with <code>cMegabowlesController</code> ("Megabowles"), a
+scenario test/profiler that drives cars through powerplays repeatedly. The Camera Director also
+exposes <code>PowerplaySequenceDirector/Debug Takedown Sequences</code> and
+<code>CameraDirector/Debug/GameEventSequences/{Intro,Start,Finish,Outro}</code> for shot review.</p>
+
+<div class="warn">Power-level usage in the shipping data is uneven: Downtown subtrack A uses only
+Level&nbsp;1 and Level&nbsp;3 powerplays (no Level&nbsp;2 placements), even though the 66% threshold
+exists. Whether Level&nbsp;2 is exercised on other tracks/modes is an open question for a later
+pass.</div>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="system-areaofeffects.html">Area of Effects &amp; Handling</a> — the force model powerplays apply.</li>
+  <li><a href="format-powerplays.html">Powerplays (.powerplays)</a> — per-instance file format.</li>
+  <li><a href="format-powerplayinfo.html">Powerplay Info (.dat)</a> — binary runtime twin.</li>
+  <li><a href="format-timeline.html">Timelines (.timelineInfo)</a> &amp; <a href="format-triggers.html">Triggers (.triggers)</a>.</li>
+  <li><a href="data-catnip.html">Catnip Entity System</a> — the <code>.cat</code> timeline/effect runtime.</li>
+  <li><a href="system-cameras.html">Cameras &amp; Director</a> — the Powerplay Sequence Director.</li>
+  <li><a href="system-scoring.html">Scoring &amp; Progression</a> — how power is earned.</li>
+  <li><a href="system-ai.html">AI (SSAI)</a> — AI power-bar gain and triggering.</li>
+  <li><a href="data-params.html">.params Tuning System</a> — the file format quoted throughout.</li>
+  <li><a href="engine-overview.html">Engine Architecture</a> — how the Powerplay subsystem fits the wider Black Rock engine.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

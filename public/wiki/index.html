@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Split/Second RE Wiki</title>
+<meta name="description" content="A reverse-engineering wiki for the PS3 game Split/Second (Black Rock Studio): engine internals, binary file formats, and game systems.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Home" data-category="Overview">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="engine-overview.html">Engine</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<h1>Split/Second — Reverse-Engineering Wiki</h1>
+<p>An independent, fan-made wiki documenting the internals of <strong>Split/Second</strong>
+(2010, <strong>Black Rock Studio</strong> / Disney Interactive) — its engine architecture, its
+~70 binary file formats, and its game systems. Everything here is reconstructed from a
+<strong>devkit/QA debug build</strong> (title id <code>NPXX00575</code>), whose loose, uncooked
+data files and symbol-rich executable make the engine unusually legible.</p>
+
+<div class="note">This documents the <em>Black Rock</em> engine — it is <strong>not</strong> Burnout.
+Where this wiki resembles the <a href="https://burnout.wiki">Burnout wiki</a>, that's house style,
+not shared technology.</div>
+
+<h2>Start here</h2>
+<div class="cards">
+  <a class="card" href="engine-overview.html"><h3>🏗️ Engine Architecture</h3><p>The big picture: subsystems, middleware, and internal codenames (Crayon2, Catnip, JobStream).</p></a>
+  <a class="card" href="build-layout.html"><h3>📁 Build &amp; File Layout</h3><p>What the devkit build contains and how <code>USRDIR/Deferred</code> is organised.</p></a>
+  <a class="card" href="engine-rendering.html"><h3>🎨 Rendering Pipeline</h3><p>Deferred G-Buffer, SPU-based lighting, HDR and motion-blur passes.</p></a>
+  <a class="card" href="format-havok.html"><h3>🧱 Binary Formats</h3><p>How the model, texture, physics, audio and gameplay files are laid out.</p></a>
+  <a class="card" href="system-powerplay.html"><h3>💥 Powerplay System</h3><p>The signature mechanic: power bar, danger zones, trigger sequences.</p></a>
+  <a class="card" href="system-ai.html"><h3>🤖 AI (SSAI)</h3><p>Driving-line tables, the AI power economy, and the evolution test harness.</p></a>
+</div>
+
+<h2>How this wiki is organised</h2>
+<ul>
+  <li><strong>Overview &amp; Engine</strong> — architecture, rendering, threading, audio, networking, resources.</li>
+  <li><strong>Data &amp; Config</strong> — the <a href="data-params.html"><code>.params</code> tuning system</a>, the global registry, and the <a href="data-catnip.html">Catnip</a> entity system.</li>
+  <li><strong>File Formats</strong> — one page per format, grouped into Geometry/Render, Physics (Havok), Audio/Video, FX, Gameplay, Track/Route, Archive, and Telemetry.</li>
+  <li><strong>Game Systems</strong> — game modes, vehicles, cameras, scoring, tracks, difficulty/race-director, HUD, and the boss modes.</li>
+</ul>
+
+<h2>Conventions</h2>
+<p>Format pages carry a confidence badge:
+<span class="badge ok">Confirmed</span> (verified against data, XML twins, or the executable),
+<span class="badge partial">Partial</span> (header understood, some fields open),
+<span class="badge theory">Theory</span> (reasoned guess), and
+<span class="badge raw">Opaque</span> (third-party/middleware blob whose structure is defined elsewhere).
+Offsets and lengths are hexadecimal; all multi-byte values are <strong>big-endian</strong> (PS3 PowerPC) unless noted.</p>
+
+<p class="tag-list">
+  <span class="tag">PS3 / RPCS3</span><span class="tag">Havok 5.5</span><span class="tag">FMOD Ex 4.28</span>
+  <span class="tag">Quazal NetZ</span><span class="tag">Bink</span><span class="tag">Scaleform</span>
+  <span class="tag">SPURS</span><span class="tag">15,703 files</span><span class="tag">~5.2 GB</span>
+</p>
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation. Use the search box or sidebar to navigate.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

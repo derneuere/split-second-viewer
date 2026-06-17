@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timelines (.timelineInfo) — Split/Second RE Wiki</title>
+<meta name="description" content="The .timelineInfo binary table maps timeline-particle events to emitter-controller slots via 64-bit name hashes and sequential indices.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Timelines (.timelineInfo)" data-category="Formats · Gameplay (Catnip)">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Timelines (<code>.timelineInfo</code>)</h1>
+<p>
+<code>.timelineInfo</code> is a tiny, fixed-layout binary index that accompanies every
+<a href="format-emitter.html">timeline-particle</a> data set. It is an array of
+(64-bit&nbsp;name-hash, slot-index) records that maps the events on a particle <em>timeline</em>
+onto entries in the sibling <code>.emitterControllers</code> file. It carries no geometry or tuning
+of its own — it is purely the lookup/sequencing table that the Catnip
+<a href="data-catnip.html">timeline system</a> walks at runtime.
+</p>
+
+<div class="infobox"><div class="ib-title">.timelineInfo</div><table>
+  <tr><th>Category</th><td>Timeline-particle index</td></tr>
+  <tr><th>Container</th><td>Flat big-endian record array</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Magic</th><td>none (version word <code>00 00 00 01</code>)</td></tr>
+  <tr><th>Header</th><td>8 bytes (version + count)</td></tr>
+  <tr><th>Record</th><td>12 bytes (u64 hash + u32 index)</td></tr>
+  <tr><th>XML twin</th><td>none</td></tr>
+  <tr><th>Sibling files</th><td><code>.emitterControllers</code>, <code>.data</code>, <code>.emitterSurfaces</code></td></tr>
+  <tr><th>Count</th><td>88 files (Levels + Frontend)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>Where it lives</h2>
+<p>
+Every <code>TimelineParticles</code> folder holds one particle class — <code>Standard</code>,
+<code>Flare</code>, <code>Light</code>, <code>Geometry</code> or <code>Screen</code> — and each class folder
+contains a matched set of files that are always loaded together:
+</p>
+<pre class="hex">Environments/Levels/Downtown/Subtracks/A/Particles/TimelineParticles/Standard/
+    Standard.data                 113 132 B   particle/system definitions
+    Standard.emitterControllers 1 006 768 B   the controllers this timeline drives
+    Standard.emitterSurfaces       18 008 B   emitter surface geometry
+    Standard.timelineInfo          23 240 B   ← this file: timeline → controller map
+    Standard.fxc / .shaders / .shaderinst / .textures   render assets</pre>
+<p>
+The EBOOT loads them in sequence: <code>Loading '%s' particle data file…</code> →
+<code>Loading '%s' particle emitter controller file…</code> → reads <code>%s.emitterControllers</code>
+then <code>%s.timelineInfo</code>. The per-class log banners
+(<code>Standard Timeline Particles</code>, <code>Flare Timeline Particles</code>,
+<code>Light Timeline Particles</code>, <code>Geometry Timeline Particles</code>,
+<code>Screen Timeline Particles</code>) and the internal timeline names
+(<code>standard_timeline</code>, <code>flare_timeline</code>, <code>light_timeline</code>,
+<code>geometry_timeline</code>, <code>screen_timeline</code>) all appear in
+<code>eboot_strings.txt</code> immediately adjacent to the <code>%s.timelineInfo</code> path token,
+fixing the format's owner classes (<code>cStandardGameParticleDataGroup</code>,
+<code>cFlareGameParticleDataGroup</code>, <code>cLightGameParticleDataGroup</code>,
+<code>cGeometryGameParticleDataGroup</code> + <code>cParticleClass</code>).
+</p>
+
+<h2>File layout</h2>
+<p>
+The format is trivial and 100% accounted for: an 8-byte header followed by
+<code>count</code> records of 12 bytes each. Across <strong>all 88 <code>.timelineInfo</code> files</strong>
+in the build, <code>file size == 8 + count × 12</code> holds exactly, <code>version</code> is always
+<code>1</code>, and the per-record <code>index</code> is always the exact sequence
+<code>0…count−1</code> — which together prove the record size and confirm there is no footer or string
+pool.
+</p>
+
+<h3>Header (8 bytes)</h3>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x0</td><td>0x4</td><td>uint32_t</td><td>version</td><td>Always <code>0x00000001</code> across all samples (8-byte file up to 23 KB file).</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>uint32_t</td><td>count</td><td>Number of timeline records that follow. Verified: file size = 8 + count·12 for every sample.</td></tr>
+</tbody>
+</table>
+
+<h3>Record (12 bytes × count)</h3>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>+0x0</td><td>0x8</td><td>uint64_t</td><td>controllerHash</td><td>64-bit hash of the emitter-controller / particle-data name. Repeats across records (the same controller is fired many times on a timeline). Distinct from the controller's textual <code>id</code> — see note below.</td></tr>
+<tr><td>+0x8</td><td>0x4</td><td>uint32_t</td><td>index</td><td>Slot / sequence index. Strictly increasing <code>0…count-1</code> in every sample (the last record's index always equals <code>count-1</code>).</td></tr>
+</tbody>
+</table>
+
+<h2>Confirmed sizing</h2>
+<table>
+<thead><tr><th>File</th><th>Size</th><th>count</th><th>8 + count·12</th></tr></thead>
+<tbody>
+<tr><td>Downtown / …/Flare</td><td>8</td><td>0</td><td>8 ✓</td></tr>
+<tr><td>UI/Frontend / …/Light</td><td>44</td><td>3</td><td>44 ✓</td></tr>
+<tr><td>UI/Frontend / …/Standard</td><td>140</td><td>11</td><td>140 ✓</td></tr>
+<tr><td>Downtown/A / …/Screen</td><td>560</td><td>46</td><td>560 ✓</td></tr>
+<tr><td>Downtown/A / …/Light</td><td>3 032</td><td>252</td><td>3 032 ✓</td></tr>
+<tr><td>Downtown/A / …/Standard</td><td>23 240</td><td>1 936</td><td>23 240 ✓</td></tr>
+</tbody>
+</table>
+
+<h2>Annotated hex</h2>
+<p>
+The 44-byte <code>UI/Frontend/…/Light/Light.timelineInfo</code> is the cleanest full sample:
+version&nbsp;1, three records, indices 0–2. Notice the same hash <code>5C50 4456 A4B1 A2DF</code>
+recurs (this Light class only references a couple of controllers):
+</p>
+<pre class="hex">000000  00 00 00 01  00 00 00 03   <span class="cmt">version=1, count=3</span>
+000008  5c 50 44 56 a4 b1 a2 df    <span class="cmt">rec0.controllerHash</span>
+000010  00 00 00 00                <span class="cmt">rec0.index = 0</span>
+000014  5c 50 44 56 a4 b1 a2 df    <span class="cmt">rec1.controllerHash (same)</span>
+00001c  00 00 00 01                <span class="cmt">rec1.index = 1</span>
+000020  5c 50 44 56 a4 b1 a2 df    <span class="cmt">rec2.controllerHash (same)</span>
+000028  00 00 00 02                <span class="cmt">rec2.index = 2</span></pre>
+<p>And the 140-byte Standard frontend file, showing several distinct hashes interleaved:</p>
+<pre class="hex">000000  00 00 00 01  00 00 00 0b   <span class="cmt">version=1, count=11 (0x0b)</span>
+000008  d2 40 12 e2 a4 b1 a2 df  00 00 00 00   <span class="cmt">rec0  index 0</span>
+000014  da f5 d5 00 a4 b1 a2 df  00 00 00 01   <span class="cmt">rec1  index 1</span>
+000020  45 0d cd ba ff a8 37 83  00 00 00 02   <span class="cmt">rec2  index 2</span>
+        …
+000080  da f5 d5 00 a4 b1 a2 df  00 00 00 0a   <span class="cmt">rec10 index 10 = count-1</span></pre>
+
+<h2>The link to <code>.emitterControllers</code></h2>
+<p>
+The companion <code>.emitterControllers</code> file opens with its own
+<code>uint32 version (=5)</code> then a <code>uint32 count</code> — and that count equals the
+<code>.timelineInfo</code> count in the simple frontend cases:
+</p>
+<table>
+<thead><tr><th>Class</th><th>timelineInfo count</th><th>emitterControllers count (offset 0x4)</th></tr></thead>
+<tbody>
+<tr><td>UI/Frontend Light</td><td>3</td><td><code>00 00 00 03</code> = 3 ✓</td></tr>
+<tr><td>UI/Frontend Standard</td><td>11</td><td><code>00 00 00 0b</code> = 11 ✓</td></tr>
+</tbody>
+</table>
+<p>
+Each controller entry in <code>.emitterControllers</code> begins with an ASCII name such as
+<code>1263313715.-811256644</code> (a two-part 32-bit <code>id</code>, the same notation the
+<a href="format-highlighttags.html">highlight-tags</a> use) followed by an artist label like
+<code>LIT_OrangeFire</code>. The 64-bit value in <code>.timelineInfo</code> is the hashed key the
+runtime uses to resolve a timeline event to one of these controllers; the <code>index</code> field
+then orders the events on the timeline.
+</p>
+<div class="note">
+The EBOOT assert <code>Wrong index for Emitter Controller found</code> sits in the same loader block
+and is the runtime check that a <code>.timelineInfo</code> <code>index</code> is in range for the
+controller array — direct confirmation that the second field is an index into
+<code>.emitterControllers</code>.
+</div>
+<div class="warn">
+The 8-byte field is a <em>hash</em>, not the literal controller <code>id</code>: decoding the first
+Standard-frontend controller id (<code>1263313715.-811256644</code> → <code>0x4B4CA333&nbsp;0xCFA534BC</code>)
+does not equal the first record's hash (<code>0xD24012E2A4B1A2DF</code>). The exact hash function
+(CRC-64 / FNV-style over the name string) is <span class="badge theory">unverified</span>; only its
+role as a stable name key is confirmed.
+</div>
+
+<h2>Notes &amp; open questions</h2>
+<ul>
+<li>Some classes have far more timeline records than unique controllers (Downtown Standard = 1 936
+records). This is expected: a timeline fires the same emitter many times, so the hash repeats while
+the index keeps climbing.</li>
+<li>Whether <code>index</code> is a flat array slot or a packed timeline-frame ordinal is not
+distinguishable from the data alone; both interpretations are consistent with the strictly
+sequential values observed.</li>
+<li>No endianness ambiguity: the count and indices only read sanely as big-endian.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="format-emitter.html">Emitters (.emitter*)</a> — the <code>.emitterControllers</code>/<code>.emitterSurfaces</code> this table indexes</li>
+<li><a href="data-catnip.html">Catnip Entity System</a> — owner of the timeline/sequencing runtime</li>
+<li><a href="format-powerplays.html">Powerplays (.powerplays)</a> — powerplay sequences that drive these timelines</li>
+<li><a href="format-logicinfo.html">Logic Info (.logicinfo)</a> — sibling small fixed-layout track-logic blob</li>
+<li><a href="format-highlighttags.html">Highlight Tags (.highlighttags)</a> — uses the same two-part <code>id</code> notation</li>
+<li><a href="system-powerplay.html">Powerplay System</a></li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

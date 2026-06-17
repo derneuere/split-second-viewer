@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build &amp; File Layout — Split/Second RE Wiki</title>
+<meta name="description" content="What the NPXX00575 devkit build of Split/Second is: PARAM.SFO / title id, the QA debug flags in SplitSecond.params, the USRDIR/Deferred directory tree, the .ark archive set, qa_menus, and TrackTivity telemetry.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Build &amp; File Layout" data-category="Overview">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Build &amp; File Layout</h1>
+<p>This wiki is reverse-engineered from one specific build of <i>Split/Second</i>: a <b>PlayStation 3 devkit / QA debug build</b> with title id <b>NPXX00575</b>. Unlike a retail disc, its content is not packed into a master archive — every asset sits <b>loose on disk</b> under <code>USRDIR/Deferred/</code>, in big-endian (PS3 PowerPC) form. That, plus the build's verbose QA flags, is exactly why so much of the engine can be documented from plaintext. This page covers what the build is, how it identifies itself, and how its files are organised.</p>
+
+<div class="infobox"><div class="ib-title">NPXX00575</div><table>
+<tr><th>Title</th><td>Split/Second</td></tr>
+<tr><th>Title ID</th><td><code>NPXX00575</code></td></tr>
+<tr><th>App version</th><td><code>01.00</code></td></tr>
+<tr><th>Category</th><td><code>HG</code> (HDD-installed game)</td></tr>
+<tr><th>Min PS3 firmware</th><td><code>03.1000</code></td></tr>
+<tr><th>Build type</th><td>Devkit / QA debug</td></tr>
+<tr><th>Packing</th><td>Loose files (unpacked)</td></tr>
+<tr><th>Endianness</th><td>Big-endian (PowerPC)</td></tr>
+<tr><th>EBOOT</th><td>SCE SELF, 19,066,640&nbsp;B (~18.2&nbsp;MiB)</td></tr>
+<tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>Identity: PARAM.SFO</h2>
+<p>Every PS3 title carries a <code>PARAM.SFO</code> — a small binary key/value table (magic <code>\0PSF</code>) read by the system software. This build's SFO is only 1,040 bytes; its values pin down exactly what we are looking at:</p>
+<table>
+<tr><th>Key</th><th>Value</th><th>Meaning</th></tr>
+<tr><td><code>TITLE</code></td><td>Split/Second</td><td>Display name</td></tr>
+<tr><td><code>TITLE_ID</code></td><td>NPXX00575</td><td>Unique id — <code>NPXX*</code> is the devkit/test region prefix</td></tr>
+<tr><td><code>APP_VER</code></td><td>01.00</td><td>Application version</td></tr>
+<tr><td><code>VERSION</code></td><td>01.00</td><td>Content version</td></tr>
+<tr><td><code>CATEGORY</code></td><td>HG</td><td>HDD-boot game (installed, not a disc image)</td></tr>
+<tr><td><code>PS3_SYSTEM_VER</code></td><td>03.1000</td><td>Minimum required firmware (3.10)</td></tr>
+<tr><td><code>PARENTAL_LEVEL</code></td><td>(present)</td><td>Parental control level field</td></tr>
+<tr><td><code>RESOLUTION</code> / <code>SOUND_FORMAT</code></td><td>(present)</td><td>Standard display/audio capability bitfields</td></tr>
+<tr><td><code>LICENSE</code></td><td>"Library programs ©Sony…"</td><td>Standard SCE licence boilerplate</td></tr>
+</table>
+<p>Raw excerpt (key/value region of the SFO, char dump):</p>
+<pre class="hex">0000880  04  00  00  00  03  01  00  00   S   p   l   i   t   /   S   e
+0000896   c   o   n   d  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0  \0
+0001008  \0  \0  \0  \0  \0  \0  \0  \0   N   P   X   X   0   0   5   7
+0001024   5  \0  \0  \0  \0  \0  \0  \0   0   1   .   0   0  \0  \0  \0</pre>
+<div class="tip">The <code>NPXX</code> prefix is the giveaway. Retail PS3 discs use region prefixes like <code>BLES</code>/<code>BLUS</code> (the US release is <code>BLUS30531</code>); <code>NPXX</code> is a non-retail (devkit/test) prefix. <code>NPXX00575</code> is therefore a developer id, consistent with a QA/debug build installed to the dev HDD rather than pressed to disc. <span class="badge partial">Partial</span> — the retail id prefixes are external knowledge, not present in this build's data.</div>
+
+<h2>The QA build flags: SplitSecond.params</h2>
+<p>Sitting beside the EBOOT, <code>USRDIR/SplitSecond.params</code> is the build's global toggle file — and it reads exactly like a QA configuration. The complete file:</p>
+<pre class="hex">Cheats/:
+    Freecam_on_2nd_pad = false;
+    qa_menus = true;
+
+game_setup/:
+    enable_TrackTivity = true;
+    force_save_TTY_to_Devkit_HDD_root = true;
+    IgnoreStrictNAT = true;
+    OnlineGameName = 17099;
+    save_TTY_logs_to_file = true;
+    tty_streams_force_on = true;</pre>
+<p>What each flag tells us:</p>
+<table>
+<tr><th>Flag</th><th>Effect</th></tr>
+<tr><td><code>qa_menus = true</code></td><td>Enables the in-game debug/QA menus (the <code>Lighting/…</code>, <code>Respot/…</code>, <code>MegabowlesScenarios/…</code> trees seen throughout the EBOOT)</td></tr>
+<tr><td><code>Freecam_on_2nd_pad = false</code></td><td>Debug free-camera, bindable to a second pad (off here)</td></tr>
+<tr><td><code>enable_TrackTivity = true</code></td><td>Turns on the TrackTivity telemetry recorder</td></tr>
+<tr><td><code>force_save_TTY_to_Devkit_HDD_root</code></td><td>Writes telemetry to the devkit HDD root — which is why <code>.track</code> files land directly in <code>Deferred/</code></td></tr>
+<tr><td><code>save_TTY_logs_to_file</code> / <code>tty_streams_force_on</code></td><td>Forces TTY console output to file/stream (developer logging)</td></tr>
+<tr><td><code>IgnoreStrictNAT = true</code></td><td>Relaxes online NAT checks for test networking (see <a href="engine-networking.html">Networking</a>)</td></tr>
+<tr><td><code>OnlineGameName = 17099</code></td><td>Numeric online/session identifier used by the Quazal back-end</td></tr>
+</table>
+<p>These are the same flags that make the rest of this wiki possible: the QA menus expose internal subsystem names, and TrackTivity leaves a trail of telemetry files on disk.</p>
+
+<h2>Top-level layout</h2>
+<p>Under the title directory <code>dev_hdd0/game/NPXX00575/</code>:</p>
+<table>
+<tr><th>Path</th><th>What it is</th></tr>
+<tr><td><code>PARAM.SFO</code></td><td>Title metadata (above)</td></tr>
+<tr><td><code>ICON0.PNG</code> / <code>PIC1.PNG</code></td><td>XMB icon (79&nbsp;KB) and background (1.29&nbsp;MB)</td></tr>
+<tr><td><code>PS3LOGO.DAT</code></td><td>Boot logo data</td></tr>
+<tr><td><code>TROPDIR/</code></td><td>Trophy data</td></tr>
+<tr><td><code>USRDIR/</code></td><td>The game itself</td></tr>
+<tr><td><code>USRDIR/EBOOT.BIN</code></td><td>The executable — SCE SELF, magic <code>53 43 45 00</code> ("SCE\0"), 19,066,640 bytes</td></tr>
+<tr><td><code>USRDIR/SplitSecond.params</code></td><td>Build/QA flags (above)</td></tr>
+<tr><td><code>USRDIR/Deferred/</code></td><td>All game data (see below)</td></tr>
+</table>
+<div class="note">The data root is named <code>Deferred</code> — the same word as the renderer's deferred pipeline. In this build it is the single content tree the engine mounts.</div>
+
+<h2>The Deferred data tree</h2>
+<p>The <b>19</b> top-level directories under <code>Deferred/</code> are the spine of the game's content (the root also holds two loose files, <code>default.global_regs</code> and <code>directory.txt</code>, plus the dumped <code>.track</code> captures — see below). Each directory maps to one or more wiki pages:</p>
+<table>
+<tr><th>Directory</th><th>Contents</th><th>See</th></tr>
+<tr><td><code>AreaOfEffects/</code></td><td><code>EffectParams</code>, <code>GlobalParams</code>, <code>HandlingEffects.params</code> — explosion forces &amp; handling FX</td><td><a href="system-areaofeffects.html">Area of Effects</a></td></tr>
+<tr><td><code>Audio/</code></td><td>16 sub-folders: Music, Speech, Vehicles, Surface, Swooshes, Tonic, Locales, XML…</td><td><a href="engine-audio.html">Audio Engine</a> · <a href="format-fsb.html">.fsb</a></td></tr>
+<tr><td><code>Cameras/</code></td><td>CommonCameras, GameModes, Params, UtilCameras</td><td><a href="system-cameras.html">Cameras &amp; Director</a></td></tr>
+<tr><td><code>Dictionary/</code></td><td>Localised string tables (<code>.dct</code>) per language &amp; platform (PS3/XBOX360), plus <code>StringIDs_*.dct</code></td><td><a href="format-misc.html">Misc &amp; Raw</a></td></tr>
+<tr><td><code>Environments/</code></td><td><code>Levels/</code> (track levels + nemesis levels), <code>Objects/</code>, <code>PhysicsDebris/</code></td><td><a href="system-tracks.html">Tracks &amp; Levels</a></td></tr>
+<tr><td><code>fonts/</code></td><td>Font resources</td><td><a href="system-hud.html">HUD &amp; Frontend</a></td></tr>
+<tr><td><code>GameLogic/</code></td><td>GameModes, Tracks, Nemesis, DifficultyModifiers, AIPilotsDatabase, <code>GameplayParameters.params</code>, <code>Catchup.params</code>, <code>RaceSetupStatic.params</code></td><td><a href="system-gamemodes.html">Game Modes</a> · <a href="system-difficulty.html">Difficulty</a></td></tr>
+<tr><td><code>GameModeHUDs/</code></td><td>Per-mode HUD param files (Demolition, Elimination, Helicopter*, Nemesis*, QuickRace, TimeTrial, Tutorial)</td><td><a href="system-hud.html">HUD &amp; Frontend</a></td></tr>
+<tr><td><code>Generic/</code></td><td>Models, Params — shared/generic assets</td><td><a href="format-model.html">.model</a></td></tr>
+<tr><td><code>global_shader_combos/</code></td><td><code>global_shader_combos.fxc</code> (2,382,848 B übershader DB) + <code>.shaders</code> (194,958 B)</td><td><a href="engine-rendering.html">Rendering</a> · <a href="format-fxc.html">.fxc</a></td></tr>
+<tr><td><code>Movies/</code></td><td>~30 Bink <code>.bik</code> videos (Intro, Blackrock, tutorials, frontend backgrounds…)</td><td><a href="format-bik.html">Bink Video</a></td></tr>
+<tr><td><code>PostProcessDatabase/</code></td><td><code>PostProcessDatabase.params</code> + <code>…Static.params</code></td><td><a href="system-postprocess.html">Post-Processing DB</a></td></tr>
+<tr><td><code>Powerplays/</code></td><td>Animations, Timelines, VehicleTimelines</td><td><a href="system-powerplay.html">Powerplay System</a></td></tr>
+<tr><td><code>Scoring/</code></td><td><code>Scoring.params</code></td><td><a href="system-scoring.html">Scoring &amp; Progression</a></td></tr>
+<tr><td><code>Season/</code></td><td><code>Season.xml</code>, <code>UnlockCriteria.xml</code></td><td><a href="system-scoring.html">Scoring &amp; Progression</a></td></tr>
+<tr><td><code>SSAI/</code></td><td>Per-class LDC driving tables, <code>EvolutionConfig.params</code>, <code>PerCarInfo.params</code>, per-track AI scenario folders</td><td><a href="system-ai.html">AI (SSAI)</a></td></tr>
+<tr><td><code>TracktivityData/</code></td><td>(empty here — telemetry is dumped to the root instead, see below)</td><td><a href="format-track.html">TrackTivity</a></td></tr>
+<tr><td><code>UI/</code></td><td>Bootup, CommonUI, DebugHud, Fonts, Frontend, HUD, Icons, InGame, Logic, Network</td><td><a href="format-gfx.html">Scaleform UI</a></td></tr>
+<tr><td><code>Vehicles/</code></td><td>Bodies, Chassis, Handling, Cameras, Particles, Compositing, Frontend, Generic; <code>VehicleDatabase.xml</code>, <code>VehicleColors.params</code></td><td><a href="system-vehicles.html">Vehicles</a></td></tr>
+</table>
+
+<h3>Levels</h3>
+<p><code>Environments/Levels/</code> contains the playable areas plus their nemesis/boss variants and AI test maps: <code>Downtown</code>, <code>Graveyard</code>, <code>Powerplant</code>, <code>docks</code>, <code>airport_test_03</code>, and the nemesis set <code>nem_downtown</code>, <code>nem_graveyard</code>, <code>nem_storm</code>, <code>nem_warehouse</code>, <code>nem_training</code>. See <a href="system-tracks.html">Tracks &amp; Levels</a> and <a href="system-nemesis.html">Nemesis &amp; Heli Modes</a>.</p>
+
+<h3>Vehicles</h3>
+<p>The roster is defined in <code>Vehicles/VehicleDatabase.xml</code> and built from shared chassis (<code>Coupe</code>, <code>Supercar</code>, <code>Truck</code>, <code>Prototype</code>, <code>NemesisTruck</code> + FE/Low variants) and per-car bodies (<code>Musclecar_01</code>…<code>15</code> + Drone, <code>Supercar_01</code>…<code>11</code>, <code>Truck_01</code>…<code>07</code> + Demolition, <code>Unique_01</code>…<code>04</code>, <code>NemesisTruck01</code>). Full roster with stats on <a href="system-vehicles.html">Vehicles</a>.</p>
+
+<h2>Archives: .ark (the retail packing)</h2>
+<p>Although <i>this</i> build is loose, the EBOOT still references the engine's <b>.ark</b> archive scheme used to pack content. The format strings name a fixed archive set:</p>
+<table>
+<tr><th>Archive</th><th>Role</th></tr>
+<tr><td><code>Resident.ark</code></td><td>Always-resident core assets</td></tr>
+<tr><td><code>Frontend.ark</code> / <code>FrontendPowerplays.ark</code></td><td>Menu / frontend</td></tr>
+<tr><td><code>InGame1.ark</code>, <code>InGame2.ark</code>, <code>InGame3.ark</code></td><td>Gameplay asset banks</td></tr>
+<tr><td><code>Environments/Levels/%s.ark</code></td><td>Per-level pack (<code>%s</code> = level name)</td></tr>
+<tr><td><code>%s.Static.ark</code> / <code>%s.Stream.ark</code></td><td>Static vs streamed split of a level</td></tr>
+<tr><td><code>%sPowerplays.ark</code></td><td>Per-level powerplay assets</td></tr>
+<tr><td><code>Characters/RiderAnimations/…/rider_%02d.ark</code></td><td>Rider animation packs</td></tr>
+</table>
+<p>The <code>%s.Static.ark</code> / <code>%s.Stream.ark</code> split mirrors the deferred loader's two-tier residency (always-loaded vs streamed). Format details on <a href="format-ark.html">Archives (.ark)</a> and <a href="engine-resources.html">Resources &amp; Streaming</a>.</p>
+
+<h2>TrackTivity telemetry (.track)</h2>
+<p>With <code>enable_TrackTivity = true</code> and <code>force_save_TTY_to_Devkit_HDD_root = true</code>, the build records QA telemetry to <b><code>.track</code></b> files that are written straight into the <code>Deferred/</code> root (not into the otherwise-empty <code>TracktivityData/</code> folder). This dump has <b>111</b> of them on disk, named <code>TracktivityData_P_&lt;tag&gt;_&lt;Y_M_D_h_m_s&gt;.track</code> (tags seen: <code>PS3-</code>, <code>boff</code>, <code>Unkn</code>), e.g. <code>TracktivityData_P_PS3-_2010_1_10_14_18_32.track</code>. The filename timestamps span two distinct eras: <b>77 are from January 2010</b> (the original devkit QA sessions, Jan 2–30, a few months before the May 2010 release; six more are dated 2011–2012), and the remaining <b>28</b> carry an <code>Unkn</code> tag and <b>2020–2023</b> dates — emulator-session artifacts produced after this build was preserved (the files themselves are stamped May 2020 on disk).</p>
+<p>The files are small (the first is 1,996 bytes) and contain a raw big-endian float stream — appearing to be repeated position/orientation samples. First 32 bytes of the earliest capture:</p>
+<pre class="hex">000000 00 00 00 53 c2 96 00 00 bf 3f e7 7b 43 6e 7e 52
+000010 c2 6e 66 a9 bf 3f ea 84 43 6e d0 54 c2 6e 66 a9</pre>
+<p>Note the 4-byte header (<code>00 00 00 53</code>) followed by what reads as repeated 12-byte vectors (a sample appears twice in a row), consistent with a per-frame replay/telemetry trace. Full breakdown on <a href="format-track.html">TrackTivity (.track)</a>.</p>
+
+<h2>Why this build is a gift for RE</h2>
+<ul>
+<li><b>Loose files</b> — no <code>.ark</code> to unpack; assets are inspectable directly.</li>
+<li><b>Plaintext config</b> — <a href="data-params.html">.params</a> and XML are human-readable, with tuning ranges intact.</li>
+<li><b>QA menus on</b> — the EBOOT exposes hundreds of internal subsystem/debug-menu strings.</li>
+<li><b>Symbolized EBOOT</b> — source paths (<code>c:/Projects/proj_1/ws_0/Code/…</code>) and class names survive in the clear.</li>
+<li><b>Telemetry left behind</b> — 111 <code>.track</code> captures sample the runtime.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="engine-overview.html">Engine Architecture</a> — the subsystem map this content feeds</li>
+<li><a href="glossary.html">Glossary &amp; Codenames</a> — what the names in these files mean</li>
+<li><a href="data-params.html">.params Tuning System</a> · <a href="data-xml.html">XML Conventions</a></li>
+<li><a href="format-ark.html">Archives (.ark)</a> · <a href="format-track.html">TrackTivity (.track)</a> · <a href="engine-resources.html">Resources &amp; Streaming</a></li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

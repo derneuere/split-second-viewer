@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mesh Collision (.mcl) — Split/Second RE Wiki</title>
+<meta name="description" content="The .mcl format in Powerplays/Animations is a custom SDRI/INSS material-clip container of animated material-parameter overrides — not a Havok collision mesh.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Mesh Collision (.mcl)" data-category="Formats · Physics (Havok)">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Mesh Collision (.mcl)</h1>
+<p>
+  <code>.mcl</code> files live under <code>Powerplays/Animations/&lt;Level&gt;/…</code> and were
+  catalogued in the physics cluster on the assumption they were powerplay/prop <em>collision meshes</em>.
+  Hex inspection tells a different story: <code>.mcl</code> is a <strong>custom Black&nbsp;Rock
+  container</strong> (magic <code>SDRI</code>, chunk tags <code>INSS</code>/<code>INSE</code>) whose
+  payload is a list of <strong>animated material-parameter overrides</strong> — colour fades, UV
+  scrolls, fresnel/specular tweaks and texture swaps applied to props during powerplay sequences. It
+  is <strong>not</strong> a Havok file and contains no geometry.
+</p>
+
+<div class="infobox"><div class="ib-title">.mcl</div><table>
+  <tr><th>Category</th><td>Material clip / override list</td></tr>
+  <tr><th>Container</th><td>Custom <code>SDRI</code> chunked</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Magic</th><td><code>53 44 52 49</code> ("SDRI")</td></tr>
+  <tr><th>Body chunk</th><td><code>INSS</code> … <code>INSE</code></td></tr>
+  <tr><th>Havok?</th><td><span class="badge raw">No</span> — not <code>57 E0 E0 57</code></td></tr>
+  <tr><th>Location</th><td><code>Powerplays/Animations/</code></td></tr>
+  <tr><th>Count</th><td>1,636 files</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<div class="warn">
+  <strong>Naming caveat.</strong> The sidebar lists this under "Formats · Physics (Havok)" as "Mesh
+  Collision (.mcl)", but every sample examined is a <em>material</em> container, not a collision mesh.
+  No <code>57 E0 E0 57</code> Havok magic, no <code>hkp*Shape</code> class names, no vertex/index
+  buffers — instead, shader-parameter strings and float/vector values. Real powerplay/prop collision
+  is handled by the <a href="format-hkcoll.html">Havok <code>.hkColl</code></a> world meshes and by
+  the powerplay physics packs (<code>_pps</code>, see <a href="format-hkpps.html">.hkPPs</a>). The
+  expansion of the abbreviation is best read as <strong>Material Clip / Material Combo List</strong>,
+  not "mesh collision".
+</div>
+
+<h2>Evidence: it is a material file</h2>
+<p>
+  The smallest sample, <code>AA_HelicopterShockwave.mcl</code> (426 bytes), fits in one screen and is
+  unambiguous — it is a flat list of named material parameters with values:
+</p>
+<pre class="hex">000000  53 44 52 49 00 00 00 08 49 4e 53 53 00 00 00 01   SDRI....INSS....   magic + INSS, count=1
+000010  10 c0 2f 34 00 00 00 08 75 6e 6e 61 6d 65 64 00   ../4....unnamed.   hash 0x10c02f34, "unnamed"
+000020  00 00 00 0b 30 78 36 32 32 37 31 35 61 32 00 00   ....0x622715a2..   len 11 + "0x622715a2"
+000030  00 00 00 00 00 03 00 00 00 03 00 00 00 15 63 6f   ..............co   count words; len 21 + "co
+000040  6c 6f 72 61 6c 70 68 61 5f 33 5f 66 61 64 65 6f   loralpha_3_fadeo   loralpha_3_fadeo
+000050  75 74 00 00 00 00 00 02 ...                        ut..              ut" (param name)
+...
+000070  ... 75 76 73 63 72 6f 6c 6c 5f 34 5f 73 ...        uvscroll_4_s       "uvscroll_4_scroll"
+0000a0  ... 46 72 65 73 6e 65 6c 5f 41 6c 70 68 61 5f 35   Fresnel_Alpha_5    "Fresnel_Alpha_5_fresnel_power"
+000140  ... 61 6c 70 68 61 62 6c 65 6e 64 5f 36 5f 74 65   alphablend_6_te    "alphablend_6_texture"
+0001a0  ... 49 4e 53 45                                     INSE               end-of-instance terminator</pre>
+<p>
+  Every parameter name follows the pattern <code>&lt;effect&gt;_&lt;index&gt;_&lt;property&gt;</code>:
+  <code>coloralpha_3_fadeout</code>, <code>uvscroll_4_scroll</code>,
+  <code>Fresnel_Alpha_5_fresnel_power</code>, <code>alphablend_6_texture</code>,
+  <code>Diffuse_IPR_2_specular_amount</code>, <code>Diffuse_IPR_2_tint</code>,
+  <code>Diffuse_IPR_2_diffuse</code>, <code>Diffuse_IPR_2_ipr</code>. These are
+  <strong>shader/material slot names</strong> — the numeric token is the material-layer index and the
+  trailing word is the tunable. None of this is collision geometry. The hex string
+  <code>"0x622715a2"</code> stored as ASCII is the target material/shader hash the clip retints; the
+  preceding <code>10 c0 2f 34</code> is a binary 32-bit id for the instance.
+</p>
+<p>
+  This is corroborated by the EBOOT (<code>eboot_strings.txt</code>), which contains the material-combo
+  factory classes <code>cMaterialComboManagers</code> and <code>cMaterialComboFactory</code>, and by
+  the sibling load path <code>powerplays(noassert)|Powerplays/Animations/%s/%s_pps</code> — powerplay
+  animations carry their own physics (<code>_pps</code>) <em>separately</em> from these material
+  clips.
+</p>
+
+<h2>Container layout</h2>
+<p>
+  The outer framing is a tiny tagged-chunk wrapper. All integers are big-endian. <span class="badge ok">Confirmed</span>
+  constant across every sample (small 426 B, mid 2–3 KB, several Pre/Post variants):
+</p>
+<table class="struct">
+  <tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+  <tr><td>0x00</td><td>0x4</td><td>char[4]</td><td>magic</td><td><code>"SDRI"</code> (<code>53 44 52 49</code>). Constant. <strong>Shared</strong> Black Rock container magic — the <a href="format-shaders.html">.shaderinst</a> files also start with <code>SDRI</code>, which further ties <code>.mcl</code> to the material/shader pipeline rather than physics.</td></tr>
+  <tr><td>0x04</td><td>0x4</td><td>uint32_t</td><td>headerSize</td><td><code>0x08</code> in every sample — bytes from <code>0x00</code> to the first body chunk.</td></tr>
+  <tr><td>0x08</td><td>0x4</td><td>char[4]</td><td>chunkTag</td><td><code>"INSS"</code> — "instance set start". Opens the material-instance list.</td></tr>
+  <tr><td>0x0C</td><td>0x4</td><td>uint32_t</td><td>instanceCount</td><td>Number of material instances in the body. Ranges <code>0</code>–<code>41</code> across the 1,636 files (most common is 2; 16 files have 0). Big-endian.</td></tr>
+  <tr><td>0x10</td><td>0x4</td><td>uint32_t</td><td>setId / hash</td><td>Per-file 32-bit id (e.g. <code>0x10c02f34</code>, <code>0xd50c2fdf</code>, <code>0xe0e77c01</code>). Differs every file.</td></tr>
+  <tr><td>…</td><td>var</td><td>instance[]</td><td>instances</td><td><code>instanceCount</code> material-instance records (below).</td></tr>
+  <tr><td>EOF&minus;4</td><td>0x4</td><td>char[4]</td><td>endTag</td><td><code>"INSE"</code> — "instance set end". Confirmed as the last 4 bytes of every file.</td></tr>
+</table>
+
+<h3>Material instance record</h3>
+<p>
+  Each instance begins with a length-prefixed name (always <code>"unnamed"</code> in samples) and an
+  ASCII material-hash string, then a parameter array. <span class="badge partial">Partial</span> — the
+  field names below are inferred from value shapes and the readable strings; the exact meaning of some
+  count/flag words is still open.
+</p>
+<table class="struct">
+  <tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+  <tr><td>+0x00</td><td>0x4</td><td>uint32_t</td><td>nameLen</td><td>Length of the instance name string. <code>0x08</code> for <code>"unnamed\0"</code>.</td></tr>
+  <tr><td>+0x04</td><td>nameLen</td><td>char[]</td><td>name</td><td>Instance name (NUL-terminated). Always <code>"unnamed"</code> in samples.</td></tr>
+  <tr><td>…</td><td>0x4</td><td>uint32_t</td><td>hashLen</td><td>Length of the material-hash string. <code>0x0B</code> for <code>"0x622715a2"</code>.</td></tr>
+  <tr><td>…</td><td>hashLen</td><td>char[]</td><td>materialHash</td><td>ASCII hex hash of the target material/shader to override.</td></tr>
+  <tr><td>…</td><td>0x4</td><td>uint32_t</td><td>(flags?)</td><td>Small word, varies (<code>0</code>/<code>1</code>). Likely a layer/blend flag — unconfirmed.</td></tr>
+  <tr><td>…</td><td>0x4</td><td>uint32_t</td><td>paramCount</td><td>Number of parameter records that follow.</td></tr>
+  <tr><td>…</td><td>var</td><td>param[]</td><td>params</td><td>Material-parameter overrides (below).</td></tr>
+</table>
+
+<h3>Parameter record</h3>
+<table class="struct">
+  <tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+  <tr><td>+0x00</td><td>0x4</td><td>uint32_t</td><td>nameLen</td><td>Length of the parameter name string.</td></tr>
+  <tr><td>+0x04</td><td>nameLen</td><td>char[]</td><td>name</td><td>e.g. <code>Diffuse_IPR_2_tint</code>, <code>uvscroll_4_scroll</code>.</td></tr>
+  <tr><td>…</td><td>0x4</td><td>uint32_t</td><td>type</td><td>Value type tag — <code>0x02</code> (inline float[s]) or <code>0x03</code> (texture/hash ref). See enum below.</td></tr>
+  <tr><td>…</td><td>0x4</td><td>uint32_t</td><td>slot</td><td>Material constant slot/register the value binds to (small ints; <code>0x0F</code>–<code>0x4C</code> for float params, <code>2</code>–<code>4</code> for texture params).</td></tr>
+  <tr><td>…</td><td>0x4</td><td>uint32_t</td><td>count?</td><td>Small word, reads <code>1</code> in float records even when three floats follow — so it is <em>not</em> the float component count. Meaning unconfirmed. <span class="badge theory">Theory</span></td></tr>
+  <tr><td>…</td><td>var</td><td>float32/…</td><td>value</td><td>For type <code>0x02</code>: 1 float (scalar) or 3 floats (tint RGB). For type <code>0x03</code>: a 32-bit hash + a <code>0x09</code> index block (texture ref).</td></tr>
+</table>
+
+<h3>Value type tags (observed)</h3>
+<p><span class="badge theory">Theory</span> — derived from value layouts in <code>AA_tram_01.mcl</code>,
+  not from a symbol table. Only two top-level type tags were actually observed:</p>
+<table>
+  <tr><th>Name</th><th>Value</th><th>Notes</th></tr>
+  <tr><td>FLOAT</td><td><code>0x02</code></td><td>One or more inline <code>float32</code> values. Used for both scalars (e.g. <code>fresnel_power</code> = <code>bd 4c cc cd</code> = −0.05, one float) <strong>and</strong> vectors (e.g. <code>tint</code> = <code>3f80 0000 3f80 0000 3f80 0000</code> = 1,1,1, three floats). The component count is <em>not</em> the immediately following word — that reads <code>1</code> for both — so it is implied by the parameter, not encoded here.</td></tr>
+  <tr><td>TEXTURE / HASH-REF</td><td><code>0x03</code></td><td>A material/texture <em>reference</em>: a 32-bit ASCII-free hash word (e.g. <code>27 c7 fe a5</code>), then a <code>0x09</code> marker, then a short list of small int pairs. Used by <code>diffuse</code>, <code>ipr</code> and <code>cubemap</code>.</td></tr>
+</table>
+<div class="warn">
+  <strong>Correction.</strong> An earlier draft listed <code>0x03</code> as "VECTOR3 (three floats)"
+  and <code>0x09</code> as a top-level "texture" type. Hex inspection of <code>AA_tram_01.mcl</code>
+  shows the opposite: the white RGB <code>tint</code> is stored under type <strong><code>0x02</code></strong>
+  (three floats), while type <strong><code>0x03</code></strong> is the texture/hash-reference form, and
+  <code>0x09</code> is a marker <em>inside</em> a type-<code>0x03</code> record, never a top-level type.
+</div>
+
+<div class="note">
+  Worked example (from <code>AA_tram_01.mcl</code>). Each record is
+  <code>uint32 type; uint32 slot; uint32 count; value(s)</code> after the NUL-terminated name:
+  <ul>
+    <li><code>Diffuse_IPR_2_fresnel_power</code> → type <code>0x02</code>, slot <code>0x4C</code>,
+      count <code>1</code>, then one float <code>bd4c cccd</code> = −0.05.</li>
+    <li><code>Diffuse_IPR_2_tint</code> → type <code>0x02</code>, slot <code>0x13</code>,
+      count <code>1</code>, then <code>3f80 0000  3f80 0000  3f80 0000</code> = three floats all
+      <code>1.0</code> (white RGB tint).</li>
+    <li><code>Diffuse_IPR_2_diffuse</code> → type <code>0x03</code>, slot <code>2</code>, then the hash
+      <code>27 c7 fe a5</code> and a <code>0x09</code> index block — a texture reference, not a float.</li>
+  </ul>
+  These are exactly the kinds of values a material would expose, never collision data.
+</div>
+
+<h2>How it is used</h2>
+<p>
+  The directory structure tells the rest of the story. <code>.mcl</code> files cluster under
+  powerplay-animation groups (<code>PG05_MultiBus</code>, <code>PG07_Cars</code>,
+  <code>PA01_collapsing_building</code>) and split into <code>Pre/</code>, <code>Post/</code> and
+  base sets — i.e. material states before, during and after a powerplay detonates a prop (e.g. a bus
+  glowing, scorching, then fading out). Each clip retints/scrolls/fades the props' materials in sync
+  with the <a href="data-catnip.html">Catnip</a> timeline that drives the powerplay. See the
+  <a href="system-powerplay.html">Powerplay System</a> for the sequence machinery these feed.
+</p>
+
+<h2>Confidence &amp; open questions</h2>
+<p>
+  <span class="badge partial">Partial</span>. The outer <code>SDRI/INSS/INSE</code> framing, the
+  material-not-collision nature, and the readable parameter strings are
+  <span class="badge ok">Confirmed</span> from multiple samples and EBOOT corroboration. The
+  per-parameter <code>type</code>/<code>slot</code>/<code>valueCount</code> field split is reconstructed
+  from value shapes and is the <span class="badge theory">Theory</span> part.
+</p>
+<ul>
+  <li>Exact meaning of the per-instance <em>flags</em> word and the per-param <code>count?</code> word (reads <code>1</code> even for 3-float values).</li>
+  <li>Full value-type enumeration (only top-level types <code>0x02</code> and <code>0x03</code> were observed; <code>0x09</code> is a sub-marker inside <code>0x03</code> records).</li>
+  <li>Relationship between the ASCII material hash here and the shader ids in <a href="format-shaders.html">.shaders/.shaderinst</a> / <a href="format-fxc.html">.fxc</a>.</li>
+  <li>Confirmed: <code>SDRI</code> is a shared Black Rock container — <code>.shaderinst</code> files use it too. Still open: whether yet other extensions reuse it, and how the inner chunk dialect differs between <code>.mcl</code> and <code>.shaderinst</code>.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-hkcoll.html">Collision (.hkColl / .mainColl)</a> — the actual Havok collision meshes (what <code>.mcl</code> is <em>not</em>).</li>
+  <li><a href="format-hkpps.html">Physics Packs (.hkPPs)</a> — the <code>_pps</code> powerplay physics that ship alongside these clips.</li>
+  <li><a href="format-shaders.html">Shaders (.shaders/.shaderinst)</a> and <a href="format-fxc.html">FX Compiled (.fxc)</a> — the materials these parameters override.</li>
+  <li><a href="system-powerplay.html">Powerplay System</a> and <a href="data-catnip.html">Catnip Entity System</a> — the timelines that play these clips.</li>
+  <li><a href="format-havok.html">Havok Packfiles</a> — for contrast, the real Havok container format.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

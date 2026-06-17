@@ -10,7 +10,7 @@ export const splitLengthHandler: ResourceHandler<ParsedSplitLength> = {
 	description:
 		'TrackLogic per-section split-length weights: BE uint32 sectionCount + count×float32 (≈1.0). Size law 4 + count×4.',
 	category: 'World',
-	caps: { read: true, write: false },
+	caps: { read: true, write: true },
 	extensions: ['.splitlength'],
 	wikiUrl: 'https://split-second.wiki/format-route.html',
 

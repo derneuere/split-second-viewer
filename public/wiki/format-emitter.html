@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emitters (.emitterControllers / .emitterSurfaces) — Split/Second RE Wiki</title>
+<meta name="description" content="The Split/Second particle system: emitter controller tables, emission surface meshes, and the cSSParticleSystemManager that drives them.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Emitters (.emitterControllers / .emitterSurfaces)" data-category="Formats · FX &amp; Particles">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Emitters (.emitterControllers / .emitterSurfaces)</h1>
+<p>These two files are the heart of Split/Second's GPU particle system. A
+<code>.emitterControllers</code> file is a table of <b>emitter controllers</b> — each one a named
+spawner with a transform and a fat block of tuning floats (lifespan, velocity, LFOs, size/rotation
+envelopes). A <code>.emitterSurfaces</code> file is a triangle <b>mesh</b> that an emitter can scatter
+particles across instead of emitting from a point or volume. Both are loaded by the in-house particle
+manager (<code>cSSParticleSystemManager</code> / <code>SScParticleSystemManager</code>).</p>
+
+<div class="infobox"><div class="ib-title">.emitterControllers / .emitterSurfaces</div><table>
+  <tr><th>Category</th><td>FX / particle systems</td></tr>
+  <tr><th>Owner</th><td>cSSParticleSystemManager</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Controllers magic</th><td><code>00 00 00 05</code> (version 5)</td></tr>
+  <tr><th>Surfaces magic</th><td><code>00 00 00 01</code> (version 1)</td></tr>
+  <tr><th>XML twin</th><td>none (authored in editor, see <code>.timelineInfo</code>)</td></tr>
+  <tr><th>Siblings</th><td>.data .timelineInfo .fxc .shaders .textures</td></tr>
+  <tr><th>Count</th><td>90 controller files, 91 surface files</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<h2>Where they live &amp; how they group</h2>
+<p>Particle assets sit under each level's <code>Particles/</code> tree, sorted into the engine's five
+<i>particle classes</i>. Every class is a folder containing a matching set of files
+(<code>Standard.data</code>, <code>Standard.emitterControllers</code>, <code>Standard.emitterSurfaces</code>,
+<code>Standard.fxc</code>, <code>Standard.shaders</code>, <code>Standard.textures</code>,
+<code>Standard.timelineInfo</code>):</p>
+<pre class="hex">Environments/Levels/docks/Subtracks/A/Particles/TimelineParticles/
+  Standard/   Standard.*        (cStandardGameParticleDataGroup)
+  Geometry/   Geometry.*        (cGeometryGameParticleDataGroup)
+  Light/      Light.*           (cLightGameParticleDataGroup)
+  Screen/     Screen.*          (cScreen…  "Screen Timeline Particles")
+docks/Particles/TimelineParticles/Flare/   Flare.*  (cFlareGameParticleDataGroup)
+docks/Particles/EnvironmentParticles/default/   Standard.*  (always-on ambient FX)</pre>
+<p>The five class names are confirmed verbatim in the EBOOT
+(<code>cStandardGameParticleDataGroup</code>, <code>cFlareGameParticleDataGroup</code>,
+<code>cLightGameParticleDataGroup</code>, <code>cGeometryGameParticleDataGroup</code>, and "Screen
+Timeline Particles"). Each folder's <code>.timelineInfo</code> twin sequences the controllers over time;
+its header count equals the controller count exactly (see below), so the index spaces line up
+1:1.</p>
+<div class="note">The loader log strings tell the story: <code>Loading '%s' particle emitter
+controller file...</code> → <code>%d bytes of standard emitter controller data</code>, alongside
+<code>Loading '%s' particle data file...</code> and <code>Loading '%s' particle emitter controller
+file...</code>. Files are matched by the patterns <code>%s.emitterControllers</code>,
+<code>.emittersurfaces</code>, <code>%s.timelineInfo</code> and <code>%s.data</code>.</div>
+
+<h2>.emitterControllers format</h2>
+<p>Layout is: an 8-byte header, a fixed-width <b>directory</b> of named controllers, then one
+variable <b>parameter block</b> per controller (each a 4&times;4 transform + a float parameter array,
+terminated by an <code>FF FF FF FF</code> sentinel), then a short chunk trailer.</p>
+
+<h3>Header</h3>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>0x4</td><td>uint32_t</td><td>version</td><td>Always <code>0x00000005</code> across all
+83 samples. The EBOOT has a "<code>Particle Data Group file, '%s', version mismatch - got %d, expected
+%d</code>" assert, so this is a checked version field.</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>uint32_t</td><td>controllerCount</td><td>Number of controllers. Verified:
+docks Standard reads <code>0x000007A9</code> = 1961, and its <code>Standard.timelineInfo</code> header
+holds the same 1961 at offset 0x4.</td></tr>
+</table>
+
+<h3>Controller directory (one 0x50 entry each)</h3>
+<p>Immediately after the header, <code>controllerCount</code> records of 80 bytes each. Verified by
+stepping the offsets: GUID strings appear at 0x08, 0x58, 0xA8 (stride 0x50).</p>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>+0x0</td><td>0x28</td><td>char[40]</td><td>guid</td><td>NUL-padded ASCII "id" string, e.g.
+<code>1237993346.3</code> or <code>1251996606.-920208392</code> — a millisecond-timestamp + hash the
+editor assigns to each emitter instance.</td></tr>
+<tr><td>+0x28</td><td>0x28</td><td>char[40]</td><td>name</td><td>NUL-padded ASCII display name, e.g.
+<code>MSC_ElectricGlow</code>, <code>SMO_SMokeLitInside</code>, <code>SPA_BlueSparkS</code>,
+<code>LIT_OrangeFire</code>. Prefixes encode the effect family (SMO=smoke, SPA=spark, DEB=debris,
+LIT=light, MSC=misc).</td></tr>
+</table>
+
+<h3>Per-controller parameter block</h3>
+<p>After the directory, one block per controller in the same order. Each block opens with a short
+preamble, then a row-major affine transform (4 rows of 4 floats; identity = 1.0 on the diagonal),
+the big tuning-float array, and is padded and capped with <code>FF FF FF FF</code>. In the
+3-controller <code>UI/Frontend/.../Light.emitterControllers</code> (1608 bytes) the param region
+starts at 0xF8 (right after the 3&times;0x50 directory) and the three sentinels land at 0x2B0, 0x460
+and 0x610 — i.e. block lengths 0x1B8, 0x1B0, 0x1B0. The block length is therefore <b>not</b> a fixed
+stride; treat each block as variable-length and walk it by the <code>FF FF FF FF</code> sentinel, or
+use the chunk-offset trailer at the end of the file (it lists the start offset of each block).</p>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>+0x0</td><td>0x40</td><td>float32_t[4][4]</td><td>transform</td><td>Local placement matrix.
+Identity in the simple files (diagonal <code>3F 80 00 00</code> = 1.0, translation row zero).</td></tr>
+<tr><td>+0x40</td><td>var</td><td>float32_t[]</td><td>params</td><td>Tuning array, schema below. First
+non-matrix floats seen are <code>41 20 00 00</code>=10.0, <code>40 40 00 00</code>=3.0, then three
+<code>3F 00 00 00</code>=0.5 — i.e. the EmitterVolume / spread group.</td></tr>
+<tr><td>—</td><td>0x4</td><td>uint32_t</td><td>sentinel</td><td><code>0xFFFFFFFF</code> marks end of
+block.</td></tr>
+</table>
+
+<h3>Parameter schema (from the EBOOT)</h3>
+<p>The full named parameter list is embedded in the executable directly after the
+<code>cGeometryGameParticleDataGroup</code> class string. The list below is reproduced in the
+<b>exact order</b> the strings appear in the EBOOT (the registration order), grouped here for reading.
+This is the on-disk float order the loader expects:</p>
+<table>
+<tr><th>#</th><th>Group</th><th>Fields (in EBOOT order)</th><th>Notes</th></tr>
+<tr><td>1</td><td>Emission</td><td><code>EmitterVolumeType</code>, <code>EmitterSurfaceVel</code></td>
+<td>Spawner shape selector + surface-emission speed. <code>EmitterVolumeType</code> selects
+point / box / surface emission (enum values not yet enumerated).</td></tr>
+<tr><td>2</td><td>LFO destinations</td><td><code>LFO_1_Dest</code>, <code>LFO_1_Type</code>,
+<code>LFO_2_Dest</code>, <code>LFO_2_Type</code>, <code>LFO_3_Dest</code>, <code>LFO_3_Type</code></td>
+<td>Three low-frequency oscillators: which channel each drives and its waveform type.</td></tr>
+<tr><td>3</td><td>Rotation dir</td><td><code>RotationDirX</code>, <code>RotationDirY</code>,
+<code>RotationDirZ</code></td><td>Base spin axis.</td></tr>
+<tr><td>4</td><td>Lifetime</td><td><code>LifeSpan</code>, <code>LifeSpanRandomise</code></td>
+<td>Particle age in seconds (+random spread).</td></tr>
+<tr><td>5</td><td>Emit volume</td><td><code>EmitterVolume_x</code>, <code>EmitterVolume_y</code>,
+<code>EmitterVolume_z</code>, <code>EmitterSurfaceVariance</code></td><td>Box extents / surface jitter.</td></tr>
+<tr><td>6</td><td>Velocity</td><td><code>InitialVelocityBase</code>, <code>InitialVelocityRand</code>,
+<code>VelocityFromEmitter</code></td><td>Initial speed + inheritance from the emitter's motion.</td></tr>
+<tr><td>7</td><td>Havok coupling</td><td><code>HavokAngVelScalar</code>, <code>HavokRigidBodyRate</code></td>
+<td>Particles can be promoted to <a href="format-havok.html">Havok</a> rigid bodies at a rate; angular
+velocity scaled by the scalar.</td></tr>
+<tr><td>8</td><td>Spread</td><td><code>Spread_x</code>, <code>Spread_y</code></td><td>Emission cone spread.</td></tr>
+<tr><td>9</td><td>LFO params ×3</td><td><code>LFO_n_Rate</code>, <code>LFO_n_Amplitude</code>,
+<code>LFO_n_Amount</code>, <code>LFO_n_PhaseOffset</code> (n = 1,2,3)</td><td>Per-oscillator tuning.</td></tr>
+<tr><td>10</td><td>Size / rotation range</td><td><code>SizeScale_x</code>, <code>SizeScale_y</code>,
+<code>RotationRangeX/Y/Z_x</code>, <code>RotationRangeX/Y/Z_y</code></td><td>Sprite scale and spin range
+(min/max per axis).</td></tr>
+<tr><td>11</td><td>Accel / drag</td><td><code>Accel_x/y/z</code>, <code>FixedVelocity_x/y/z</code>,
+<code>DragDirection_x/y/z</code></td><td>Ongoing motion forces.</td></tr>
+<tr><td>12</td><td>Envelopes</td><td><code>SizeScaleEnvelope_*</code>,
+<code>RotationEnvelopeX/Y/Z_*</code> — each with StartVal, HoldVal, EndVal, Attack, Hold, Decay</td>
+<td>Classic ADSR-style attack/hold/decay envelopes per channel (4 envelopes &times; 6 floats).</td></tr>
+<tr><td>13</td><td>Misc</td><td><code>VehicleProximityNoKillRadius</code>, <code>EmitOnConstruction</code>,
+<code>AttachToController</code></td><td>Don't-cull radius near cars; spawn-on-create flag; bind to
+controller transform.</td></tr>
+</table>
+<div class="tip">A lower-case "friendly" copy of the same list also appears in the EBOOT
+(<code>life span</code>, <code>emitter surface variance</code>, <code>velocity from emitter</code>,
+<code>havok ang vel scalar</code>, <code>size scale envelope start…</code>) — these are the editor
+slider labels for the QA tuning UI.</div>
+
+<h3>Empty / stub files</h3>
+<p>Many class folders that exist for completeness ship a 48-byte stub: header
+<code>00 00 00 05</code> with <code>controllerCount = 0</code>, then only the chunk trailer. Of the
+10 <code>Flare.emitterControllers</code> files, 9 are 48-byte stubs and only
+<code>airport_test_03</code> carries a real (single) controller; several "Geometry" Nemesis-level
+files are 48-byte stubs too.</p>
+
+<h3>Annotated hex — airport Flare.emitterControllers (568 bytes, 1 controller)</h3>
+<pre class="hex">000000 00 00 00 05 00 00 00 01 31 32 35 37 37 35 36 34  ........<b>12577564</b>   version=5, count=1
+000010 37 39 2e 34 33 33 33 35 39 30 32 31 00 00 00 00  <b>79.433359021</b>....   guid string (off 0x08)
+000030 55 6e 6e 61 6d 65 64 20 50 61 72 74 69 63 6c 65  <b>Unnamed Particle</b>   name (off 0x30)
+000040 20 44 61 74 61 00 00 00 …                         <b> Data</b>
+000058 …                       00 00 01 c0 00 00 00 00   block preamble word 0x1C0 (length/offset)
+000080 3f 80 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ?...........…       transform row0 = 1,0,0,0
+000150 … 41 20 00 00 40 40 00 00 3f 00 00 00 3f 00 00 00  …A&nbsp;..@@..?...?...  10.0 3.0 0.5 0.5 (0.5)
+000210 ff ff ff ff 00 00 00 00 …                         block sentinel
+000220 00 00 00 01 00 00 00 04 00 00 00 01 00 00 00 10  chunk trailer (count + offsets)</pre>
+
+<h2>.emitterSurfaces format</h2>
+<p>An emission surface is a small triangle mesh. The loader is owned by
+<code>cEmitterSurfaceDatabase</code>; when a controller's <code>EmitterVolumeType</code> selects surface
+emission the system scatters particles across these triangles (the EBOOT warns
+"<code>WARNING: Unable to find emitter surface</code>" when the named surface is missing).</p>
+
+<h3>Header</h3>
+<p>A 16-byte file header, then a fixed 0x20-byte block that describes (at least) the first surface,
+then the per-surface vertex and triangle arrays, closed by a 12-byte chunk trailer.</p>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>0x4</td><td>uint32_t</td><td>version</td><td>Always <code>0x00000001</code>. Checked
+by "<code>Emitter surfaces file, %s, version mismatch - got %d, expected %d</code>".</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>uint32_t</td><td>surfaceCount</td><td>Number of surfaces. docks Standard
+= <code>0x00000007</code> = 7; the small nem_downtown Standard = 1.</td></tr>
+<tr><td>0x8</td><td>0x8</td><td>uint32_t[2]</td><td>hash / size</td><td>Two per-file words, e.g.
+<code>5B BE 29 CD</code> + <code>00 00 03 DC</code> in docks, <code>C8 52 9B D6</code> +
+<code>00 00 05 EC</code> in nem_downtown. <b>Not</b> a total vertex count — the value differs from the
+real vertex totals (see warning below); treated here as a content hash / section size.</td></tr>
+</table>
+<div class="warn">An earlier draft labelled <code>0x0C</code> as a global <code>vertexCount = 988</code>.
+That is <span class="badge theory">wrong</span>: the single-surface nem_downtown file stores 41 verts
+yet carries <code>0x000005EC</code> (1516) at 0x0C, so 0x0C is not a vertex count. The real per-surface
+vertex/triangle counts live in the descriptor block below.</div>
+
+<h3>Surface descriptor (0x10)</h3>
+<p>A 0x20-byte block at 0x10 carries the geometry counts and the offset to the triangle data.
+Offsets are relative to 0x10. (For multi-surface files this describes surface 0; how the remaining
+surfaces are indexed is not yet fully mapped — hence the page stays <span class="badge partial">Partial</span>.)</p>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x10</td><td>0x4</td><td>uint32_t</td><td>—</td><td>Zero in both samples.</td></tr>
+<tr><td>0x14</td><td>0x4</td><td>uint32_t</td><td>vertexCount</td><td>Verts in this surface. docks surface&nbsp;0
+= 20 (<code>0x14</code>); nem_downtown = 41 (<code>0x29</code>).</td></tr>
+<tr><td>0x18</td><td>0x4</td><td>uint32_t</td><td>vertexStride?</td><td>Constant <code>0x20</code> (32) in
+all samples.</td></tr>
+<tr><td>0x1C</td><td>0x4</td><td>uint32_t</td><td>triangleCount</td><td>Triangles in this surface. docks
+surface&nbsp;0 = 20; nem_downtown = 26 (<code>0x1A</code>).</td></tr>
+<tr><td>0x20</td><td>0x4</td><td>uint32_t</td><td>triangleOffset</td><td>Byte offset of the triangle array,
+<b>relative to 0x10</b>. docks = <code>0x160</code> &rarr; abs 0x170; nem_downtown = <code>0x2B0</code>
+&rarr; abs 0x2C0. Both check out: 0x30 + vertexCount&times;16 = triangleOffset.</td></tr>
+<tr><td>0x24</td><td>0xC</td><td>—</td><td>pad</td><td>Zero; vertex array begins at 0x30.</td></tr>
+</table>
+
+<h3>Vertex array (16-byte records)</h3>
+<p>Starts at 0x30. Each record is three float32 (XYZ) + a 4-byte pad (zero). Values are model-space
+(e.g. docks vertex 0 = <code>40 BB 22 F0</code>=5.847, <code>BE 89 21 B7</code>=-0.268,
+<code>BF 7A 30 C9</code>=-0.977). Verified: 20 verts &times; 16 = 0x140 takes docks from 0x30 to the
+triangle offset 0x170 exactly.</p>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>+0x0</td><td>0xC</td><td>float32_t[3]</td><td>position</td><td>Vertex XYZ in local space.</td></tr>
+<tr><td>+0xC</td><td>0x4</td><td>uint32_t</td><td>pad</td><td>Zero.</td></tr>
+</table>
+
+<h3>Triangle / connectivity array (32-byte records)</h3>
+<p>After the vertex array the file switches to <b>32-byte</b> triangle records: a float32[3] (a unit-ish
+vector, almost certainly the triangle <i>normal</i>) + pad, followed by three uint32 vertex indices +
+pad. Verified in nem_downtown (1 surface, 41 verts, 26 tris): the first record at 0x2C0 is
+<code>3E BA EE 84 BF 21 EF A3 BF 2E DC C3 00000000</code> (normal) then
+<code>00000002 00000003 00000001 00000000</code> (indices 2,3,1). 26 records &times; 32 = 0x340 fills
+0x2C0&hellip;0x600 exactly before the trailer.</p>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>+0x0</td><td>0xC</td><td>float32_t[3]</td><td>normal</td><td>Face normal (often a clean axis
+like <code>3F 80 00 00</code>=1.0 in axis-aligned meshes).</td></tr>
+<tr><td>+0xC</td><td>0x4</td><td>uint32_t</td><td>pad</td><td>Zero.</td></tr>
+<tr><td>+0x10</td><td>0xC</td><td>uint32_t[3]</td><td>indices</td><td>Three vertex indices into this
+surface's vertex array.</td></tr>
+<tr><td>+0x1C</td><td>0x4</td><td>uint32_t</td><td>pad</td><td>Zero.</td></tr>
+</table>
+<p>The file closes with a 12-byte chunk trailer (<code>00 00 00 02 00 00 00 08 00 00 00 10</code> —
+2 entries), the same trailer convention as <code>.emitterControllers</code>.</p>
+<div class="warn">An earlier draft described 16-byte triangle records ("two float32 then three uint32").
+That cannot be right — two floats plus three uint32 is 20 bytes, and the data is laid out on a 32-byte
+stride (a normal+pad quad followed by an indices+pad quad). The record size is <b>32 bytes</b>.</div>
+
+<h3>Empty surface files</h3>
+<p>The overwhelmingly common case is an 8-byte stub: <code>00 00 00 01 00 00 00 00</code> (version 1,
+zero surfaces). Classes that emit from points/volumes only — and the vehicle particle set
+(<code>Vehicles/Particles/Standard/VehicleParticles.emitterSurfaces</code>, verified to be exactly
+8 bytes) — ship this stub. Real surface files are rare: only the per-level <code>Standard</code> and
+<code>Screen</code> classes carry geometry.</p>
+
+<h3>Annotated hex — nem_downtown Standard.emitterSurfaces</h3>
+<p>Clean single-surface example (1544 bytes, 1 surface, 41 verts, 26 tris):</p>
+<pre class="hex">000000 00 00 00 01 00 00 00 01 c8 52 9b d6 00 00 05 ec  .........R......   v=1 count=1 | hash/size words
+000010 00 00 00 00 00 00 00 29 00 00 00 20 00 00 00 1a  .......)... ....   surf0: vtx=41 stride=0x20 tri=26
+000020 00 00 02 b0 00 00 00 00 …                         triOffset=0x2B0 (rel 0x10 -&gt; abs 0x2C0)
+000030 3d 3f 4f 1b bd ac 2c 6e bd 8f 28 37 00 00 00 00  =?O...,n..(7....   vertex0 + pad
+…
+0002c0 3e ba ee 84 bf 21 ef a3 bf 2e dc c3 00 00 00 00  &gt;....!..........   triangle0: normal + pad
+0002d0 00 00 00 02 00 00 00 03 00 00 00 01 00 00 00 00  ................   …indices 2,3,1 + pad
+000600 00 00 00 02 00 00 00 08 00 00 00 10              ........           chunk trailer (2 entries)</pre>
+
+<h2>Runtime &amp; debugging</h2>
+<p>The particle manager exposes a live stats overlay confirming the object model:
+<code>ActiveParticleCount</code>, <code>RenderParticleCount</code>, <code>ActiveSystemCount</code>,
+<code>RenderSystemCount</code>, <code>ActiveEmitterCount</code>, <code>ParticleDataCount</code>, plus
+"<code>Emitters Active: %d/%d/%d</code>". Debug toggles live under
+<code>Particles/Debug/*</code> (system bounding boxes, render-bucket BBoxes, particle velocity draw) and
+<code>Particles/Lighting/Debug/*</code>. Particles are lit through the same deferred path as the world —
+see <code>particle_shadow_map</code> and the <a href="format-lights.html">Lights</a> page.</p>
+<div class="warn">The matrix/parameter <i>byte offsets within</i> a parameter block are inferred from
+the simple files (UI Light, airport Flare) where the array is short and mostly default. In the large
+multi-controller files the param array is long and not every field has been individually located, so the
+exact float index of each named parameter above is <span class="badge theory">Theory</span> beyond the
+leading EmitterVolume group.</div>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-lights.html">Lights (.lights)</a> — the other half of the FX cluster.</li>
+  <li><a href="format-timeline.html">Timelines (.timelineInfo)</a> — sequences the controllers over time (1:1 index).</li>
+  <li><a href="format-fxc.html">FX Compiled (.fxc)</a>, <a href="format-shaders.html">Shaders</a>, <a href="format-textures.html">Textures</a> — the particle's render set.</li>
+  <li><a href="format-havok.html">Havok Packfiles</a> — emitters can promote particles to Havok rigid bodies.</li>
+  <li><a href="data-catnip.html">Catnip Entity System</a> — drives FX via timelines and triggers.</li>
+  <li><a href="engine-rendering.html">Rendering Pipeline</a> — deferred lighting / particle shadow path.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

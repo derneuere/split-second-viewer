@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sequences (.nis / .gbx) — Split/Second RE Wiki</title>
+<meta name="description" content="The .nis AITrack/TrackLogic route table (magic 'i') and the big-endian .gbx light-rig override table in Split/Second levels — reverse-engineered record layouts and verified hex breakdowns.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Sequences (.nis / .gbx)" data-category="Formats · Audio & Video">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Sequences (<code>.nis</code> / <code>.gbx</code>)</h1>
+<p>Two small binary formats sit in the <em>track</em> tree rather than the movie tree. Despite the "sequence"-sounding extensions, investigation of the actual files shows neither is a cutscene script: <code>.nis</code> is the <strong>AITrack/TrackLogic route table</strong> (a short list of named track/event zones with a per-zone flag) and <code>.gbx</code> is a small <strong>big-endian light-rig override table</strong> (extra ambient-light boxes and prop draw-distance tweaks per time-of-day rig), most of whose instances are empty.</p>
+
+<div class="warn">The cluster brief speculated <code>.nis</code> = "Non-Interactive Sequence (cutscene script)" and <code>.gbx</code> = unknown. The on-disk evidence does <strong>not</strong> support a cutscene reading — every <code>.nis</code> lives under <code>Event/RACING/TrackLogic/&lt;route&gt;/</code>, the EBOOT loads it via a <code>TrackLogic</code> subsystem, and its contents are track/event-zone codes, not animation/camera commands. This page documents what the files actually contain.</div>
+
+<h2>.nis — TrackLogic route manifest</h2>
+
+<div class="infobox"><div class="ib-title">.nis</div><table>
+  <tr><th>Category</th><td>Track route / segment table</td></tr>
+  <tr><th>Subsystem</th><td><code>TrackLogic</code></td></tr>
+  <tr><th>Magic</th><td><code>69</code> (ASCII "i", 1 byte)</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Location</th><td><code>…/Event/RACING/TrackLogic/&lt;A–D&gt;/Track.nis</code></td></tr>
+  <tr><th>Count</th><td>18 files (always named <code>Track.nis</code>)</td></tr>
+  <tr><th>Size range</th><td>2 B (empty) – 342 B</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<h3>Where it lives &amp; what it is for</h3>
+<p>Each playable level has an <code>Event/RACING/TrackLogic/</code> folder containing one or more <strong>route variants</strong> in sub-folders <code>A</code>, <code>B</code>, <code>C</code>, <code>D</code> — these are the alternate paths a Split/Second track can branch into when powerplays reshape the circuit. Every route folder holds exactly one <code>Track.nis</code>, loaded alongside the other per-route tables (<code>Track.checkpoints</code>, <code>Track.linkorigins</code>, <code>Track.logicinfo</code>, <code>Track.lip</code>). The EBOOT confirms the path, the owning subsystem, and — crucially — what "NIS" denotes here: it is an <strong>AITrack route/identifier file</strong>, not a cutscene:</p>
+<blockquote>
+<code>%s/Track.nis</code> · <code>environment(noassert)|Event/%s/TrackLogic</code> · <code>environment(noassert)|Event/%s/TrackLogic/%s</code> · <code>TrackLogic_Error/Warning/Info</code> · <code>AITrackData NIS file '%s' is corrupt</code> · <code>AITrack route identifier file is empty, '%s'</code> · <code>AITrack data file is empty, '%s'</code>
+</blockquote>
+<p>The file is a flat list: a record per track zone, each pairing a 16-bit id with a NUL-terminated ASCII zone code and a one-byte flag. The zone codes are the engine's own <strong>named zones</strong> — some are short sector codes (<code>PA03-1</code>, <code>PP13F-2</code>, <code>RCA2-4</code>, <code>HC_01</code>) but many are descriptive English names for powerplay set-pieces (e.g. Powerplant uses <code>1st_Ceiling_01</code>, <code>2nd_Cooling_01</code>, <code>Chimney_01</code>, <code>Door_01</code>; Graveyard uses <code>PP16_RockFall_*</code>). A <code>.nis</code> therefore reads as "for this route, here are the track/event zones that participate, and a per-zone flag."</p>
+
+<h3>File layout</h3>
+<p>The header is just two bytes; records pack immediately after with no padding. The structure was verified by parsing the full byte stream of three samples to completion — there are zero leftover bytes, and the record count in byte&nbsp;1 matches the parsed record count exactly for all 18 files.</p>
+
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x00</td><td>0x1</td><td>char</td><td>magic</td><td><code>0x69</code> = ASCII <code>'i'</code>. Constant across all 18 files. (Same "i" letter as the Bink codec but unrelated — different format.)</td></tr>
+<tr><td>0x01</td><td>0x1</td><td>uint8_t</td><td>record_count</td><td>Number of segment records that follow. Verified equal to the parsed record count for every file (e.g. Downtown/A = 10, docks/A = 27, docks/D = 34). <code>0</code> for empty Nemesis tracks.</td></tr>
+<tr><td>0x02</td><td>varies</td><td>record[n]</td><td>records</td><td><code>record_count</code> back-to-back segment records (see below).</td></tr>
+</tbody>
+</table>
+
+<p>Each record:</p>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>+0x0</td><td>0x2</td><td>uint16_t</td><td>segment_id</td><td>Big-endian segment/zone id. Increases roughly in track order (Downtown/A: 1, 2, 6, 8, 9, 10, 11, 12, 13, 16). Stable references into the level's section list rather than a dense 0..n index.</td></tr>
+<tr><td>+0x2</td><td>varies</td><td>char[]</td><td>zone_code</td><td>NUL-terminated ASCII zone name. Often a short sector code (<code>"PA03-1"</code>, <code>"PP13F-2"</code>, <code>"RCA2-4"</code>, <code>"HC_01"</code>) but sometimes a long descriptive name (<code>"2nd_Cooling_01"</code>, <code>"PP16_RockFall_Small_1"</code>). Length ranges roughly 6–22 bytes incl. terminator.</td></tr>
+<tr><td>+n</td><td>0x1</td><td>uint8_t</td><td>flag</td><td>Per-zone boolean, only ever <code>0</code> or <code>1</code> across all 181 records parsed (79× <code>0</code>, 102× <code>1</code>) — read as enabled / active-on-this-route.</td></tr>
+</tbody>
+</table>
+
+<h3>Zone-code families (observed, counts across all 18 files)</h3>
+<table>
+<thead><tr><th>Prefix / family</th><th>Count</th><th>Example</th><th>Notes (theory)</th></tr></thead>
+<tbody>
+<tr><td>PA</td><td>45</td><td>PA03-1, PA10-2</td><td>Most common; "path" / primary track section.</td></tr>
+<tr><td>RCA / RCB / RCC / RC</td><td>33 / 12 / 2 / 4</td><td>RCA2-4, RCB2-3, RCC…, RC02-1</td><td>Route-connector / alternate-route segments (lettered RCA/RCB/RCC families plus plain RC).</td></tr>
+<tr><td>PP</td><td>27</td><td>PP08-1, PP13F-2, PP16_1</td><td>Powerplay-related section (matches the engine's <code>Powerplay</code> naming); <code>F</code> suffix on some ids.</td></tr>
+<tr><td>PG</td><td>16</td><td>PG12-0 … PG12-5</td><td>docks-only group (a numbered chain).</td></tr>
+<tr><td>SC</td><td>12</td><td>SC01-1, SC02-1, SC03-2</td><td>Graveyard / Powerplant; "section" / scenic.</td></tr>
+<tr><td>PB</td><td>7</td><td>PB03-1, PB07-1</td><td>Secondary path / branch sections.</td></tr>
+<tr><td>HC</td><td>1</td><td>HC_01</td><td>Single Downtown entry; underscore style.</td></tr>
+<tr><td>Descriptive names</td><td>—</td><td>1st_Ceiling_01, 2nd_Cooling_01, Chimney_01, Door_01, PP16_RockFall_Small_1, PP04_FlatBedTruck</td><td>Powerplant and Graveyard list named powerplay set-pieces directly instead of abstract codes — strong evidence the table drives <em>event/powerplay zones</em>, not just routing sectors.</td></tr>
+</tbody>
+</table>
+<div class="note">These family meanings are <span class="badge theory">Theory</span> — inferred from the codes themselves and the surrounding <a href="format-route.html">route</a>/<a href="format-sectors.html">sector</a> and <a href="system-powerplay.html">powerplay</a> data. The byte layout (id / string / flag) is <span class="badge ok">Confirmed</span> by exhaustive parsing of all 18 files.</div>
+
+<h3>Annotated hex excerpt</h3>
+<p>The complete <code>Downtown/Event/RACING/TrackLogic/A/Track.nis</code> (103 bytes, 10 records):</p>
+<pre class="hex">000000  69 0a 00 01 50 41 30 33 2d 31 00 01 00 02 50 50   i...PA03-1....PP
+000010  30 38 2d 31 00 01 00 06 50 41 30 33 2d 31 00 01   08-1....PA03-1..
+000020  00 08 50 50 31 33 2d 31 00 01 00 09 50 50 31 33   ..PP13-1....PP13
+000030  2d 32 00 01 00 0a 50 50 31 33 46 2d 32 00 01 00   -2....PP13F-2...
+000040  0b 48 43 5f 30 31 00 00 00 0c 50 50 31 33 46 2d   .HC_01....PP13F-
+000050  31 00 01 00 0d 50 41 30 33 2d 32 00 00 00 10 50   1....PA03-2....P
+000060  50 30 38 2d 32 00 00                              P08-2..
+
+  69                 magic 'i'
+  0a                 record_count = 10
+  ---- record 1 ----
+  00 01              segment_id = 1
+  50 41 30 33 2d 31 00   "PA03-1"
+  01                 flag = 1 (on)
+  ---- record 2 ----
+  00 02              segment_id = 2
+  50 50 30 38 2d 31 00   "PP08-1"
+  01                 flag = 1
+  ...
+  ---- record 7 ----
+  00 0b              segment_id = 11
+  48 43 5f 30 31 00      "HC_01"
+  00                 flag = 0 (off)
+  ...
+  ---- record 10 ---
+  00 10              segment_id = 16
+  50 50 30 38 2d 32 00   "PP08-2"
+  00                 flag = 0      (end of file)</pre>
+
+<h3>Coverage across the build</h3>
+<p>All 18 <code>Track.nis</code> files start with <code>0x69</code> and decode cleanly. The record count tracks how branchy each circuit is, and the boss-mode tracks are deliberately empty:</p>
+<table>
+<thead><tr><th>Level / route</th><th>Size</th><th>record_count</th></tr></thead>
+<tbody>
+<tr><td>docks / D</td><td>342 B</td><td>34 (largest)</td></tr>
+<tr><td>docks / A</td><td>272 B</td><td>27</td></tr>
+<tr><td>Powerplant / A</td><td>272 B</td><td>18</td></tr>
+<tr><td>Downtown / A</td><td>103 B</td><td>10</td></tr>
+<tr><td>Downtown / C</td><td>52 B</td><td>5</td></tr>
+<tr><td>nem_downtown / A, nem_storm / A, nem_warehouse / A, …</td><td>2 B</td><td>0 (empty — header only)</td></tr>
+</tbody>
+</table>
+<div class="tip">Every Nemesis boss track (<code>nem_*</code>) ships a 2-byte <code>69 00</code> stub: magic + zero records. Boss chases are linear scripted pursuits with no powerplay route-branching, so they need no TrackLogic segment list — a clean corroboration that the file drives route/segment logic rather than playing a cutscene.</div>
+
+<h2>.gbx — light-rig stub marker</h2>
+
+<div class="infobox"><div class="ib-title">.gbx</div><table>
+  <tr><th>Category</th><td>Light-rig override/extras table</td></tr>
+  <tr><th>Subsystem</th><td>Environment / LightRigs</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Header</th><td><code>uint32 record_count</code> (BE)</td></tr>
+  <tr><th>Location</th><td><code>…/LightRigs/&lt;preset&gt;/&lt;preset&gt;.gbx</code></td></tr>
+  <tr><th>Count</th><td>18 files (13 empty, 5 populated)</td></tr>
+  <tr><th>Size range</th><td>4 B (empty) – 491 B</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<p>Each level's <code>LightRigs/</code> folder holds one sub-folder per time-of-day preset (<code>midday</code>, <code>sunrise</code>, <code>sunset</code>, <code>twilight</code>, <code>nighttime</code>, <code>midday_v02</code>, …). Inside each preset folder, the <code>.gbx</code> sits alongside the files that carry the bulk lighting data:</p>
+<pre class="hex">Graveyard/LightRigs/midday/
+   midday.gbx        491 B     &lt;- this file (5 records: light boxes + prop overrides)
+   midday.lights   ?????? B     &lt;- bulk light placements  (see .lights)
+   midday.params    ????? B     &lt;- tuning values
+   midday.fxc / .shaders / .shaderinst / .textures
+Downtown/LightRigs/midday/
+   midday.gbx          4 B     &lt;- empty here (record_count = 0)</pre>
+
+<div class="warn">An earlier draft of this page claimed every <code>.gbx</code> is "exactly four bytes, all zero" and a registration stub. That is <strong>wrong</strong>. Of the 18 <code>.gbx</code> files, 13 are empty (4 bytes, <code>record_count = 0</code>) but <strong>5 carry real structured data</strong> (212–491 bytes): Downtown/sunset, docks/midday, Graveyard/midday, Graveyard/sunset and airport_test_03/sunrise.</div>
+
+<h3>File layout</h3>
+<p>The <code>.gbx</code> is a <strong>big-endian</strong> table of named light-rig overrides. The header is a single big-endian <code>uint32</code> record count; each record is a pair of <em>{32-bit hash, length-prefixed ASCII type-name}</em> + <em>{32-bit hash, length-prefixed ASCII instance-name}</em> followed by a run of big-endian <code>float32</code> values (positions / parameters). The two type-name strings observed — <code>"Ambient Light"</code> and <code>"Prop Draw Distance"</code> — are both real engine strings present in the EBOOT, confirming the file feeds the lighting/prop systems, not a stub.</p>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x00</td><td>0x4</td><td>uint32_t (BE)</td><td>record_count</td><td>Number of override records. <code>0</code> in 13 files (the 4-byte ones); 2–5 in the populated files. <span class="badge ok">Confirmed</span></td></tr>
+<tr><td>0x04…</td><td>varies</td><td>record[n]</td><td>records</td><td>Per record: <code>uint32</code> type-hash, <code>uint32</code> str-len + ASCII type ("Ambient Light" / "Prop Draw Distance"), <code>uint32</code> name-hash, <code>uint32</code> str-len + ASCII instance name, then big-endian <code>float32</code> fields. <span class="badge partial">Partial</span> (float field count/meaning not fully mapped).</td></tr>
+</tbody>
+</table>
+
+<h3>Annotated hex excerpt</h3>
+<p>First record of <code>Downtown/LightRigs/sunset/sunset.gbx</code> (212 bytes, 2 records):</p>
+<pre class="hex">000000  00 00 00 02  a3 c0 9f 74  00 00 00 0d  41 6d 62 69   .......t....Ambi
+000010  65 6e 74 20 4c 69 67 68 74  d5 a9 bc 78  00 00 00     ent Light...x...
+000020  1b 44 6f 77 6e 74 6f 77 6e 5f 54 75 6e 6e 65 6c     .Downtown_Tunnel
+000030  5f 61 6d 62 69 65 6e 74 5f 62 6f 78 ...               _ambient_box...
+
+  00 00 00 02              record_count = 2  (big-endian)
+  a3 c0 9f 74              type-name hash
+  00 00 00 0d              str-len = 13
+  "Ambient Light"          record type
+  d5 a9 bc 78              instance-name hash
+  00 00 00 1b              str-len = 27
+  "Downtown_Tunnel_ambient_box"   instance name
+  43 dd e3 78 ...          big-endian float32 parameters (position / extents)</pre>
+<p>Graveyard/midday goes further, with <code>"Prop Draw Distance"</code> records keyed to powerplay props such as <code>PP16_RockFall_Small_1</code> and <code>PP04_FlatBedTruck</code> — i.e. per-rig, per-prop draw-distance overrides for that time of day. So <code>.gbx</code> is a small <strong>per-light-rig override/extras table</strong> (extra ambient-light boxes and prop draw-distance tweaks) layered on top of the bulk <a href="format-lights.html">.lights</a> data; the empty 4-byte files simply have no overrides for that preset.</p>
+
+<p>The EBOOT references the <code>.gbx</code> alongside the rest of the rig folder:</p>
+<blockquote>
+<code>environment(noassert)|LightRigs/%s/%s.gbx</code> · <code>%sLightRigs/%s/%s.lights</code> · <code>%sLightRigs/%s/%s.params</code> · <code>Ambient Light</code> · <code>Prop Draw Distance</code> · <code>game_setup/subtracklightrigIndex</code> · <code>Environments\SubTrackLightRigs.txt</code> · <code>Env '%s' : SubTrack '%s' : LightRig '%s'</code>
+</blockquote>
+<p>The engine selects a <em>SubTrack × LightRig</em> combo (e.g. SubTrack&nbsp;"A" + LightRig&nbsp;"midday") and loads that rig folder by name, reading <code>.lights</code>, <code>.params</code> and the <code>.gbx</code> overrides together.</p>
+
+<div class="note">Naming aside: <code>.gbx</code> is also the extension Nadeo's TrackMania uses for its "GameBox" files, but that is unrelated — Split/Second is a Black Rock title with its own engine, and these <code>.gbx</code> files share none of the GameBox structure (which begins with a <code>GBX</code> ASCII magic; these begin with a big-endian record count).</div>
+
+<h2>Confidence</h2>
+<p><span class="badge ok">Confirmed</span>: the <code>.nis</code> magic, record-count byte, and per-record <code>id&nbsp;/ string&nbsp;/ flag</code> layout — verified by parsing all 18 files to completion with no residual bytes and matching the count field (181 records total, flag only ever 0/1). The <code>.gbx</code> big-endian <code>record_count</code> header and the length-prefixed type/name string structure are also <span class="badge ok">Confirmed</span> (the type strings "Ambient Light" / "Prop Draw Distance" match EBOOT strings). <span class="badge partial">Partial</span>: the semantic meaning of the <code>.nis</code> <code>segment_id</code> values and the exact role of its flag; and the count/meaning of the trailing <code>float32</code> fields in each <code>.gbx</code> record. <span class="badge theory">Theory</span>: the zone-code family meanings. We can firmly rule out the original "cutscene script" theory for both formats — their location (TrackLogic / LightRigs), EBOOT references and contents are unambiguous.</p>
+
+<h2>Open questions</h2>
+<ul>
+  <li>Do <code>.nis</code> <code>segment_id</code> values index the level's <a href="format-sectors.html">sectorInfo</a> / <a href="format-route.html">route</a> tables, or a TrackLogic-internal section list?</li>
+  <li>Is the <code>.nis</code> flag "active on this route" or "is a branch/junction" — does route B's <code>.nis</code> describe the divergent path only?</li>
+  <li>How many <code>float32</code> fields follow each <code>.gbx</code> record, and what do they encode (box centre + extents for "Ambient Light"; a single distance for "Prop Draw Distance")? Are there <code>.gbx</code> record types beyond the two observed?</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="system-tracks.html">Tracks &amp; Levels</a> — SubTrack/route variants and time-of-day lighting combos.</li>
+  <li><a href="format-route.html">Route Data (.checkpoints…)</a> — the broader per-route track-section data this manifest references.</li>
+  <li><a href="format-sectors.html">Sectors (.sectorInfo)</a> — track sector partitioning and section ids.</li>
+  <li><a href="format-lights.html">Lights (.lights)</a> — the real light-rig payload that <code>.gbx</code> stubs accompany.</li>
+  <li><a href="system-powerplay.html">Powerplay System</a> — the PP* segments and route-reshaping these tables gate.</li>
+  <li><a href="format-bik.html">Bink Video (.bik)</a> — the other entry in the Audio &amp; Video cluster.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

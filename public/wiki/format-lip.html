@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lip Sync (.lip) — Split/Second RE Wiki</title>
+<meta name="description" content="Track.lip is not voice lip-sync — it is the compiled TrackLogic node graph (AI racing line / respot / crash-zone data) for each subtrack.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Lip Sync (.lip)" data-category="Formats · Audio & Video">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Lip Sync (.lip)</h1>
+<div class="warn"><b>Naming correction.</b> Despite the extension and this page's catalogued title, <code>.lip</code> in Split/Second is <strong>not voice lip-sync / viseme data</strong>. The only <code>.lip</code> files in the build are named <code>Track.lip</code> and live in each level's <code>Event/RACING/TrackLogic/</code> folder, alongside <code>Track.checkpoints</code>, <code>Track.linkorigins</code>, <code>Track.logicinfo</code> and a human-readable <code>Track.debug.txt</code>. The file is the <strong>compiled TrackLogic node graph</strong> — the AI racing-line / respot / crash-zone network used by <a href="system-ai.html">SSAI</a> and the race director. "LIP" is best read as <em>Logic / racing-line data Pack</em>; there is no speech in it.</div>
+
+<p>This page documents what the format actually contains, verified against the debug twin. For the related track files see <a href="format-route.html">Route Data</a> and <a href="format-logicinfo.html">Logic Info</a>.</p>
+
+<div class="infobox"><div class="ib-title">Track.lip</div><table>
+  <tr><th>Real purpose</th><td>Compiled AI track-logic node graph</td></tr>
+  <tr><th>Category</th><td>Track &amp; route (mis-filed under audio)</td></tr>
+  <tr><th>Location</th><td><code>…/Event/RACING/TrackLogic/&lt;A–D&gt;/Track.lip</code></td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Magic</th><td>none — header is offset/count words</td></tr>
+  <tr><th>Node stride</th><td>0x50 (80 bytes) per node</td></tr>
+  <tr><th>Twin</th><td><code>Track.debug.txt</code> (plain-text node dump)</td></tr>
+  <tr><th>Count</th><td>18 files (per-level, per-subtrack)</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<h2>Provenance — how it was identified</h2>
+<p>The eboot string table makes the lineage explicit. Under the <code>TrackLogic</code> loader the format strings are emitted side-by-side:</p>
+<pre class="hex">environment(noassert)|Event/%s/TrackLogic
+environment(noassert)|Event/%s/TrackLogic/%s
+%s/Track.lip
+%s/Track.linkorigins
+%s/Track.checkpoints
+%s/Track.logicinfo</pre>
+<p>Surrounding log tags are <code>TrackLogic_Error/Warning/Info</code>, with messages like <em>"No checkpoints found"</em>, <em>"Found Start Grid @ …"</em>, <em>"AITrack data file is empty"</em>. The neighbouring AI debug menu (<code>AI/Debug/TrackRender/…</code>) renders "Racing Line", "Block Logic" and "No Respot" — exactly the per-node flags found in the binary. None of the audio/FMOD/lip-sync strings reference <code>.lip</code>.</p>
+
+<h2>Ground truth — the debug twin</h2>
+<p>Each <code>Track.lip</code> ships next to a <code>Track.debug.txt</code> that dumps the same data as text, which makes verification direct. The opening of <code>Downtown/A/Track.debug.txt</code>:</p>
+<pre class="hex">Track
+=====
+Node [0]
+Pos (-1342, 8, 254)
+Crash zone [ ]
+Can respot [x]
+DropZone False
+TriggerZone False
+Node [1]
+Pos (-1314, 8, 239)
+…</pre>
+<p>So a node carries a 3D position and four booleans: <b>Crash zone</b>, <b>Can respot</b>, <b>DropZone</b>, <b>TriggerZone</b>. These map directly onto the binary records below.</p>
+
+<h2>File header</h2>
+<p>The first 0x24 bytes are a big-endian directory. The first word at <code>0x00</code> is <code>0x50</code> = the per-node record <em>stride</em> (80 bytes), confirmed below by measuring the distance between consecutive node position triples. The node array begins immediately at <code>0x24</code>; the words at <code>0x10</code>–<code>0x1c</code> are a small section table whose larger offsets (<code>0x114</code>, <code>0x11b</code>) point past the node array into the link/checkpoint sub-arrays — i.e. the file is <strong>not</strong> entirely node records.</p>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x00</td><td>0x4</td><td>uint32_t</td><td>nodeStride</td><td><code>0x00000050</code> = 80 — the byte stride of each node record (verified: node[1] pos floats sit exactly 0x50 after node[0]'s).</td></tr>
+<tr><td>0x04</td><td>0x4</td><td>uint32_t</td><td>flags / version</td><td><code>0x00000100</code>.</td></tr>
+<tr><td>0x08</td><td>0x4</td><td>uint32_t</td><td>field_08</td><td><code>0x34</code>. Purpose unconfirmed (it is <em>not</em> the first-node offset — the node array starts at 0x24 and node[0]'s floats begin at 0x34, but that is a coincidence of the 0x10-byte in-record preamble, not a pointer).</td></tr>
+<tr><td>0x0C</td><td>0x4</td><td>uint32_t</td><td>field_0C</td><td><code>0x2c</code>.</td></tr>
+<tr><td>0x10</td><td>0x14</td><td>uint32_t[5]</td><td>section table</td><td><code>0x08</code>, <code>0x10</code>, <code>0x114</code>, <code>0x11b</code>, … — counts/offsets for the link/checkpoint sub-arrays that follow the node array (not fully mapped).</td></tr>
+<tr><td>0x24</td><td>—</td><td>—</td><td>node array</td><td>Array of <strong>0x50-byte</strong> node records begins here (record <var>n</var> at <code>0x24 + n×0x50</code>; node[0]'s position floats land at file 0x34).</td></tr>
+</tbody>
+</table>
+
+<h2>Node record (0x50 bytes)</h2>
+<p>Records repeat on an <strong>80-byte (0x50)</strong> stride — the value held in the header word at 0x00. Offsets below are <em>relative to the record start</em> (record <var>n</var> begins at file <code>0x24 + n×0x50</code>). Only the fields decoded directly against the <code>Track.debug.txt</code> twin are marked confirmed; the rest are honestly left as unknown.</p>
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>+0x00</td><td>0x10</td><td>float32_t[4]</td><td>tangent / dir</td><td>Four floats; the first is small and signed (can be ±), the second ≈0.85, the third is 0.0, the fourth ≈0.51 — a normalised direction/tangent (and a planar component) at the node. <span class="badge theory">Theory</span></td></tr>
+<tr><td>+0x10</td><td>0x4</td><td>float32_t</td><td>posX</td><td>World X. <code>c4 a7 c5 b0</code> = -1342.18 → matches Node[0] "(-1342, …)". <span class="badge ok">Confirmed</span></td></tr>
+<tr><td>+0x14</td><td>0x4</td><td>float32_t</td><td>posY</td><td>World Y. <code>41 08 2b 7b</code> = 8.51 → "(…, 8, …)". <span class="badge ok">Confirmed</span></td></tr>
+<tr><td>+0x18</td><td>0x4</td><td>float32_t</td><td>posZ</td><td>World Z. <code>43 7e 1c e2</code> = 254.11 → "(…, …, 254)". <span class="badge ok">Confirmed</span></td></tr>
+<tr><td>+0x1C</td><td>0x24</td><td>uint32_t[9]</td><td>links / sub-indices</td><td>Mostly zero, with a couple of small ascending indices (e.g. one word equals the node's own index+1) — adjacency / link references into the sibling sub-arrays. <span class="badge partial">Partial</span></td></tr>
+<tr><td>+0x40</td><td>0x4</td><td>float32_t</td><td>width / radius</td><td><code>41 68 d4 fe</code> = 14.55 (varies a little per node) — node corridor half-width. <span class="badge theory">Theory</span></td></tr>
+<tr><td>+0x44</td><td>0x4</td><td>uint8_t[4]</td><td>flags</td><td>Typically <code>01 01 00 00</code>. Packs per-node booleans — but see the warning below: it does <em>not</em> by itself distinguish "Can respot" on/off, so the exact bit assignment is unconfirmed. <span class="badge partial">Partial</span></td></tr>
+<tr><td>+0x48</td><td>0x4</td><td>uint32_t</td><td>nodeIndex</td><td>Sequential node id (0, 1, 2, 3 …), one per 0x50 record. <span class="badge ok">Confirmed</span></td></tr>
+<tr><td>+0x4C</td><td>0x4</td><td>uint32_t</td><td>field_4C</td><td>Zero in sampled records.</td></tr>
+</tbody>
+</table>
+<div class="note">The 0x50 stride was confirmed by locating consecutive position triples: node[0] floats at file-offset 0x34, node[1] at 0x84, node[2] at 0xd4 — each exactly 0x50 apart — and all decode to the coordinates printed for Node[0]/[1]/[2] in the debug twin. The <code>nodeIndex</code> word at +0x48 likewise runs 0,1,2,… in lock-step with the debug "Node [n]" headings.</div>
+<div class="warn">Earlier drafts of this page claimed a 0x40 (64-byte) stride; that was wrong — measuring three consecutive nodes gives 0x50. Also note Node[46] of <code>Downtown/A</code> is the only "Can respot [ ]" node in that track yet its <code>+0x44</code> bytes are still <code>01 01 00 00</code>, identical to its respot-able neighbours — so the respot boolean is <em>not</em> carried in that byte pair (it may live in a sibling sub-array such as <code>Track.linkorigins</code>). The four-boolean packing is therefore still open.</div>
+
+<h2>Hex excerpt — Downtown/A/Track.lip</h2>
+<pre class="hex">000000  00 00 00 50 00 00 01 00 00 00 00 34 00 00 00 2c  ...P.......4...,   header: nodeStride=0x50 | flags 0x100 | 0x34 | 0x2c
+000010  00 00 00 08 00 00 00 10 00 00 01 14 00 00 01 1b  ................   section count/offset table
+000020  00 00 00 13 3a 51 e1 80 3f 5b 0c 34 00 00 00 00  ....:Q..?[.4....   node[0] @0x24: dir floats (0.0008, 0.857, 0.0…)
+000030  3f 04 7d c8 c4 a7 c5 b0 41 08 2b 7b 43 7e 1c e2  ?.}.....A.+{C~..   dir | posX=-1342.18 posY=8.51 posZ=254.11
+000040  00 00 00 00 00 00 00 05 00 00 00 00 00 00 00 00  ................   +0x1c link/sub-index words (mostly zero)
+000050  00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ................   …
+000060  00 00 00 00 41 68 d4 fe 01 01 00 00 00 00 00 00  ....Ah..........   +0x40 width=14.55 | +0x44 flags 01 01 | +0x48 index=0
+000070  00 00 00 00 ba b3 aa 1b 3f 5b 54 91 00 00 00 00  ........?[T.....   node[1] @0x74: dir floats…
+000080  3f 04 05 8d c4 a4 44 3a 41 0a 70 be 43 6f 33 e8  ?.....D:A.p.Co3.   +0x10 posX=-1314.13 posY=8.65 posZ=239.20</pre>
+<p>node[0]'s record starts at 0x24 and node[1]'s at 0x74 — exactly 0x50 apart. Both decoded triples — (-1342, 8, 254) and (-1314, 8, 239) — match Node[0] and Node[1] in <code>Track.debug.txt</code> to the integer, confirming the stride, the field layout and the big-endian float interpretation.</p>
+
+<h2>What is still open</h2>
+<div class="warn">The position triple, the sequential <b>nodeIndex</b> (+0x48) and the <b>0x50 stride</b> are confirmed against the debug twin; corridor width (+0x40) and the leading direction floats are well-supported but not cross-checked against text. Still uncertain: the exact bit assignment of the <b>flags</b> word at +0x44 (it does not by itself encode "Can respot"), the meaning of the <code>+0x1C</code>…<code>+0x3F</code> link/sub-index words, and the trailing section table at header <code>0x10</code> (the <code>0x114</code>/<code>0x11b</code> offsets point into checkpoint/link sub-arrays shared with <code>Track.linkorigins</code> and <code>Track.checkpoints</code>). A full bit-for-bit decode — including which sibling file actually carries the four per-node booleans — is left for a later pass.</div>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-route.html">Route Data</a> — <code>.checkpoints</code>, <code>.linkorigins</code>, <code>.sideways</code>, <code>.splitlength</code> siblings in the same folder.</li>
+  <li><a href="format-logicinfo.html">Logic Info (.logicinfo)</a> — <code>Track.logicinfo</code> companion (Catnip magic <code>cd ab 0d f0</code>).</li>
+  <li><a href="system-ai.html">AI (SSAI)</a> — consumer of the racing-line / respot node graph.</li>
+  <li><a href="system-tracks.html">Tracks &amp; Levels</a> — subtrack (A–D) layout and the TrackLogic pipeline.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

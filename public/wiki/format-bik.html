@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bink Video (.bik) — Split/Second RE Wiki</title>
+<meta name="description" content="RAD Bink (BIKi) full-motion video container used for Split/Second intros, frontend backdrops and tutorials; header layout, resolution/fps/audio fields and a verified hex breakdown.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Bink Video (.bik)" data-category="Formats · Audio & Video">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Bink Video (<code>.bik</code>)</h1>
+<p>Every full-motion video in Split/Second — the studio idents, the season-episode "Previously on…/Next time" recaps, the animated frontend backdrops and the per-mode tutorial clips — is a <strong>RAD Game Tools Bink</strong> file. All 29 movies live in <code>Deferred/Movies/</code> and use the classic <code>BIKi</code> container with a self-describing fixed header followed by a per-frame offset table. The engine wraps the Bink runtime in the in-house <code>MMBinkMovie</code> class.</p>
+
+<div class="infobox"><div class="ib-title">.bik</div><table>
+  <tr><th>Category</th><td>Full-motion video</td></tr>
+  <tr><th>Middleware</th><td>RAD Bink (binkliba)</td></tr>
+  <tr><th>Wrapper class</th><td><code>MMBinkMovie</code></td></tr>
+  <tr><th>Magic</th><td><code>42 49 4B 69</code> ("BIKi")</td></tr>
+  <tr><th>Endianness</th><td>Little-endian (Bink is LE even on PS3)</td></tr>
+  <tr><th>Location</th><td><code>Deferred/Movies/</code></td></tr>
+  <tr><th>Count</th><td>29 files</td></tr>
+  <tr><th>Resolution</th><td>1280×720, 256×256 (frontend) or 640×360 (DIS)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>Identification &amp; magic</h2>
+<p>The first four bytes are the ASCII signature <code>BIK</code> followed by a single <strong>codec/revision letter</strong>. Every Split/Second movie uses <code>BIKi</code> (<code>42 49 4B 69</code>) — the "i" generation of the Bink 1 codec (Bink 2, <code>KB2*</code>, is not used here). The codec letter is constant across all 28 samples examined.</p>
+<div class="note">Despite the PS3 being a big-endian PowerPC platform, the Bink container is <strong>little-endian</strong>: this is RAD's own cross-platform format and the runtime byte-swaps internally. Every multi-byte field below reads as little-endian — verify by checking that <code>file_size + 8 == on-disk size</code>.</div>
+
+<h2>Header layout</h2>
+<p>The header is a fixed 44-byte block (0x00–0x2B) up to and including <code>num_audio_tracks</code>. When <code>num_audio_tracks &gt; 0</code>, a per-track audio descriptor block follows; then comes the frame-offset table (<code>num_frames + 1</code> entries) and the interleaved audio/video packets. The fields below were decoded by cross-comparing a small clip (<code>Blackrock.bik</code>, 11.7&nbsp;MB) against a 640×360 montage (<code>DIS.bik</code>) and several 720p and 256×256 clips; the resolution, frame-rate and audio-track values change exactly where the visible content differs, while the magic and reserved bytes stay constant.</p>
+
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x00</td><td>0x4</td><td>char[4]</td><td>magic</td><td><code>"BIKi"</code> — signature + codec letter <code>i</code>. Constant across all samples.</td></tr>
+<tr><td>0x04</td><td>0x4</td><td>uint32_t</td><td>file_size</td><td>Total file size <strong>minus 8</strong>. Verified: <code>Blackrock</code> stores <code>0x00B2282C</code> = 11675692, on-disk = 11675700 (= +8). Holds for every file.</td></tr>
+<tr><td>0x08</td><td>0x4</td><td>uint32_t</td><td>num_frames</td><td>Total frame count (e.g. <code>Blackrock</code> = 0xC3 = 195; <code>DIS</code> = 0x50B = 1291).</td></tr>
+<tr><td>0x0C</td><td>0x4</td><td>uint32_t</td><td>largest_frame</td><td>Size in bytes of the largest single frame — used to size the decode buffer.</td></tr>
+<tr><td>0x10</td><td>0x4</td><td>uint32_t</td><td>num_frames2</td><td>Frame count again (equals <code>num_frames</code> in every sample). Bink's "last frame to play" / loop bound; identical to 0x08 when the whole clip plays.</td></tr>
+<tr><td>0x14</td><td>0x4</td><td>uint32_t</td><td>width</td><td>Video width in pixels. <code>0x500</code> = 1280 (cutscenes), <code>0x100</code> = 256 (frontend backdrops), <code>0x280</code> = 640 (<code>DIS</code>).</td></tr>
+<tr><td>0x18</td><td>0x4</td><td>uint32_t</td><td>height</td><td>Video height. <code>0x2D0</code> = 720, <code>0x100</code> = 256 (frontend), <code>0x168</code> = 360 (<code>DIS</code>).</td></tr>
+<tr><td>0x1C</td><td>0x4</td><td>uint32_t</td><td>fps_dividend</td><td>Frame-rate numerator.</td></tr>
+<tr><td>0x20</td><td>0x4</td><td>uint32_t</td><td>fps_divisor</td><td>Frame-rate denominator. <code>fps = dividend / divisor</code>. Three rationals occur: <code>30/1</code> = 30&nbsp;fps, <code>2997/100</code> ≈ 29.97&nbsp;fps (NTSC, most frontend/season clips), <code>51640/1723</code> ≈ 29.97&nbsp;fps (<code>DIS</code> only); plus <code>15/1</code> and <code>25/1</code> on a few placeholders.</td></tr>
+<tr><td>0x24</td><td>0x4</td><td>uint32_t</td><td>video_flags</td><td>Video/scaling flag word. <code>0</code> in every Split/Second movie (no Bink scaling/alpha flags set) — verified across all 29 files.</td></tr>
+<tr><td>0x28</td><td>0x4</td><td>uint32_t</td><td>num_audio_tracks (N)</td><td>Number of embedded audio tracks. <code>0</code> for silent backdrops/tutorials, <code>1–2</code> for normal clips, <code>5</code> for <code>DIS</code> (multi-track montage).</td></tr>
+<tr><td>0x2C</td><td>4·N</td><td>uint32_t[N]</td><td>audio_max_packet</td><td>Largest audio packet (bytes) per track — sizes the per-track decode buffer. Present only when <code>N &gt; 0</code>. <span class="badge ok">Confirmed</span></td></tr>
+<tr><td>0x2C+4N</td><td>4·N</td><td>uint32_t[N]</td><td>audio_props</td><td>Per track: low 16 bits = sample rate (<code>0xAC44</code>=44100, <code>0xBB80</code>=48000), high 16 bits = Bink audio flags (<code>0x7000</code> observed = stereo + DCT/RDFT). <span class="badge ok">Confirmed</span></td></tr>
+<tr><td>0x2C+8N</td><td>4·N</td><td>uint32_t[N]</td><td>audio_track_id</td><td>Per-track id used to select the track at runtime (e.g. Blackrock = <code>0</code>, <code>5</code>). <span class="badge ok">Confirmed</span></td></tr>
+<tr><td>0x2C+12N</td><td>4·(N+1)</td><td>uint32_t[]</td><td>frame_offset_table</td><td>Absolute file offsets of each frame, <code>num_frames + 1</code> entries (the last equals <code>file_size+8</code>, the end-of-data marker). The low bit of each offset is a keyframe flag — mask with <code>~1</code> to seek. <span class="badge ok">Confirmed</span> (the first masked entry lands exactly on the byte after the table).</td></tr>
+</tbody>
+</table>
+
+<h2>Frame-rate field</h2>
+<p>The frame rate is stored as a rational, not a float, which is how RAD encodes both integer and NTSC rates without rounding. Split/Second uses five distinct rationals across the 29 movies (verified by reading 0x1C/0x20 on every file):</p>
+<table>
+<thead><tr><th>dividend (0x1C)</th><th>divisor (0x20)</th><th>Effective fps</th><th>Files</th></tr></thead>
+<tbody>
+<tr><td>30</td><td>1</td><td>30.000</td><td>Blackrock, DISBR, Intro, SeasonFinale, SeasonModeTutorial, TitleSequence, SS_BG_MaiN, all <code>Tutorial*</code></td></tr>
+<tr><td>2997</td><td>100</td><td>29.970 (NTSC)</td><td>EpisodeTeaser, NextTime, PreviouslyOnSS, SS_Ident, SS_VSlice_Xmovie_02, all <code>FE_*</code> frontend backdrops</td></tr>
+<tr><td>51640</td><td>1723</td><td>29.971 (NTSC)</td><td>DIS only</td></tr>
+<tr><td>25</td><td>1</td><td>25.000</td><td>Car_Unlock_FC_UNC</td></tr>
+<tr><td>15</td><td>1</td><td>15.000</td><td>Vid1, Vid2, Vid3 (placeholders)</td></tr>
+</tbody>
+</table>
+
+<h2>Audio-track count</h2>
+<p>Field 0x28 is a direct count of multiplexed audio streams. It tracks the role of the clip exactly:</p>
+<table>
+<thead><tr><th>File</th><th>Resolution</th><th>fps</th><th>Audio tracks (0x28)</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td>SS_BG_MaiN_f2_720_unc, all <code>Tutorial*</code>, all <code>FE_*</code>, <code>Vid1–3</code></td><td>1280×720 / 256×256</td><td>30 / 29.97 / 15</td><td>0</td><td>Silent backdrops, tutorials and placeholders (no embedded audio)</td></tr>
+<tr><td>TitleSequence, EpisodeTeaser, SS_VSlice_Xmovie_02</td><td>1280×720</td><td>30 / 29.97</td><td>1</td><td>Single audio track</td></tr>
+<tr><td>Blackrock / Intro / SeasonFinale / DISBR / NextTime / PreviouslyOnSS</td><td>1280×720</td><td>30 / 29.97</td><td>2</td><td>Standard clip (e.g. stereo + commentary)</td></tr>
+<tr><td>DIS</td><td>640×360</td><td>29.97</td><td>5</td><td>Multi-track montage (likely language variants)</td></tr>
+</tbody>
+</table>
+<div class="tip">The silent <code>SS_BG_MaiN_f2_720_unc.bik</code> (the animated main-menu background) and the small <code>256×256</code> <code>FE_*</code> backdrops all carry <strong>zero</strong> audio tracks, a clean cross-check that field 0x28 really is the audio-track count and not, say, a colour-space flag. Note the frontend loops (<code>FE_*</code>, <code>SS_Ident</code>) are <strong>256×256</strong> surfaces, not full-screen — they are textured onto Scaleform menu panels rather than played at native resolution.</div>
+
+<h2>Annotated hex excerpt</h2>
+<p>First 48 bytes of <code>Blackrock.bik</code> (the studio ident, 1280×720 @ 30&nbsp;fps, 195 frames, 2 audio tracks):</p>
+<pre class="hex">000000  42 49 4b 69  2c 28 b2 00  c3 00 00 00  dc 92 01 00   BIKi,(..........
+000010  c3 00 00 00  00 05 00 00  d0 02 00 00  1e 00 00 00   ................
+000020  01 00 00 00  00 00 00 00  02 00 00 00  00 1c 02 00   ................
+
+  42 49 4B 69                 magic "BIKi"  (codec letter 'i')
+  2C 28 B2 00  -> 0x00B2282C  file_size  = 11,675,692  (+8 = 11,675,700 on disk)
+  C3 00 00 00  -> 0x000000C3  num_frames = 195
+  DC 92 01 00  -> 0x000192DC  largest_frame = 103,132 bytes
+  C3 00 00 00  -> 0x000000C3  num_frames2 = 195  (== num_frames)
+  00 05 00 00  -> 0x00000500  width  = 1280
+  D0 02 00 00  -> 0x000002D0  height = 720
+  1E 00 00 00  -> 0x0000001E  fps_dividend = 30
+  01 00 00 00  -> 0x00000001  fps_divisor  = 1     => 30.0 fps
+  00 00 00 00  -> 0x00000000  video_flags  = 0
+  02 00 00 00  -> 0x00000002  num_audio_tracks = 2
+  00 1C 02 00  -> 0x00021C00  audio_max_packet[0]  (then [1]=0x00021C00 at 0x30)
+  ...                          audio_props[2] @0x34 = 0x7000AC44 (44.1kHz),
+                               audio_track_id[2] @0x3C = {0, 5},
+                               frame_offset_table starts @0x44 (first entry 0x355,
+                               &amp; ~1 = 0x354 = byte after the 196-entry table → keyframe)</pre>
+
+<h2>How the engine loads them</h2>
+<p>Movies are opened through the <code>MMBinkMovie</code> wrapper and a dedicated I/O thread. The EBOOT carries the matching debug strings:</p>
+<blockquote>
+<code>BinkLoad</code> · <code>Opened Bink movie %s</code> · <code>Failed to open Bink movie (%s): %s Trying %d more times.</code> · <code>Setting Bink Audio with %d channels</code> · <code>Bink IO Thread</code> · <code>Bink Audio Thread</code> · <code>Not a Bink file.</code> · <code>Error reading Bink header.</code>
+</blockquote>
+<p>The retry-on-open string and a separate I/O thread are consistent with movies being streamed from disc rather than fully resident. Many entries in the residency list are tagged <code>Resident|Movies/…</code> (e.g. <code>Resident|Movies/FE_MM_Static.bik</code>), meaning small frontend loops are pinned in memory while the long episode recaps stream. The Scaleform frontend triggers playback through ActionScript hooks (<code>_root.StartMovie</code> / <code>_root.StopMovie</code>, "Movie Player", "InGame Movie", <code>Intro_NumMovies</code>, <code>Intro_Bink</code>), so the same Bink files double as both fullscreen cutscenes and textured surfaces inside <a href="format-gfx.html">Scaleform GFx</a> menus.</p>
+
+<h2>The movie set</h2>
+<p>The 29 files split into clear buckets: studio/publisher idents (<code>Blackrock</code>, <code>DIS</code>, <code>DISBR</code>, <code>SS_Ident</code>), 256×256 animated frontend backdrops (<code>FE_MM_0103</code>, <code>FE_MM_Static</code>, <code>FE_Online</code>, <code>FE_Options</code>, <code>FE_Quickplay</code>, <code>FE_SplitScreen</code>) plus the 720p main-menu loop <code>SS_BG_MaiN_f2_720_unc</code>, per-mode tutorials (six <code>Tutorial*</code> clips), season-show framing (<code>PreviouslyOnSS</code>, <code>NextTime</code>, <code>EpisodeTeaser</code>, <code>SeasonFinale</code>, <code>SeasonModeTutorial</code>), a vertical-slice promo (<code>SS_VSlice_Xmovie_02</code>, 133&nbsp;MB), an unlock sting (<code>Car_Unlock_FC_UNC</code>) and generic placeholders (<code>Vid1</code>–<code>Vid3</code>). Sizes range from the 2.16&nbsp;MB <code>Vid3</code> up to the 155&nbsp;MB <code>SeasonFinale</code>. Files with an <code>_unc</code>/<code>_UNC</code> suffix (e.g. <code>SS_BG_MaiN_f2_720_unc</code>, <code>Car_Unlock_FC_UNC</code>) appear to be uncompressed-audio / higher-bitrate masters.</p>
+
+<h2>Confidence</h2>
+<p><span class="badge ok">Confirmed</span> for the magic, <code>file_size</code>, frame count, resolution, frame-rate rational, audio-track count, the per-track audio descriptor block (max-packet / sample-rate+flags / id), the frame-offset table and the low-bit keyframe flag — all verified by reading every one of the 29 files and by parsing Blackrock's and TitleSequence's audio block and offset table to the EOF marker (the masked first frame offset lands exactly on the byte after the table). <span class="badge raw">Opaque</span> for the compressed video/audio bitstream itself — that is RAD proprietary Bink data, decoded only by the licensed runtime. The exact bit meaning of the <code>0x7000</code> audio-flags nibble (stereo/codec) is inferred from RAD's published Bink layout rather than measured here.</p>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="engine-middleware.html">Middleware Stack</a> — where Bink sits among Havok / FMOD / Quazal / Scaleform.</li>
+  <li><a href="format-gfx.html">Scaleform UI (.gfx)</a> — the frontend that starts/stops movies and embeds them as surfaces.</li>
+  <li><a href="format-fsb.html">FMOD Sound Banks (.fsb)</a> — in-game audio (Bink audio is separate, internal to the clip).</li>
+  <li><a href="format-nis.html">Sequences (.nis / .gbx)</a> — AITrack route tables and light-rig data, the other entries in this cluster (despite the "sequence" name, not cutscene scripts).</li>
+  <li><a href="engine-resources.html">Resources &amp; Streaming</a> — residency tags and disc streaming for the movie set.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

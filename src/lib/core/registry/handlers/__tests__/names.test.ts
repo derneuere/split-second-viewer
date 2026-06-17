@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { namesHandler } from '../names';
 import { parseNames, writeNames } from '../../../names';
 import { ssCtx } from '../../handler';
-import { hasSample, readSample } from '@/test/dataRoot';
+import {
+	hasSample,
+	readSample,
+	listSamplesByExt,
+	readFileBytes,
+} from '@/test/dataRoot';
 
 // Inline fixture: the real Downtown LightRigNames.names — '3' 0x00 then
 // midday\0 sunrise\0 sunset\0.
@@ -44,4 +49,26 @@ describe('names parser', () => {
 			expect(Array.from(out)).toEqual(Array.from(raw));
 		},
 	);
+
+	const ALL = listSamplesByExt('.names');
+	it.skipIf(ALL.length === 0)(
+		`names round-trips real sample byte-for-byte (${ALL.length} files)`,
+		() => {
+			const ctx = ssCtx();
+			const failures: string[] = [];
+			for (const abs of ALL) {
+				const raw = readFileBytes(abs);
+				const out = namesHandler.writeRaw!(namesHandler.parseRaw(raw, ctx), ctx);
+				if (!bytesEqual(out, raw)) failures.push(`${abs} (len ${out.length} vs ${raw.length})`);
+			}
+			expect(failures).toEqual([]);
+			expect(ALL.length).toBeGreaterThan(1);
+		},
+	);
 });
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+	return true;
+}

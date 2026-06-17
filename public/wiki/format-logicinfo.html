@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Logic Info (.logicinfo) — Split/Second RE Wiki</title>
+<meta name="description" content="Track.logicinfo is a fixed 288-byte big-endian blob holding per-subtrack race-logic metadata: start-grid transform plus constant field-name CRCs and a sentinel footer.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Logic Info (.logicinfo)" data-category="Formats · Gameplay (Catnip)">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Logic Info (<code>.logicinfo</code>)</h1>
+<p>
+<code>Track.logicinfo</code> is a small, fixed-size (288-byte) big-endian blob that travels with the
+per-subtrack <em>track-logic</em> data. It is loaded by the same race-logic loader that reads
+<code>Track.checkpoints</code> / <code>Track.linkorigins</code> and holds the metadata that logic
+needs before the route is live — most visibly the <strong>start-grid transform</strong>. Almost the
+whole record is constant across every track; only a handful of float fields change, and those decode
+to sensible world-space coordinates.
+</p>
+
+<div class="infobox"><div class="ib-title">.logicinfo</div><table>
+  <tr><th>Category</th><td>Track-logic metadata</td></tr>
+  <tr><th>Container</th><td>Flat fixed-size struct</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Size</th><td><code>0x120</code> = 288 bytes (constant)</td></tr>
+  <tr><th>Version</th><td><code>00 03 00 00</code> (major 3, minor 0)</td></tr>
+  <tr><th>Magic / id</th><td><code>CD AB 0D F0</code></td></tr>
+  <tr><th>Footer</th><td><code>BA DC AD DE</code> sentinel</td></tr>
+  <tr><th>Path</th><td><code>Event/RACING/TrackLogic/&lt;A–D&gt;/Track.logicinfo</code></td></tr>
+  <tr><th>Count</th><td>18 files</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<h2>Where it lives</h2>
+<p>
+One <code>Track.logicinfo</code> exists per <em>subtrack</em> under each level's racing event folder:
+</p>
+<pre class="hex">Environments/Levels/Downtown/Event/RACING/TrackLogic/A/Track.logicinfo
+Environments/Levels/Downtown/Event/RACING/TrackLogic/B/Track.logicinfo
+Environments/Levels/Downtown/Event/RACING/TrackLogic/C/Track.logicinfo
+Environments/Levels/docks/Event/RACING/TrackLogic/{A,B,C,D}/Track.logicinfo
+…</pre>
+<p>
+The path tokens <code>environment(noassert)|Event/%s/TrackLogic/%s</code> and
+<code>%s/Track.logicinfo</code> appear in <code>eboot_strings.txt</code> directly alongside the other
+per-subtrack route files (<code>%s/Track.checkpoints</code>, <code>%s/Track.linkorigins</code>,
+<code>%s/Track.lip</code>) and the <code>TrackLogic_Error / _Warning / _Info</code> log channels. The
+nearby asserts — <code>More than 1 StartGridRef added…</code>, <code>No StartGRidRef loaded</code>,
+<code>Found Start Grid @ (.2f, .2f, .2f)</code>, <code>cStartGridEntity</code> — identify the
+start-grid as a primary payload of this loader.
+</p>
+
+<h2>File layout</h2>
+<p>
+The size is rock-solid: <strong>every one of the 18 files is exactly 288 bytes</strong>. A 12-byte
+header (version + id + length) is followed by a 0x54-byte body (<code>0x0C</code>…<code>0x5F</code>) of
+interleaved constant CRCs and per-track floats, then a 188-byte zero-fill region and a 4-byte sentinel
+footer. The length word at <code>0x8</code>
+is <code>0x00000114 = 276</code>, which is precisely <code>288 − 12</code> — i.e. the byte count
+<em>after</em> the 12-byte header. That is the strongest evidence for the header boundary.
+</p>
+
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x00</td><td>0x4</td><td>uint16[2]</td><td>version</td><td><code>00 03 00 00</code> = major 3, minor 0. Constant across all files. (Echoes the entities-loader's "major/minor version" scheme — see note.)</td></tr>
+<tr><td>0x04</td><td>0x4</td><td>uint32_t</td><td>magic / fileId</td><td><code>CD AB 0D F0</code>. Constant; a byte-swapped <code>0xF00DABCD</code>-style file tag.</td></tr>
+<tr><td>0x08</td><td>0x4</td><td>uint32_t</td><td>payloadLen</td><td><code>0x00000114</code> = 276 = file size − header. Constant.</td></tr>
+<tr><td>0x0C</td><td>0x4</td><td>uint32_t</td><td>crc?</td><td><code>49 39 A9 9A</code>. Constant; looks like a 32-bit name/section CRC.</td></tr>
+<tr><td>0x10</td><td>0x4</td><td>float32_t</td><td>(const float)</td><td><code>48 E6 5B 4B</code> ≈ 471770.3. Constant across all tracks — likely a default/limit, not a position.</td></tr>
+<tr><td>0x14</td><td>0x4</td><td>float32_t</td><td>scale?</td><td><code>3F 80 00 00</code> = 1.0. Constant. Plausibly a uniform scale or weight.</td></tr>
+<tr><td>0x18</td><td>0x4</td><td>uint32_t</td><td>crc?</td><td><code>17 89 C8 E5</code>. Constant 32-bit field hash.</td></tr>
+<tr><td>0x1C</td><td>0x4</td><td>uint32_t</td><td>zero</td><td><code>00 00 00 00</code>.</td></tr>
+<tr><td>0x20</td><td>0x4</td><td>uint32_t</td><td>crc?</td><td><code>8D 95 83 30</code>. Constant.</td></tr>
+<tr><td>0x24</td><td>0x4</td><td>uint32_t</td><td>zero</td><td><code>00 00 00 00</code>.</td></tr>
+<tr><td>0x28</td><td>0x4</td><td>uint32_t</td><td>crc?</td><td><code>DC 56 BF 96</code>. Constant.</td></tr>
+<tr><td>0x2C</td><td>0x4</td><td>uint32_t</td><td>zero</td><td><code>00 00 00 00</code>.</td></tr>
+<tr><td>0x30</td><td>0x4</td><td>uint32_t</td><td>crc?</td><td><code>E6 E5 75 E2</code>. Constant — field-name hash heading the first per-track float (the start-grid sub-record).</td></tr>
+<tr><td>0x34</td><td>0x4</td><td>float32_t</td><td><b>val0 (posY?)</b></td><td><b>Per-track.</b> Downtown 5002.66, docks 4348.09, Graveyard&nbsp;A 4237.71, nem_storm 1902.92. A world coordinate. Always equal to <code>val3</code> at 0x4C (verified in all 18 files).</td></tr>
+<tr><td>0x38</td><td>0x4</td><td>uint32_t</td><td>crc?</td><td><code>C9 F4 44 4C</code>. Constant (reads as the nonsense float −2 000 033 ⇒ a hash, not a coordinate).</td></tr>
+<tr><td>0x3C</td><td>0x4</td><td>float32_t</td><td><b>val1 (posX?)</b></td><td><b>Per-track.</b> Downtown 189.43; differs every file. World coordinate.</td></tr>
+<tr><td>0x40</td><td>0x4</td><td>uint32_t</td><td>crc?</td><td><code>89 8E 13 47</code>. Constant 32-bit field-name hash.</td></tr>
+<tr><td>0x44</td><td>0x4</td><td>float32_t</td><td><b>val2 (posZ?)</b></td><td><b>Per-track.</b> Downtown 4838.22, docks 3210.65. World coordinate.</td></tr>
+<tr><td>0x48</td><td>0x4</td><td>uint32_t</td><td>crc?</td><td><code>F8 18 F2 9C</code>. Constant 32-bit field-name hash (decodes to an absurd float).</td></tr>
+<tr><td>0x4C</td><td>0x4</td><td>float32_t</td><td><b>val3 (= val0)</b></td><td><b>Per-track.</b> Always byte-identical to <code>val0</code> at 0x34 in every file (Downtown 5002.66 / 5002.66). A duplicated copy — likely the same Y written twice by the exporter, or a paired grid endpoint.</td></tr>
+<tr><td>0x50</td><td>0x4</td><td>uint32_t</td><td>crc?</td><td><code>85 E2 9A CF</code>. Constant 32-bit field-name hash.</td></tr>
+<tr><td>0x54</td><td>0x4</td><td>float32_t</td><td><b>val4 (heading / extent?)</b></td><td><b>Per-track.</b> Smaller magnitude: Downtown 24.99, docks 6.06, nem_storm 9.50 — an angle or extent rather than a position.</td></tr>
+<tr><td>0x58</td><td>0x4</td><td>uint32_t</td><td>crc?</td><td><code>57 1F E3 AA</code>. Constant — closes the per-track sub-record.</td></tr>
+<tr><td>0x5C</td><td>0x4</td><td>uint32_t</td><td>zero</td><td><code>00 00 00 00</code>. Constant.</td></tr>
+<tr><td>0x60</td><td>0xBC</td><td>uint8[188]</td><td>pad / reserved</td><td>All zero in every sample (<code>0x60</code>…<code>0x11B</code> = 188 bytes). Reserved space (probably for additional logic entities that none of the shipped tracks populate).</td></tr>
+<tr><td>0x11C</td><td>0x4</td><td>uint32_t</td><td>footer</td><td><code>BA DC AD DE</code> end-of-file sentinel (a byte-swapped <code>0xDEADCBBA</code>-style guard). Constant.</td></tr>
+</tbody>
+</table>
+
+<h2>Annotated hex</h2>
+<p>
+<code>Downtown/Event/RACING/TrackLogic/A/Track.logicinfo</code>, with the constant header/CRCs marked
+versus the per-track floats:
+</p>
+<pre class="hex">000000  00 03 00 00 cd ab 0d f0  <span class="cmt">version 3.0 (const) · magic/fileId (const)</span>
+000008  00 00 01 14 49 39 a9 9a  <span class="cmt">payloadLen = 276 = 288-12 (const) · crc (const)</span>
+000010  48 e6 5b 4b 3f 80 00 00  <span class="cmt">const float 471770.3 · 1.0 (both const)</span>
+000018  17 89 c8 e5 00 00 00 00  <span class="cmt">crc (const) · zero</span>
+000020  8d 95 83 30 00 00 00 00  <span class="cmt">crc (const) · zero</span>
+000028  dc 56 bf 96 00 00 00 00  <span class="cmt">crc (const) · zero</span>
+000030  e6 e5 75 e2 <b>45 9c 55 47</b>  <span class="cmt">crc (const) · val0 = 5002.66 (per-track)</span>
+000038  c9 f4 44 4c <b>43 3d 6c ed</b>  <span class="cmt">crc (const) · val1 = 189.43 (per-track)</span>
+000040  89 8e 13 47 <b>45 97 31 ca</b>  <span class="cmt">crc (const) · val2 = 4838.22 (per-track)</span>
+000048  f8 18 f2 9c <b>45 9c 55 46</b>  <span class="cmt">crc (const) · val3 = 5002.66 (= val0, per-track)</span>
+000050  85 e2 9a cf <b>41 c7 eb 5b</b>  <span class="cmt">crc (const) · val4 = 24.99 (angle/extent, per-track)</span>
+000058  57 1f e3 aa 00 00 00 00  <span class="cmt">crc (const) · zero</span>
+000060  00 ... 00                <span class="cmt">188 bytes of zero-fill (0x60..0x11B)</span>
+00011c  ba dc ad de              <span class="cmt">end sentinel (const)</span></pre>
+
+<h2>How the constant/variable split was proven</h2>
+<p>
+Four files from different levels (Downtown A/B, docks A, Graveyard A, nem_storm A) were diffed
+byte-for-byte:
+</p>
+<ul>
+<li>All 18 files were diffed word-by-word. <strong>Exactly five 4-byte words differ</strong> between
+files: <code>0x34</code>, <code>0x3C</code>, <code>0x44</code>, <code>0x4C</code> and <code>0x54</code>.
+Every other word (<code>0x00–0x33</code>, the interleaved CRCs at <code>0x38/0x40/0x48/0x50/0x58</code>,
+<code>0x5C</code>, and <code>0x60–0x11B</code>) is <strong>byte-identical in every file</strong> ⇒
+header, field-name CRCs, padding and footer.</li>
+<li>The five differing words decode (big-endian) to clean world-scale floats; the <em>constant</em>
+4-byte fields immediately <em>before</em> each one decode to absurd floats
+(e.g. <code>C9F4444C</code> ≈ −2 000 033) — the classic signature of a CRC/hash word, not a
+coordinate. So the body is a tidy <code>(field-name-hash, value)</code> interleave of five named
+float fields, with a trailing hash at <code>0x58</code>.</li>
+<li>Note the duplicate: <code>val0</code> (0x34) and <code>val3</code> (0x4C) are byte-for-byte equal in
+all 18 files, so only <em>four</em> distinct float values are actually stored per track.</li>
+</ul>
+
+<div class="note">
+The 3-major / 0-minor versioning and the <code>id mismatch / major version mismatch / minor version
+mismatch — attempting to load</code> assert family that the entities loader uses suggest
+<code>.logicinfo</code> is produced by the same Catnip serializer that emits
+<a href="format-entities.html">.entities</a>. Treat the field names here as inferred roles, not
+ground-truth labels — hence the <span class="badge partial">Partial</span> badge.
+</div>
+<div class="tip">
+Quick check for a fresh dump: read <code>0x08</code> as a u32; it must equal
+<code>file_size − 12</code>. If the file is not 288 bytes or the footer is not
+<code>BA DC AD DE</code>, the track has additional populated logic entities and the body layout below
+<code>0x60</code> will differ.
+</div>
+
+<h2>Open questions</h2>
+<ul>
+<li>Exact semantics of the five per-track floats (only four distinct values, since
+<code>val0</code>=<code>val3</code>). A start-grid origin (x,y,z) plus a heading/extent is the leading
+theory; the duplicated value at 0x4C may simply be the exporter re-emitting Y, or a paired grid
+endpoint. The mapping of val0/val1/val2 to X/Y/Z is inferred, not proven.</li>
+<li>The constant float <code>471770.3</code> at <code>0x10</code> is shared by every track; it may be a
+default bounding/limit value or an un-overridden tuning default.</li>
+<li>Whether the 188-byte zero region (<code>0x60</code>…<code>0x11B</code>) is fixed reserved space or a
+variable-length list that simply happens to be empty in all shipped tracks (all 18 are 288 bytes, so
+empty-by-default at minimum).</li>
+<li>The six constant 4-byte words interleaved with the floats (<code>0x30/0x38/0x40/0x48/0x50/0x58</code>)
+are assumed to be field-name CRCs/hashes; the hash algorithm and the field names they encode are
+unverified.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="format-route.html">Route Data (.checkpoints…)</a> — the sibling per-subtrack route files</li>
+<li><a href="format-entities.html">Entities (.entities)</a> — same Catnip serializer / version scheme</li>
+<li><a href="data-catnip.html">Catnip Entity System</a></li>
+<li><a href="system-tracks.html">Tracks &amp; Levels</a> — subtrack pipeline (A–D)</li>
+<li><a href="system-ai.html">AI (SSAI)</a> — consumes start-grid / start positions</li>
+<li><a href="format-timeline.html">Timelines (.timelineInfo)</a> · <a href="format-highlighttags.html">Highlight Tags (.highlighttags)</a></li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

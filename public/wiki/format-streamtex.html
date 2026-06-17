@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Streaming (.stream / .streamtex) — Split/Second RE Wiki</title>
+<meta name="description" content="Streamed payload blobs: .streamtex holds full-resolution swizzled texture pixels; .model.stream holds vehicle vertex/index geometry. Headerless data DMA'd on demand under the engine's Stream Resources system.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Streaming (.stream / .streamtex)" data-category="Formats · Geometry &amp; Render">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Streaming (.stream / .streamtex)</h1>
+<p>Stream files are <strong>headerless payload blobs</strong> that hold the bulk pixel and geometry data
+the engine pages in on demand. Two siblings exist: <code>.streamtex</code> carries the full-resolution,
+RSX-swizzled texture pixels described by a companion <a href="format-textures.html">.textures</a> stub,
+and <code>X.model.stream</code> carries the vertex/index buffers for the matching
+<a href="format-model.html">.model</a>. Neither has a magic or table of its own — all structure lives in
+the descriptor file that points into it. The eboot groups both under a "<strong>Stream Resources</strong>"
+loader, addressing them with the format strings <code>%s|%s.streamtex</code>,
+<code>%sMD.model.stream</code> and <code>%s(noassert)|%s/%s/%s.model.stream</code>.</p>
+
+<div class="infobox"><div class="ib-title">.streamtex / .model.stream</div><table>
+  <tr><th>Category</th><td>Streamed payload blob</td></tr>
+  <tr><th>Engine</th><td>Crayon2 + "Stream Resources" loader</td></tr>
+  <tr><th>Magic</th><td>none (raw payload)</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Described by</th><td><code>.textures</code> / <code>.model</code></td></tr>
+  <tr><th>Found in</th><td><code>Vehicles/Frontend/…</code>, Environments</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span> (.streamtex) · <span class="badge partial">Partial</span> (.model.stream)</td></tr>
+</table></div>
+
+<h2>Overview</h2>
+<p>Split/Second keeps a small always-resident descriptor next to a large streamed payload so the engine can
+display a low-res stand-in immediately and DMA the high-res data later. The pairing is:</p>
+<table>
+<tr><th>Descriptor (resident)</th><th>Payload (streamed)</th><th>Holds</th></tr>
+<tr><td><code>X.textures</code> stub</td><td><code>X.streamtex</code></td><td>Full-res swizzled texture pixels (all mips)</td></tr>
+<tr><td><code>X.model</code></td><td><code>X.model.stream</code></td><td>Vertex + index buffers for the mesh</td></tr>
+</table>
+<p>In the frontend car directories the descriptors are tiny and the streams dominate the folder:</p>
+<table>
+<tr><th>File</th><th>Size</th></tr>
+<tr><td><code>Vehicles/Frontend/Bodies/Musclecar_01/Musclecar_01.textures</code></td><td>2,486 B</td></tr>
+<tr><td><code>…/Musclecar_01.streamtex</code></td><td>3,277,312 B</td></tr>
+<tr><td><code>…/Musclecar_01.model</code></td><td>6,312 B</td></tr>
+<tr><td><code>…/Musclecar_01.model.stream</code></td><td>1,224,122 B</td></tr>
+</table>
+
+<h2>.streamtex — texture payload</h2>
+<p>A <code>.streamtex</code> is purely the concatenated pixel data for the full-resolution textures listed in
+its companion <code>.textures</code> stub. It begins with no header — the first bytes are already swizzled
+DXT blocks:</p>
+<pre class="hex">000000  01 00 00 00 55 55 55 55 01 00 00 00 55 55 55 55   ....UUUU....UUUU
+0001e0  ef 19 00 00 55 55 55 01 ef 19 00 00 55 55 05 00   ....UUU.....UU..
+0001f0  ef 19 00 00 55 15 00 00 ef 19 00 00 55 00 00 00   ....U.......U...
+000200  ef 19 00 00 54 00 00 00 ef 19 00 00 55 50 00 00   ....T.......UP..</pre>
+<p><strong>Annotation:</strong> these are exactly the byte patterns that appear <em>inline</em> inside a
+non-streamed <code>.textures</code> file's payload region — the <code>55 55 55 55</code> /
+<code>ef 19 00 00</code> sequences are the RSX swizzle of large flat-colour DXT1 fields. The
+<code>.streamtex</code> is simply that payload region lifted into its own file so it can be streamed
+separately.</p>
+
+<h3>Layout is dictated by the .textures stub</h3>
+<p>The stub's descriptors give, in order, each full-resolution texture's <code>gcmFormat</code>, width,
+height, mip count and <code>dataOff</code> into the stream. For <code>Musclecar_01</code> the full-res set is:</p>
+<table>
+<tr><th>Texture</th><th>Format</th><th>Size</th><th>DXT1 + mips</th></tr>
+<tr><td>paraboloid_back / paraboloid_front</td><td>DXT1</td><td>512×512</td><td>2 × 174,776 B</td></tr>
+<tr><td>Musclecar_01 / Musclecar_01_DamageMap</td><td>DXT1</td><td>1024×2048</td><td>2 × 1,398,120 B</td></tr>
+<tr><td>DirtMap / ScratchMap / MetalMap</td><td>DXT1</td><td>256×256</td><td>3 × 43,704 B</td></tr>
+</table>
+<div class="tip">Summing those full-resolution mip chains gives 3,276,904 bytes against the actual
+<code>Musclecar_01.streamtex</code> size of 3,277,312 bytes — a 408-byte difference attributable to
+per-texture block alignment. This size identity is the primary evidence that <code>.streamtex</code>
+is the full-res pixel payload for its <code>.textures</code> twin.</div>
+
+<h2>.model.stream — geometry payload</h2>
+<p>The companion to a <a href="format-model.html">.model</a>, this blob holds the interleaved vertex stream
+and index data. It is likewise headerless — the <code>.model</code> file supplies the buffer descriptors
+(stride, attribute layout, counts) that interpret it. The first bytes are packed vertex components
+(half-floats / normalized shorts), not ASCII or a magic:</p>
+<pre class="hex">000000  00 00 00 00 00 12 ad ae 00 00 00 00 38 32 3a 6d   ............82:m
+000010  bf bc 3c 00 33 63 1e fe bb c9 35 58 38 36 3a 97   ..&lt;.3c....5X86:.
+000020  bf bb 3c 00 33 5b 23 35 bb c9 33 88 37 d3 3a 6c   ..&lt;.3[#5..3.7.:l
+000030  bf c4 3c 00 32 b9 20 62 bb d2 35 34 37 d4 3a 97   ..&lt;.2. b..547.:.</pre>
+<p><strong>Annotation:</strong> after a 12-byte leading block (a zero word, a small value
+<code>00 12 ad ae</code>, then a zero word) the data settles into a fixed 16-byte stride: each row carries a
+recurring <code>3c 00</code> and the same trio of high bytes (<code>bf bb/bc/c4</code>, <code>bb c9/d2</code>,
+<code>3a 6c/6d/97</code>) — the signature of an interleaved vertex buffer of packed
+half-float / normalized-short positions and normals. Decoding the exact attribute layout requires the
+<code>.model</code> header and is covered on the <a href="format-model.html">Model page</a>; here we only
+establish that <code>.model.stream</code> is raw geometry, not another TEXS container.</p>
+<div class="warn">The <code>.model.stream</code> internal vertex format is <span class="badge partial">Partial</span>:
+the stride is regular and clearly geometry, but per-attribute semantics belong to the <code>.model</code>
+descriptor and are not re-derived here.</div>
+
+<h2>The Stream Resources loader</h2>
+<p>The eboot string table contains a "<strong>Stream Resources</strong>" heading immediately followed by the
+resource-path templates used to locate these blobs:</p>
+<pre class="hex">Low LOD Geom
+L.model
+High LOD Geom
+Sub Sectors
+Load Sectors
+%sMD.model.stream
+…
+Stream Resources
+%s|%s.streamtex
+.Static.ark
+…
+%s(noassert)|%s/%s/%s.model.stream
+%s(noassert)|%s/%s/%s.streamtex</pre>
+<p>The <code>%sMD.model.stream</code> template sits in the sector-streaming block next to the
+"Low/High LOD Geom" loaders; the <code>%s|%s.streamtex</code> template heads the "Stream Resources" block
+immediately followed by <code>.Static.ark</code>; and a pair of <code>(noassert)</code> path templates names
+both extensions together. The pipe (<code>|</code>) separates a residency/bucket tag from the path, the same
+convention used by the engine's <code>Resident|…</code> entries. The neighbouring <code>.Static.ark</code>
+reference indicates these streams are also packaged into <a href="format-ark.html">.ark archives</a> in
+shipping builds; in this loose devkit build they sit on disk next to their descriptors. See
+<a href="engine-resources.html">Resources &amp; Streaming</a> for the loader-thread / residency model.</p>
+
+<h2>How we know</h2>
+<ul>
+<li><strong>No magic:</strong> first bytes of every <code>.streamtex</code> / <code>.model.stream</code> are payload data, not a 4-CC.</li>
+<li><strong>.streamtex = full-res pixels:</strong> its byte content matches the inline payload patterns of a non-streamed <code>.textures</code>, and its size matches the sum of the stub's full-resolution DXT mip chains.</li>
+<li><strong>.model.stream = geometry:</strong> regular 16-byte vertex-like stride of half-float exponents; paired 1:1 with a small <code>.model</code> descriptor.</li>
+<li><strong>Loader identity:</strong> eboot "Stream Resources" block names both extensions via <code>%s.streamtex</code> and <code>%s.model.stream</code> path templates.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="format-textures.html">Textures (.textures)</a> — descriptor stub that lays out a <code>.streamtex</code>.</li>
+<li><a href="format-model.html">Model (.model)</a> — descriptor for a <code>.model.stream</code> geometry blob.</li>
+<li><a href="format-crcs.html">CRC Tables (.crcs)</a> — texture CRCs referenced alongside streamed assets.</li>
+<li><a href="format-ark.html">Archives (.ark)</a> — packed container streams ship inside.</li>
+<li><a href="engine-resources.html">Resources &amp; Streaming</a> — residency, loader threads.</li>
+<li><a href="engine-rendering.html">Rendering Pipeline</a> — where the streamed pixels/geometry are consumed.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

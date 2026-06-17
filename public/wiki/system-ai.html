@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI (SSAI) — Split/Second RE Wiki</title>
+<meta name="description" content="Split/Second's SSAI driving system: per-speed LDC handling tables, the AI power bar, the AIPilotsDatabase roster, and the EvolutionConfig automated fitness-test harness.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="AI (SSAI)" data-category="Game Systems">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>AI (SSAI)</h1>
+<p>
+<b>SSAI</b> is Black Rock Studio's in-house racing-AI system for Split/Second. Internally the
+opponent driver is an <code>AIController</code> that reads its handling behaviour from
+<b>LDC</b> tables (per-speed steering, braking, look-ahead and
+drift parameters), gains a <a href="system-powerplay.html">power bar</a> through drafting,
+drifting, fast driving and jumping, and is dressed up by the <b>AIPilotsDatabase</b> roster of
+named pilots, cars and colours. Most of the tuning lives in plaintext
+<a href="data-params.html">.params</a> files under <code>Deferred/SSAI/</code> and
+<code>Deferred/GameLogic/</code>, so the values below are quoted directly from the shipped
+devkit data.
+</p>
+
+<div class="infobox"><div class="ib-title">SSAI</div><table>
+  <tr><th>Subsystem</th><td>Opponent driving AI</td></tr>
+  <tr><th>Runtime class</th><td><code>AIController</code></td></tr>
+  <tr><th>Driving model</th><td>LDC speed tables + PI controller</td></tr>
+  <tr><th>Data root</th><td><code>Deferred/SSAI/</code></td></tr>
+  <tr><th>Format</th><td><a href="data-params.html">.params</a> (plaintext)</td></tr>
+  <tr><th>Speed stops</th><td>60 · 120 · 180 (interpolated)</td></tr>
+  <tr><th>LDC variables</th><td>20 (index 000–019)</td></tr>
+  <tr><th>Pilot roster</th><td>98 entries, 7 names</td></tr>
+  <tr><th>Test harness</th><td><code>EvolutionConfig.params</code></td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<div class="note">
+<b>Plaintext data.</b> Unlike the binary <a href="format-phys.html">vehicle physics</a> and
+<a href="format-havok.html">Havok</a> assets, every AI tuning file is human-readable text.
+The facts on this page are read straight out of the files in
+<code>D:\…\NPXX00575\USRDIR\Deferred\SSAI</code> and
+<code>…\Deferred\GameLogic</code>, so they are marked <span class="badge ok">Confirmed</span>
+unless an inference about runtime behaviour is involved.
+</div>
+
+<h2>The driving model: LDC tables</h2>
+<p>
+An AI car does not have a single fixed handling profile. Instead each archetype has an
+<b>LDC</b> file (the engine and data only ever use the acronym; "driving constants" is the
+plain reading, but no expansion appears in the eboot) that stores a full set of driving
+parameters at three reference speeds — <b>60</b>, <b>120</b> and <b>180</b> — and the controller interpolates
+between them based on the car's current speed. The speed ladder itself is defined globally in
+<a href="#powerbar"><code>GameplayParameters.params</code></a>:
+</p>
+<pre>/GameplayParameters/LDC:
+	'000;Speed Intervals' = 60.0 (1.0, 300.0);
+	'001;Initial Speed'   = 60.0 (1.0, 300.0);
+	'002;Final Speed'     = 180.0 (1.0, 300.0);</pre>
+<p>
+So the three <code>Speed 60 / 120 / 180</code> sections you see in every <code>*_LDC.params</code>
+file are exactly <i>Initial Speed</i> → <i>Final Speed</i> in <i>Speed Intervals</i> steps. Each
+section holds the same 20 numbered variables. The EBOOT confirms the load order:
+<code>SSAI/Default_LDC.params</code>, then <code>SSAI/%s_LDC.params</code> per class, then a
+track-specific override <code>SSAI/%s/%s_LDC.params</code> (e.g. <code>docks_A/AISupercar_01_LDC.params</code>).
+</p>
+
+<h3>The 20 LDC variables</h3>
+<p>
+Values shown are from <code>SSAI/Default_LDC.params</code> at each speed; the <code>(min, max)</code>
+pair is the editor tuning-slider range and is constant across files. Note how the model becomes
+twitchier and more committed as speed rises — the steering saturation angle tightens from 0.75 rad
+at 60 to 0.2 rad at 180, and braking commitment jumps from 0.1 to full (1.0) at 180.
+</p>
+<table>
+<tr><th>#</th><th>Variable</th><th>Speed 60</th><th>Speed 120</th><th>Speed 180</th><th>Range</th></tr>
+<tr><td>000</td><td>Max angle for steering set to 1</td><td>0.75</td><td>0.3</td><td>0.2</td><td>0.05–3.14</td></tr>
+<tr><td>001</td><td>Turn angle to start braking</td><td>0.61</td><td>0.4167</td><td>0.05</td><td>0.05–1.57</td></tr>
+<tr><td>002</td><td>Multiplier to throttle when accelerating</td><td>0.35</td><td>1.0</td><td>1.0</td><td>0.05–1.0</td></tr>
+<tr><td>003</td><td>Multiplier to brake when slowing down</td><td>0.95</td><td>0.1</td><td>1.0</td><td>0.05–1.0</td></tr>
+<tr><td>004</td><td>Distance to look ahead on track for steering</td><td>55.0</td><td>40.0</td><td>35.0</td><td>5–100</td></tr>
+<tr><td>005</td><td>Lane compensation when turning</td><td>0.0</td><td>0.0</td><td>0.0</td><td>0–2</td></tr>
+<tr><td>006</td><td>Drift: Angle with linear velocity</td><td>1.57</td><td>0.6133</td><td>0.3</td><td>0.05–1.57</td></tr>
+<tr><td>007</td><td>Drift: Angle with car orientation</td><td>0.70</td><td>0.2333</td><td>0.1</td><td>0.05–0.70</td></tr>
+<tr><td>008</td><td>Drift: Look ahead</td><td>7.5</td><td>101.25</td><td>115.0</td><td>5–150</td></tr>
+<tr><td>009</td><td>Drift: Lane compensation when turning</td><td>0.15</td><td>0.3</td><td>0.0</td><td>0–2</td></tr>
+<tr><td>010</td><td>Hazard Easy: Look Ahead Multiplier</td><td>1.0</td><td>1.0</td><td>1.0</td><td>0.2–1.0</td></tr>
+<tr><td>011</td><td>Hazard Medium: Look Ahead Multiplier</td><td>1.0</td><td>1.0</td><td>1.0</td><td>0.2–1.0</td></tr>
+<tr><td>012</td><td>Hazard Hard: Look Ahead Multiplier</td><td>1.0</td><td>1.0</td><td>1.0</td><td>0.2–1.0</td></tr>
+<tr><td>013</td><td>Hazard Easy: Speed Multiplier</td><td>1.0</td><td>1.0</td><td>1.0</td><td>0.5–1.0</td></tr>
+<tr><td>014</td><td>Hazard Medium: Speed Multiplier</td><td>1.0</td><td>1.0</td><td>1.0</td><td>0.5–1.0</td></tr>
+<tr><td>015</td><td>Hazard Hard: Speed Multiplier</td><td>1.0</td><td>1.0</td><td>1.0</td><td>0.5–1.0</td></tr>
+<tr><td>016</td><td>Drift: Mult. to angular speed for rotating target dir</td><td>0.0</td><td>0.0</td><td>0.0</td><td>0–1</td></tr>
+<tr><td>017</td><td>Drift: Mult. to angle w/ lin. vel. for rotating target dir</td><td>0.1</td><td>0.1</td><td>0.1</td><td>0–8</td></tr>
+<tr><td>018</td><td>Drift: Angle for taking into account the drift look ahead</td><td>0.4</td><td>0.4</td><td>0.4</td><td>0.2–1.0</td></tr>
+<tr><td>019</td><td>Lap Time</td><td>0.0</td><td>0.0</td><td>0.0</td><td>0–10000</td></tr>
+</table>
+<p>
+A trailing per-file section records a baseline lap time used by the test harness, e.g.
+<code>/AI/LDC/Default → '000;Lap time' = 76.399773</code>. These 20 variables can be individually
+toggled at race-setup time; <code>AISkillTests.params</code> exposes
+<code>'Enable Variable 0'</code> … <code>'Enable Variable 15'</code> plus a
+<code>Friction Speed Loss Multiplier</code> and <code>IsLearning / IsRecording</code> flags that
+drive the evolution/recording mode.
+</p>
+
+<div class="tip">
+The "hazard" multipliers (010–015) let the LDC dial back look-ahead and target speed when an AI is
+approaching an active <a href="system-powerplay.html">Powerplay</a> hazard, graded by hazard
+difficulty (Easy/Medium/Hard). In the shipped Default and per-car tables they are all left at
+1.0 — i.e. AI does not slow for hazards by default — but the range (down to 0.5 speed / 0.2
+look-ahead) shows the intended behaviour.
+</div>
+
+<h3>LDC archetypes and overrides</h3>
+<p>
+<code>Deferred/SSAI/</code> holds one base table per class plus numbered variants. The base files
+are <code>AISupercar_LDC.params</code>, <code>AIMusclecar_LDC.params</code>,
+<code>AITruck_LDC.params</code> and <code>NemesisTruck_LDC.params</code>, each ~4.2 KB. The numbered
+variants (<code>AISupercar_01_LDC.params</code> … <code>_05</code>, etc.) and the per-track
+subfolders (<code>docks_A/</code>, <code>docks_B/</code>, <code>airport_test_03_A/</code>,
+<code>FE_car_unlock_A/</code>) are evolved/recorded refinements — typically with the same structure
+but non-round, machine-tuned numbers. Compare <code>Default</code> vs the evolved
+<code>AISupercar_LDC</code>, where look-ahead distances have drifted to oddly precise values:
+</p>
+<pre>Default     Speed 120  '004;Distance to look ahead…' = 40.0
+AISupercar  Speed 120  '004;Distance to look ahead…' = 36.617188
+Default     Speed 180  '008;Drift: Look ahead'       = 115.0
+AISupercar  Speed 180  '008;Drift: Look ahead'       = 121.22656
+AISupercar  '000;Lap time' = 82.850105   (vs Default 76.399773)</pre>
+<p>
+On top of the speed table, each individual car carries a tiny per-car drift tweak in
+<code>SSAI/PerCarInfo.params</code> — just two values, applied uniformly across the roster except
+<code>Musclecar_06</code>:
+</p>
+<table>
+<tr><th>Car group</th><th>Curvature ahead factor</th><th>Sideways factor</th><th>Range</th></tr>
+<tr><td>All cars (default)</td><td>1.0</td><td>0.5</td><td>0.8–1.2 / 0.0–2.0</td></tr>
+<tr><td><code>Musclecar_06</code></td><td>1.05</td><td>0.3</td><td>0.8–1.2 / 0.0–2.0</td></tr>
+</table>
+
+<h3>Steering &amp; throttle controllers (engine side)</h3>
+<p>
+The LDC numbers feed two lower-level controllers exposed in the QA debug menu (strings pulled from
+the EBOOT). Steering is a <b>PI controller</b> and throttle/brake is driven by speed offsets:
+</p>
+<table>
+<tr><th>Debug-menu path</th><th>Role</th></tr>
+<tr><td><code>SSAI/PIController/Steering KP</code></td><td>Proportional steering gain</td></tr>
+<tr><td><code>SSAI/PIController/Steering KI</code></td><td>Integral steering gain</td></tr>
+<tr><td><code>SSAI/PIController/Speed offset for full throttle</code></td><td>Throttle threshold</td></tr>
+<tr><td><code>SSAI/PIController/Speed offset to start braking</code></td><td>Brake onset</td></tr>
+<tr><td><code>SSAI/PIController/Speed offset for full braking</code></td><td>Full-brake threshold</td></tr>
+<tr><td><code>SSAI/PIController/Max steering velocity…</code></td><td>"how much can you turn the steering wheel per sec"</td></tr>
+<tr><td><code>SSAI/DrivingControlProcessor/Min speed to drift</code></td><td>Drift entry gate</td></tr>
+<tr><td><code>SSAI/DrivingControlProcessor/Steering Damping</code></td><td>Steering smoothing</td></tr>
+<tr><td><code>SSAI/DrivingControlProcessor/Use Inputs delays based on skill</code></td><td>Skill-scaled reaction lag</td></tr>
+<tr><td><code>SSAI/Driving/Use Forza-like Follow Racing Line Action</code></td><td>Alternate racing-line follower</td></tr>
+<tr><td><code>SSAI/Driving/Obstacle avoidance/…</code></td><td>Lane / radius / look-ahead avoidance set</td></tr>
+</table>
+<p>
+There is also a steering-constant evolution sub-system
+(<code>SSAI/PIController/Evolution/Start Evolving Steering Constants</code>, with
+<code>Initial Steering KP/KI Range Min/Max</code>) — the same auto-tuning philosophy as the LDC
+harness below, applied to the PI gains.
+</p>
+
+<h2 id="powerbar">AI power bar gain rules</h2>
+<p>
+AI opponents charge a <a href="system-powerplay.html">Powerplay power bar</a> exactly like the
+player, but the <i>rate</i> at which they earn it from each activity is set centrally in
+<code>GameLogic/GameplayParameters.params</code> under <code>AI Powerbar</code>:
+</p>
+<table>
+<tr><th>Activity</th><th>Rule</th><th>Value</th></tr>
+<tr><td>Drafting</td><td>Min distance to start gaining</td><td>5.0 m</td></tr>
+<tr><td>Drafting</td><td>Max angle difference to player</td><td>5.0°</td></tr>
+<tr><td>Drafting</td><td>Units gained / sec</td><td>4.0</td></tr>
+<tr><td>Drifting</td><td>Units gained / sec</td><td>14.0</td></tr>
+<tr><td>Drive Fast</td><td>% of max speed to start gaining</td><td>0.6</td></tr>
+<tr><td>Drive Fast</td><td>Units gained / sec</td><td>1.0</td></tr>
+<tr><td>Jump</td><td>Min air time to start gaining</td><td>0.5 s</td></tr>
+<tr><td>Jump</td><td>Units gained / sec</td><td>10.0</td></tr>
+</table>
+<p>
+Drifting is by far the richest source (14 units/s) and fast cruising the weakest (1 unit/s),
+which is why AI cars favour aggressive lines into corners. These base rates are then scaled by a
+per-difficulty <b>AI powerbar gain multiplier</b> (start-of-race, end-of-race, and per-skill —
+see <a href="system-difficulty.html">Difficulty &amp; Race Director</a>). The same file also sets
+the AI skill-update cadence:
+</p>
+<pre>/GameplayParameters/AI Skills:
+	'000;Skill update delay'           = 0.0   (0.0, 100.0);
+	'001;Skill update buffer distance' = 200.0 (0.0, 1000.0);</pre>
+
+<h2>AIPilotsDatabase — the opponent roster</h2>
+<p>
+<code>GameLogic/AIPilotsDatabase/AIPilotsDatabase.params</code> defines the pool of opponent
+"pilots" the game draws from. It contains <b>98 entries</b> (<code>AI_Driver_No_01</code> …
+<code>AI_Driver_No_98</code>), each with a <code>VehicleDesc</code> (vehicle name, livery RGBA,
+racing number, and 15 achievement-level fields) and a top-level record giving its
+<code>Name</code> and <code>DriverSkill</code>.
+</p>
+<pre>/AIPilotsDatabase/AI_Driver_No_01/VehicleDesc:
+	'000;Vehicle Name' = Unique_04;
+	'005;Number' = 1 (0, 99);
+/AIPilotsDatabase/AI_Driver_No_01:
+	DriverSkill = 1.0 (0.0, 1.0);
+	Name = WEIGAND;</pre>
+<p>
+There are exactly <b>seven driver surnames</b>, each appearing 14 times across the 98 slots:
+</p>
+<table>
+<tr><th>Driver names (×14 each)</th></tr>
+<tr><td><code>WEIGAND</code> · <code>DECKMAN</code> · <code>BAUER</code> · <code>BROKER</code> · <code>YARDLEY</code> · <code>WOLTZ</code> · <code>KULINSKI</code></td></tr>
+</table>
+<p>
+The roster is laid out in skill bands. <code>DriverSkill</code> takes five discrete values, and
+the database walks from the top band downward as the driver number increases:
+</p>
+<table>
+<tr><th>DriverSkill</th><th>Entries</th><th>Notes</th></tr>
+<tr><td>1.0</td><td>20</td><td>Top tier (drivers 01–20)</td></tr>
+<tr><td>0.8</td><td>20</td><td>Drivers 21–40</td></tr>
+<tr><td>0.6</td><td>20</td><td>Mid pack</td></tr>
+<tr><td>0.4</td><td>20</td><td>Lower pack</td></tr>
+<tr><td>0.2</td><td>18</td><td>Bottom tier</td></tr>
+</table>
+<p>
+The vehicle column is spread across the full <a href="system-vehicles.html">roster</a> — the
+<code>Unique_01…04</code> "hero" cars and <code>Musclecar_09</code>/<code>Supercar_08</code> sit in
+the 1.0 band, while trucks (<code>Truck_01</code>) and the muscle/super grinders cluster at lower
+skills. Liveries are mostly black (<code>0,0,0</code>) in this devkit data; the
+<code>Number</code> field simply equals the driver index.
+</p>
+
+<div class="note">
+<b>Skill vs. LDC.</b> <code>DriverSkill</code> is a 0–1 scalar that blends between two extremes —
+the LDC handling table at skill 1, and a degraded version at skill 0 governed by the
+<code>Skill == 0</code> parameters in the
+<a href="system-difficulty.html">difficulty files</a> (extra speed multiplier, reduced look-ahead,
+wider racing-line offset). The pilot's <code>DriverSkill</code> sets where that car sits on the
+blend before the per-race difficulty/race-director logic pushes it around.
+</div>
+
+<h2 id="evolution">EvolutionConfig — the automated fitness-test harness</h2>
+<p>
+<code>SSAI/EvolutionConfig.params</code> is the configuration for an <b>offline AI auto-tuning
+harness</b>. Rather than hand-balancing the LDC tables, designers could let the build sweep a
+driving variable across a range, run the AI through a battery of point-to-point "tests", and keep
+whatever value produced the best result. The EBOOT confirms the loop:
+<code>SSAI/Evolution/Enabled</code>, <code>SSAI/Evolution/Debug Render</code>, and results written
+to <code>SSAI/EvolutionResults_%s.txt</code>.
+</p>
+<p>
+The config is organised as <code>EvolutionConfig/&lt;Category&gt;/&lt;Variable&gt;/Test0…Test7</code>.
+In the shipped data the category is <code>Drift</code> and the two swept variables match the
+<a href="#evolution">PerCarInfo</a> drift tweaks: <b>Curvature ahead factor</b> and
+<b>Sideways factor</b>. Each variable defines up to 8 test waypoints (Test0–Test7), of which the
+first four are <code>Valid = true</code> and the rest disabled:
+</p>
+<pre>/SSAI/EvolutionConfig/Drift/Curvature ahead factor/Test0:
+	'000;Valid' = true;
+	'001;Initial position X' = -550.0;
+	'002;Initial position Y' = -0.6;
+	'003;Initial position Z' = -600.0;
+	'007;Respot speed proportion (to the max speed of the car)' = 0.75;
+	'008;Final zone center X' = -409.20001;
+	'009;Final zone center Y' = 0.6;
+	'010;Final zone center Z' = -501.39999;
+	'011;Final zone radius' = 15.0 (0.0, 20.0);
+	'012;Maximum time allowed for test (in secs)' = 15.0 (0.0, 30.0);</pre>
+<p>
+Each test <a href="system-difficulty.html#respot">respots</a> the AI car at an
+<i>Initial position</i> at a fraction of its top speed (the <code>Respot speed proportion</code>,
+0.75–0.85 in shipped tests), then times how long it takes to reach a spherical <i>Final zone</i>
+(centre + radius) before the per-test timeout (10–20 s). A car that lands inside the zone in time
+"passes"; the harness scores the swept value by aggregate pass/time across all valid tests. The
+two control fields per variable are:
+</p>
+<table>
+<tr><th>Field</th><th>Value</th><th>Meaning</th></tr>
+<tr><td>Allow drifting when testing this variable</td><td>true</td><td>Permit drift during the run</td></tr>
+<tr><td>Number of variables to try in the range for this variable</td><td>11 (2–20)</td><td>How many samples across the range</td></tr>
+</table>
+<p>
+So for each of the two drift factors the harness samples 11 candidate values, runs the four valid
+point-to-point tests for each, and writes a ranked <code>EvolutionResults_*.txt</code>. This is the
+same family of automated test rigs as <a href="data-catnip.html">Megabowles</a>
+(<code>cMegabowlesController</code>) for Powerplays — Black Rock leaned heavily on data-driven QA
+harnesses.
+</p>
+
+<div class="tip">
+Where Evolution tunes <i>handling</i>, the related <code>AISkillTests</code> game mode
+(<code>GameLogic/GameModes/AISkillTests.params</code>) plays a full race with the LDC variables
+selectively enabled and <code>IsRecording</code>/<code>IsLearning</code> flags set, logging to
+<code>SSAI/AISkillTests_%d_…%d.log</code> and <code>SSAI/LDC_%d_…%d.log</code>. Together they form
+the LDC authoring pipeline that produced the evolved per-car tables.
+</div>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="system-difficulty.html">Difficulty &amp; Race Director</a> — difficulty modifiers, catch-up, respotting and teleporting</li>
+  <li><a href="system-powerplay.html">Powerplay System</a> — the power bar and hazards the AI charges and triggers</li>
+  <li><a href="system-vehicles.html">Vehicles</a> — the car classes and roster the pilots drive</li>
+  <li><a href="data-params.html">.params Tuning System</a> — the plaintext key/value format used by every file here</li>
+  <li><a href="format-phys.html">Vehicle Physics (.phys)</a> — the binary handling the AI actually drives</li>
+  <li><a href="system-gamemodes.html">Game Modes</a> — where SSAI difficulty and race-setup files are selected</li>
+  <li><a href="data-catnip.html">Catnip Entity System</a> — Megabowles and the wider data-driven test culture</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

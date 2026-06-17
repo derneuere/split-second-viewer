@@ -53,6 +53,7 @@ type Vec3 = [number, number, number];
 type TrackSegment = { start: Vec3; end: Vec3 };
 type TrackModel = { recordCount: number; records: TrackSegment[]; sizeLawOk?: boolean };
 type LinkOriginsModel = { linkCount: number; origins: number[] };
+type SplitLengthModel = { sectionCount: number; splitLengths: number[] };
 type SidewaysRecord = { count: number; linkIndices: number[] };
 type SidewaysModel = { linkCount: number; links: SidewaysRecord[] };
 type CheckpointsModel = {
@@ -87,6 +88,14 @@ function isLinkOrigins(m: unknown): m is LinkOriginsModel {
 		typeof m === 'object' &&
 		Array.isArray((m as LinkOriginsModel).origins) &&
 		(m as LinkOriginsModel).origins.every((n) => typeof n === 'number')
+	);
+}
+function isSplitLength(m: unknown): m is SplitLengthModel {
+	return (
+		!!m &&
+		typeof m === 'object' &&
+		Array.isArray((m as SplitLengthModel).splitLengths) &&
+		(m as SplitLengthModel).splitLengths.every((n) => typeof n === 'number')
 	);
 }
 function isSideways(m: unknown): m is SidewaysModel {
@@ -374,6 +383,23 @@ function buildLinkOrigins(m: LinkOriginsModel): Renderable {
 	};
 }
 
+function buildSplitLength(m: SplitLengthModel): Renderable {
+	// splitlength carries per-section length multipliers (~1.0), no positions.
+	// Show the per-section weight profile as the scalar series; nothing in 3D.
+	return {
+		strokes: [],
+		points: [],
+		bounds: null,
+		series:
+			m.splitLengths.length > 0
+				? { label: 'Split-length weight by section index', values: m.splitLengths }
+				: null,
+		emptyNote:
+			`.splitlength carries ${m.sectionCount} per-section split weights ` +
+			'(no world-space positions) — see the weight profile below.',
+	};
+}
+
 /** Best-effort: scan a verbatim body for plausible float32 XYZ triples (BE).
  *  Used only for the PARTIAL .checkpoints body — purely diagnostic. */
 function scanFloatTriples(body: Uint8Array): Vec3[] {
@@ -424,6 +450,9 @@ export function WorldViewer({ model, handler, raw }: WorldViewerProps) {
 			}
 			if (key === 'linkorigins' || isLinkOrigins(model)) {
 				if (isLinkOrigins(model)) return buildLinkOrigins(model);
+			}
+			if (key === 'splitlength' || isSplitLength(model)) {
+				if (isSplitLength(model)) return buildSplitLength(model);
 			}
 			if (key === 'checkpoints' || isCheckpoints(model)) {
 				if (isCheckpoints(model)) return buildCheckpoints(model);

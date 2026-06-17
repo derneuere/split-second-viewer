@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glossary &amp; Codenames — Split/Second RE Wiki</title>
+<meta name="description" content="Definitions of the internal codenames and acronyms used across the Split/Second engine: Crayon2, Catnip, Megabowles, JobStream, SSAI, LDC, Powerplay, G-Buffer, SPULight, Respot, ATVNet, DCB and more — each tied to real strings from the game data and EBOOT.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Glossary &amp; Codenames" data-category="Overview">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Glossary &amp; Codenames</h1>
+<p>The Black Rock engine is full of internal codenames and acronyms. This page defines them, each anchored to a <b>real string</b> from the game data or <code>EBOOT.BIN</code> so you can trust the definition rather than guess. Terms are grouped by area; cross-links point to the page that documents each one in depth. For the big picture start at <a href="engine-overview.html">Engine Architecture</a>.</p>
+
+<div class="infobox"><div class="ib-title">At a glance</div><table>
+<tr><th>Renderer</th><td>Crayon2</td></tr>
+<tr><th>Jobs</th><td>JobStream / SPURS</td></tr>
+<tr><th>Gameplay data</th><td>Catnip</td></tr>
+<tr><th>Hook system</th><td>Powerplay</td></tr>
+<tr><th>AI</th><td>SSAI / LDC / DCB</td></tr>
+<tr><th>Networking</th><td>ATVNet (Quazal)</td></tr>
+<tr><th>QA harnesses</th><td>Megabowles, Evolution, TrackTivity</td></tr>
+<tr><th>Status</th><td><span class="badge ok">Confirmed</span> unless noted</td></tr>
+</table></div>
+
+<h2>Engine &amp; rendering</h2>
+
+<h3>Crayon2</h3>
+<p>Black Rock's render-support library and the renderer's codename. Source path <code>libs/Render/Support/Crayon2</code>; runtime init symbol <code>Crayon2_Init</code>; shaders are runtime-patched in <code>Crayon2/Shader/PS3/ShaderPatching.cpp</code>. Drives the deferred <a href="#gbuffer">G-Buffer</a> pipeline. The "2" implies a successor to an earlier Crayon used on the studio's prior titles. <span class="badge ok">Confirmed</span> — see <a href="engine-rendering.html">Rendering Pipeline</a>.</p>
+
+<h3 id="gbuffer">G-Buffer</h3>
+<p>The geometry buffer of the deferred renderer: a set of multiple render targets written in the opaque pass and consumed by lighting. This build has <b>five</b> channels, each with its own debug toggle under <code>Lighting/Debug/GBuffer/</code>: <b>albedo</b>, <b>unlit</b> (emissive/pre-lit), <b>normal</b>, <b>motion blur</b> (velocity), <b>specular</b>. Stage labels include <code>GBuffer End MRT</code>, <code>GBuffer SSAO</code>, <code>GBuffer Blur</code>, <code>GBuffer ZCull Restore</code>. <span class="badge ok">Confirmed</span>.</p>
+
+<h3>SPULight</h3>
+<p>Deferred lighting executed as SPU jobs rather than on the RSX. Job labels: <code>SPULight Build Jobs</code>, <code>SPULight Copy Depth</code>, <code>SPULight Stall Kick Jobs</code>, <code>SPULight Stall Global Light</code>, <code>SPULight Window of opportunity</code>. Tunable from the debug menu under <code>Lighting/LocalLights/SPULight/</code> (Enabled, Scale Bounding Sphere, Debug Render, Exclusive). The lighting result texture is <code>deferred_lighting_SPULightTex</code>. <span class="badge ok">Confirmed</span> — see <a href="engine-rendering.html">Rendering Pipeline</a>.</p>
+
+<h3>ZCull</h3>
+<p>The RSX hardware depth-cull feature, used by Crayon2 to reject occluded pixels early. Appears as the frame stage <code>GBuffer ZCull Restore</code>. <span class="badge ok">Confirmed</span>.</p>
+
+<h3>JobStream</h3>
+<p>Black Rock's job/task system, layered over Sony's <b>SPURS</b> SPU runtime. Source path <code>libs/System/JobStream/Spurs</code> (<code>SpursJobChain</code>, <code>SpursJobGuard</code>, <code>SpursJobEventHandler</code>, <code>cJobThread</code>). The EBOOT contains the literal chain-init call <code>cellSpursJobChainAttributeInitialize(…, 256, 1)</code>. <span class="badge ok">Confirmed</span> — see <a href="engine-jobstream.html">Threading &amp; JobStream</a>.</p>
+
+<h3>SPURS</h3>
+<p>Sony's <i>SPU Runtime System</i> — the PS3 OS facility for scheduling work across the Cell's SPUs. Not Black Rock's; it is the substrate JobStream sits on. <span class="badge ok">Confirmed</span>.</p>
+
+<h3>Edge</h3>
+<p>Sony's <b>Edge</b> SPU library suite (<code>contrib/Sony/Edge</code>). Used here mainly as <b>EdgeGeom</b> for geometry decompression/processing on SPU, wrapped by the engine's <code>libs/Render/Model/EdgeModel</code> (e.g. <code>EdgeCustomTypes_spu</code>). <span class="badge ok">Confirmed</span> — see <a href="engine-middleware.html">Middleware Stack</a>.</p>
+
+<h2>Gameplay data &amp; FX</h2>
+
+<h3>Catnip</h3>
+<p>The data-driven entity / timeline / scripting system that choreographs gameplay and FX. EBOOT paths reveal its breadth: <code>Catnip/Trigger/</code>, <code>Catnip/PowerplayTimelines/</code>, <code>Catnip/Powerplay/Timeline/</code>, <code>Catnip/Physics/InteractiveObjects/</code>, <code>Catnip/Audio/Timeline/AudioEvent/</code>, <code>Catnip/Audio/{Trigger,Portal,SwooshBox}/</code>, <code>Catnip/LensFlare/</code>, <code>Catnip/Lighting/</code>. It is the glue between triggers, interactive objects, audio events, lights and the <a href="#powerplay">Powerplay</a> sequences. <span class="badge ok">Confirmed</span> — see <a href="data-catnip.html">Catnip Entity System</a>.</p>
+
+<h3 id="powerplay">Powerplay</h3>
+<p>Split/Second's signature mechanic: spending a charged power bar to trigger track-altering events ("powerplays") against rivals. One of the most heavily referenced gameplay systems in the binary (<code>Powerplay</code> ≈ 226 string hits). Implemented by <code>cPowerplayManager</code>, <code>cPowerplayController</code>, <code>cPowerplayMaterialManager</code> and <code>PowerplaySequenceDirector</code>, choreographed by Catnip timelines and a dynamic "danger zone" trigger system (<code>GameplayParameters/Powerplays/Dynamic Trigger</code>, <code>Extra extent to add on the danger zones</code>). <span class="badge ok">Confirmed</span> — see <a href="system-powerplay.html">Powerplay System</a>.</p>
+
+<h3>Megabowles</h3>
+<p>An automated <a href="#powerplay">Powerplay</a>-scenario <b>test/profiler harness</b> (class <code>cMegabowlesController</code>; <code>Megabowles</code> ≈14 string hits). Driven by data under <code>MegabowlesScenarios/</code> with filters such as <code>Filter/powerplay_name</code>, <code>Filter/powerplay_name_at_start</code>, <code>Filter/sector_name</code>, plus <code>RenderScenarios</code> and <code>repeat_scenarios</code>. Used in QA to mass-fire powerplays and catch crashes/regressions. The name is studio in-joke flavour (cf. cricketer Bob Bowles). <span class="badge ok">Confirmed</span> — exposed because <code>qa_menus = true</code> (see <a href="build-layout.html">Build &amp; File Layout</a>).</p>
+
+<h2>AI</h2>
+
+<h3>SSAI</h3>
+<p>The game's AI system — "Split/Second AI". Class/data prefix <code>SSAI</code> (≈161 hits); data root <code>Deferred/SSAI/</code>. Covers driving behaviour (via <a href="#ldc">LDC</a> tables), the AI power bar, per-car info (<code>SSAI/PerCarInfo.params</code>), race scripting (<code>SSAI/RaceScript/</code>) and the <a href="#evolution">Evolution</a> test harness. <span class="badge ok">Confirmed</span> — see <a href="system-ai.html">AI (SSAI)</a>.</p>
+
+<h3 id="ldc">LDC</h3>
+<p>The per-speed AI driving tables. Stored as <code>Deferred/SSAI/AI{Class}_{NN}_LDC.params</code> and a <code>Default_LDC.params</code>. Each file defines three speed bands — <b>60</b>, <b>120</b> and <b>180</b> — with the same 20 tuning fields per band (steering max angle, braking-onset angle, throttle/brake multipliers, track look-ahead distance, lane compensation, drift angles/look-ahead, and Easy/Medium/Hard hazard look-ahead &amp; speed multipliers). The speed bands come from <code>GameplayParameters/LDC</code>: <code>Initial Speed = 60</code>, <code>Final Speed = 180</code>, <code>Speed Intervals = 60</code>. Example real value: <code>'004;Distance to look ahead on the track for steering' = 40.0 (5.0, 100.0);</code> at Speed 120. The expansion of "LDC" is not spelled out in the data; the contents are a per-speed driving-control table. <span class="badge partial">Partial</span> (contents Confirmed, acronym expansion unconfirmed) — see <a href="system-ai.html">AI (SSAI)</a>.</p>
+
+<h3 id="evolution">Evolution (EvolutionConfig)</h3>
+<p>An automated AI <b>fitness-test</b> harness. <code>Deferred/SSAI/EvolutionConfig.params</code> defines per-variable test sets (e.g. <code>Drift/Curvature ahead factor</code>, <code>Drift/Sideways factor</code>), each with up to 8 <code>TestN</code> cases specifying a start position, a target "final zone" (centre + radius) and a time limit, plus <code>Number of variables to try in the range</code>. The AI is respawned at the start and scored on reaching the zone — a search over driving parameters. <span class="badge ok">Confirmed</span>.</p>
+
+<h3>Power bar (AI Powerbar)</h3>
+<p>The charge meter that gates powerplays, for AI as well as the player. <code>GameplayParameters/AI Powerbar/</code> defines exactly how AI fills it: <b>Drafting</b> (min distance 5.0, max angle 5°, <code>4.0</code> units/sec), <b>Drifting</b> (<code>14.0</code> units/sec), <b>Drive Fast</b> (above 60% of max speed, <code>1.0</code>/sec), <b>Jump</b> (after 0.5&nbsp;s airborne, <code>10.0</code>/sec). Related debug: <code>Powerbar Layer</code>, <code>Enable Powerbar Component</code>, <code>Throw Only Death Barrels With Full Powerbar</code>, <code>AIStat_CurrentPowerbar</code>. <span class="badge ok">Confirmed</span>.</p>
+
+<h3>DCB</h3>
+<p>The AI difficulty / rubber-band balance factor. Built from a player term plus modifiers: <code>Player DCB</code>, <code>Event DCB Modifier</code>, <code>Track DCB Modifier</code>, <code>Vehicle DCB Modifier</code> (each car in <code>VehicleDatabase.xml</code> carries a <code>DCBModifier</code> attribute, e.g. Musclecar_07 = <code>06</code>). Tuned under <code>RaceSetup/DCB/AI Skill/</code> (Initial/Final Range Min/Max Limit) and surfaced on a <code>Season Mode DCB HUD</code>. Functions as the rubber-band/catch-up skill scalar. The acronym's exact expansion is not stated in the data (it behaves as a "dynamic competitive balance" value). <span class="badge partial">Partial</span> (mechanism Confirmed, expansion unconfirmed) — see <a href="system-difficulty.html">Difficulty &amp; Race Director</a>.</p>
+
+<h3>Catchup</h3>
+<p>The torque-based rubber-banding applied to vehicles, separate from <a href="#ldc">LDC</a> driving. Configured in <code>GameLogic/Catchup.params</code> with per-class blocks like <code>Prototype/Catchup/{Distance from back for full penalty, Max torque loss, Max torque gain, Top speed gain}</code>. <span class="badge ok">Confirmed</span> — see <a href="system-difficulty.html">Difficulty &amp; Race Director</a>.</p>
+
+<h3 id="respot">Respot</h3>
+<p>The system that re-places ("respots") a crashed or off-route car back onto the track — central to keeping Split/Second's destructive races flowing. Class <code>cRespotController</code> (debug log <code>InGame::cRespotController::DoUpdate - player %i respot</code>); <code>Respot</code> ≈122 string hits. Heavily parameterised: <code>Respot/{RespotPos X/Y/Z, RespotLook X/Y/Z, RespotSpeed, SpreadDistanceWidth/Length, RespotNumPlayers, Force Respot}</code> and <code>GameplayParameters/Respotting/</code> (max distance on correct route 500.0, max delay 3.0&nbsp;s). Closely related is <b>Teleporting</b> (<code>GameplayParameters/Teleporting/</code>) for closed/scripted-route recovery. <span class="badge ok">Confirmed</span> — see <a href="system-difficulty.html">Difficulty &amp; Race Director</a>.</p>
+
+<h2>Networking</h2>
+
+<h3>ATVNet</h3>
+<p>Black Rock's in-house networking wrapper (the name carried over from the studio's ATV title <i>Pure</i>). Source path <code>games/SplitSecond/Shared/ATVNet/NetZ</code>; ≈137 hits. It wraps <a href="#quazal">Quazal</a> NetZ and implements replication via <b>Duplicated Objects</b> — the <code>cATVNetDO*</code> class family: <code>cATVNetDOGameModeUpdater</code>, <code>cATVNetDOGameSetup</code>, <code>cATVNetDOPeerGameState</code>, <code>cATVNetDOPlayerSetup</code>, <code>cATVNetDOPlayerUpdater</code>, <code>cATVNetDOPhysicsObjectUpdater</code>, <code>cATVNetDORoomState</code>. <span class="badge ok">Confirmed</span> — see <a href="engine-networking.html">Networking &amp; Online</a>.</p>
+
+<h3 id="quazal">Quazal (NetZ / Rendez-Vous)</h3>
+<p>The third-party networking middleware (<code>contrib/Quazal/NetZ</code>; <code>Quazal</code> ≈22 string hits). <b>NetZ</b> provides the Duplicated-Object replication model; <b>Rendez-Vous (RV)</b> provides matchmaking/lobby services. Voice chat rides Quazal's AVStreams with <b>LPC10</b> and <b>OpenLPC</b> codecs (<code>contrib/Quazal/NetZ/lib/Extensions/AVStreams/Codecs/{LPC10,OpenLPC}</code>, <code>VoiceChannel</code>). <span class="badge ok">Confirmed</span>.</p>
+
+<h2>Audio</h2>
+
+<h3>LLAudio2</h3>
+<p>Black Rock's audio wrapper around <b>FMOD Ex</b> 4.28 (<code>libs/Audio/Wrappers/LLAudio2/…/FMOD</code>; <code>LLAudio2</code> ≈32 string hits). The FMOD library itself is the <code>4.28</code> branch, built in a separate <code>ss_audio_dev</code> workspace (<code>contrib/FmodEx/42800/…</code>). Subsystems include <code>ReverbManager</code> / <code>DirectionalReverbManager</code>, <code>EventManager</code>, <code>SoundBankManager</code>, <code>GroupManager</code>, <code>AudioLoader</code> and a PS3 init path (<code>Init_PS3</code>). <span class="badge ok">Confirmed</span> — see <a href="engine-audio.html">Audio Engine</a>.</p>
+
+<h3>DynamicMixer</h3>
+<p>The runtime audio mixing controller (<code>libs/Audio/Controllers/DynamicMixer</code>; ≈59 hits). Uses preset/parameter/group stacks (<code>PresetStack</code>, <code>ParameterStack</code>, <code>GroupPreset</code>, <code>GroupModifier</code>, <code>GroupPresetSlot</code>) to blend mixer states by game context. <span class="badge ok">Confirmed</span> — see <a href="engine-audio.html">Audio Engine</a>.</p>
+
+<h2>QA, telemetry &amp; build</h2>
+
+<h3>TrackTivity (TTY)</h3>
+<p>The QA telemetry recorder. Enabled by <code>enable_TrackTivity = true</code> in <a href="build-layout.html"><code>SplitSecond.params</code></a>; writes <b><code>.track</code></b> capture files (this build left 111 in the data root because <code>force_save_TTY_to_Devkit_HDD_root = true</code>). "TTY" is the related developer console/log stream (<code>save_TTY_logs_to_file</code>, <code>tty_streams_force_on</code>). <span class="badge ok">Confirmed</span> — see <a href="format-track.html">TrackTivity (.track)</a>.</p>
+
+<h3>qa_menus</h3>
+<p>The master switch for in-game debug/QA menus (<code>qa_menus = true</code>). With it on, the engine exposes the deep debug trees referenced throughout this wiki (e.g. <code>Lighting/Debug/GBuffer/</code>, <code>Respot/</code>, <code>RaceSetup/DCB/</code>, <code>DebugPages/AI/</code>, <code>MegabowlesScenarios/</code>). <span class="badge ok">Confirmed</span>.</p>
+
+<h2>File formats &amp; data</h2>
+
+<h3>.params</h3>
+<p>The plaintext tuning format used pervasively. A <code>!directory:</code> header names the logical root, <code>/path/section:</code> lines open groups, and value lines read <code>'NNN;Human description' = value (min, max);</code> where <code>(min, max)</code> is the editor's slider range. Booleans omit the range. <span class="badge ok">Confirmed</span> — see <a href="data-params.html">.params Tuning System</a>.</p>
+
+<h3>.ark</h3>
+<p>The engine's packed asset-archive format (referenced even though this build is loose). Named set: <code>Resident.ark</code>, <code>Frontend.ark</code>, <code>InGame1/2/3.ark</code>, <code>FrontendPowerplays.ark</code>, per-level <code>Environments/Levels/%s.ark</code> and the <code>%s.Static.ark</code> / <code>%s.Stream.ark</code> split. <span class="badge ok">Confirmed</span> — see <a href="format-ark.html">Archives (.ark)</a>.</p>
+
+<h3>Catnip file formats</h3>
+<p>The on-disk forms of Catnip data: <a href="format-entities.html">.entities</a>, <a href="format-powerplays.html">.powerplays</a>, <a href="format-triggers.html">.triggers</a>, <a href="format-timeline.html">.timelineInfo</a>, <a href="format-logicinfo.html">.logicinfo</a>, <a href="format-highlighttags.html">.highlighttags</a>.</p>
+
+<h3>EBOOT.BIN / SELF / SFO</h3>
+<p><b>EBOOT.BIN</b> is the PS3 executable, an <b>SCE SELF</b> (Signed ELF) — its header magic is <code>53 43 45 00</code> ("SCE\0"). <b>PARAM.SFO</b> is the title metadata table (magic <code>\0PSF</code>) holding <code>TITLE_ID</code>, <code>CATEGORY</code>, etc. <span class="badge ok">Confirmed</span> — see <a href="build-layout.html">Build &amp; File Layout</a>.</p>
+
+<h2>Studio &amp; tooling lineage</h2>
+<p>The studio is <b>Black Rock Studio</b>, published by Disney Interactive. The source tree in the EBOOT roots at <code>c:/Projects/proj_1/ws_0/Code/</code>, split into <code>libs/</code> (engine), <code>games/SplitSecond/</code> (title) and <code>contrib/</code> (middleware). The <b>ATVNet</b> codename (<code>games/SplitSecond/Shared/ATVNet/</code>) carries over from the studio's earlier ATV racer <i>Pure</i>. <b>oscpack</b> (<code>contrib/oscpack/oscpack/{osc,ip/ps3}</code>) is an OpenSound Control implementation over UDP, almost certainly used by the audio/tools pipeline rather than gameplay. (Black Rock was historically the former Climax Brighton / "Climax Racing" studio — a real-world fact, not visible in this build's data.) <span class="badge ok">Confirmed</span> (paths) / <span class="badge theory">Theory</span> (oscpack purpose).</p>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="engine-overview.html">Engine Architecture</a> — how these pieces fit together</li>
+<li><a href="build-layout.html">Build &amp; File Layout</a> — the NPXX00575 build and its files</li>
+<li><a href="system-ai.html">AI (SSAI)</a> · <a href="system-powerplay.html">Powerplay System</a> · <a href="system-difficulty.html">Difficulty &amp; Race Director</a></li>
+<li><a href="engine-rendering.html">Rendering Pipeline</a> · <a href="engine-networking.html">Networking &amp; Online</a> · <a href="engine-audio.html">Audio Engine</a></li>
+<li><a href="data-params.html">.params Tuning System</a> · <a href="data-catnip.html">Catnip Entity System</a></li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

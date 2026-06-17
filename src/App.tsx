@@ -6,6 +6,7 @@ import { WorkspaceProvider } from "@/context/WorkspaceContext";
 import { AppHeader } from "@/components/layout/AppHeader";
 import Home from "@/pages/Home";
 import WorkspaceEditor from "@/pages/WorkspaceEditor";
+import Docs from "@/pages/Docs";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -22,6 +23,7 @@ const App = () => (
 							<Routes>
 								<Route path="/" element={<Home />} />
 								<Route path="/workspace" element={<WorkspaceEditor />} />
+								<Route path="/docs" element={<Docs />} />
 								<Route path="*" element={<NotFound />} />
 							</Routes>
 						</main>

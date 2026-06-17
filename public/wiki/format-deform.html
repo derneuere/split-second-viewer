@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deformation (.deform) — Split/Second RE Wiki</title>
+<meta name="description" content="Black Rock's custom per-vehicle damage/deformation model: a DFM2 mesh of deformable vertices, mass-spring edges and named rigid part-groups that drives GPU vertex deformation when cars crash.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Deformation (.deform)" data-category="Formats · Physics (Havok)">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Deformation (.deform)</h1>
+<p>The <code>.deform</code> file is Split/Second's <strong>vehicle damage / deformation model</strong>:
+a per-car cage of deformable vertices linked by mass-spring "edges" and partitioned into named rigid
+<em>part-groups</em>. When a car crashes, the physics solver pushes these vertices and the result is
+streamed to the render mesh through the <code>DeformVertexPosition</code> vertex-shader attribute. Unlike
+its siblings in this section, it is <strong>not</strong> a <a href="format-havok.html">Havok packfile</a> —
+it is a small, custom Black Rock binary with its own magic, and it has <em>no</em> XML twin.</p>
+
+<div class="infobox"><div class="ib-title">.deform</div><table>
+  <tr><th>Category</th><td>Vehicle damage / deformation</td></tr>
+  <tr><th>Container</th><td>Custom Black Rock binary</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)*</td></tr>
+  <tr><th>Magic</th><td><code>44 46 4D 02</code> (<code>DFM</code> v2)</td></tr>
+  <tr><th>XML twin</th><td>none</td></tr>
+  <tr><th>Location</th><td><code>Vehicles/Bodies/&lt;car&gt;/</code>, <code>Vehicles/Chassis/&lt;c&gt;/</code></td></tr>
+  <tr><th>Count</th><td>46 files (39 bodies + 7 chassis)</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<h2>Identity &amp; loading</h2>
+<p>Every file begins with the four bytes <code>44 46 4D 02</code> — ASCII <code>"DFM"</code> followed by a
+version byte <code>0x02</code> (so the 32-bit magic is <code>0x44464D02</code>). The EBOOT loads it via the
+template <code>%s/%s/%s.deform</code> and validates the signature with a hard check:</p>
+<pre class="hex">Can't find deformation file %s
+Bad magic in deformation file %s (expected %08x, got %08x)</pre>
+<p>The same code region references <code>Deformation</code>, <code>MaxVertDeformations</code>,
+<code>PartGroups</code>, <code>Sections</code> and the four <code>DeformerPlane*</code> tuning values —
+confirming the data is a vertex-deformation cage organised into part-groups and sections, and tuned per
+car alongside <code>SurfaceDamage.params</code>.</p>
+
+<div class="warn">This format is custom and undocumented; field <em>names</em> below are inferred from the
+EBOOT strings and the data, not from a header. Confidence is honest: the magic, the vertex array and the
+named part-groups are <span class="badge ok">Confirmed</span>; several header counts and the spring/edge
+semantics are <span class="badge theory">Theory</span>.</div>
+
+<h2>File header</h2>
+<p>A 32-byte header: the magic followed by seven big-endian 32-bit values. Comparing many samples (small
+chassis files ≈6&nbsp;KB up to <code>Musclecar_01</code> at 31&nbsp;KB) lets the constant from the
+per-file fields be separated. Field&nbsp;A is provably the <strong>vertex count</strong> (it predicts
+where the vertex array ends in every file); the rest are sized lists whose role is read from how they
+index each other.</p>
+
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>0x00</code></td><td><code>0x4</code></td><td><code>char[3]+u8</code></td><td>magic</td><td><code>"DFM"</code> + version <code>0x02</code>.</td></tr>
+<tr><td><code>0x04</code></td><td><code>0x4</code></td><td><code>uint32_t</code></td><td>vertexCount (A)</td><td>Number of deformable vertices. <span class="badge ok">Confirmed</span>: <code>0x20 + A*16</code> = end of vertex array in every sample.</td></tr>
+<tr><td><code>0x08</code></td><td><code>0x4</code></td><td><code>uint32_t</code></td><td>countB</td><td>A second element count (≈ vertexCount). <span class="badge theory">Theory</span>: deformable-vertex subset / position list length.</td></tr>
+<tr><td><code>0x0C</code></td><td><code>0x4</code></td><td><code>uint32_t</code></td><td>edgeCount (C)</td><td>Spring/edge element count. <span class="badge theory">Theory</span>: matches the max index seen in the part-group ranges (e.g. <code>0x6A4</code> in <code>Musclecar_01</code> equals its last part-group range bound).</td></tr>
+<tr><td><code>0x10</code></td><td><code>0x4</code></td><td><code>uint32_t</code></td><td>partGroupCount (D)</td><td>Named rigid part-groups. <span class="badge ok">Confirmed</span>: <code>D × 100 bytes</code> = size of the named-record block (Coupe D=17, block = 1700 = 0x6A4 bytes, ending exactly at EOF). On body files the same block is followed by the chassis-link footer.</td></tr>
+<tr><td><code>0x14</code></td><td><code>0x4</code></td><td><code>uint32_t</code></td><td>countE</td><td>A further list count (14–32 across samples). <span class="badge theory">Theory</span>: sections / deformer-plane count.</td></tr>
+<tr><td><code>0x18</code></td><td><code>0x4</code></td><td><code>uint32_t</code></td><td>countF</td><td>0 for chassis files; small for body files (e.g. 4 in Supercar_01, 6 in Musclecar_01). <span class="badge theory">Theory</span>: extra-section / footer-element count.</td></tr>
+<tr><td><code>0x1C</code></td><td><code>0x4</code></td><td><code>uint32_t</code></td><td>countG</td><td>0 for chassis files; 1 for body files. <span class="badge theory">Theory</span>: flag / footer-present.</td></tr>
+</tbody>
+</table>
+
+<pre class="hex">000000  44 46 4d 02 00 00 01 1c 00 00 01 22 00 00 06 a4   DFM........"....   magic + A=284 B=290 C=1700
+000010  00 00 00 19 00 00 00 20 00 00 00 06 00 00 00 01   ....... ........   D=25 E=32 F=6 G=1
+000020  3f 62 2f a9 3e 91 f6 dc 3f 19 0c c5 3f 80 00 00   ?b/.>...?...?...   vertex[0] x,y,z,w=1.0
+000030  3f 62 2f ad 3e 91 f6 dc 3f 6e fd ac 3f 80 00 00   ?b/.>...?n..?...   vertex[1]</pre>
+<p class="muted">Header + first two vertices of <code>Vehicles/Bodies/Musclecar_01/Musclecar_01.deform</code>.
+Each vertex is a 16-byte <code>vec4</code> of big-endian float32 with <code>w = 1.0</code>
+(<code>3f 80 00 00</code>).</p>
+
+<h2>Section 1 — deformable vertex cage</h2>
+<p>Immediately after the header (<code>0x20</code>) is an array of <code>A</code> vertices, each a
+homogeneous <code>vec4</code> (x, y, z, w=1.0) in big-endian float32. These are the points the solver is
+allowed to move. In <code>Coupe.deform</code> the array is 61 vertices = 976 bytes and ends exactly at
+<code>0x3F0</code>, where the index data begins — the clean prediction is how <em>vertexCount</em> was
+confirmed.</p>
+
+<h2>Section 2 — index &amp; spring data</h2>
+<p>Following the vertices are two interleaved kinds of data:</p>
+<ul>
+  <li><strong>uint16 index lists</strong> — triangle triplets and per-group vertex strips (e.g.
+  <code>00 00 00 02 00 03 …</code>), used to bind the cage to the render mesh and to grow part-groups.</li>
+  <li><strong>10-byte spring/edge records</strong> — a <code>float32</code> rest-length, a 2-byte flag
+  pair (<code>01 01</code>), then two <code>uint16</code> vertex indices. This is the mass-spring graph
+  that resists and propagates deformation.</li>
+</ul>
+<pre class="hex">0004de  3e c1 5c 8c 01 01 00 06 00 07   restLen=0.378  flag=0101  a=6  b=7
+0004e8  3e c1 5c 8c 01 01 00 00 00 01   restLen=0.378  flag=0101  a=0  b=1
+0004f2  3e c1 5c 8e 01 01 00 04 00 05   restLen=0.378  flag=0101  a=4  b=5</pre>
+<p class="muted">Spring records from <code>Coupe.deform</code>. Each is 10 bytes:
+<code>float32_t restLength · uint8 flag · uint8 flag · uint16 vertA · uint16 vertB</code>.
+<span class="badge theory">Theory</span> on the exact flag meaning; the
+<code>&lt;float&gt; 01 01 &lt;u16&gt; &lt;u16&gt;</code> stride is consistent across the whole section.</p>
+
+<h2>Section 3 — named rigid part-groups</h2>
+<p>The file ends with a block of fixed <strong>100-byte</strong> records, one per
+<em>partGroupCount</em> (header field&nbsp;D) — on chassis files this block runs to EOF; on body files a
+short chassis-link footer follows it. Each record names a rigid sub-assembly of the car — wheels, discs,
+wishbones, chassis sections, lights, radiator — that deforms as a unit (or stays rigid). The 100-byte
+stride is <span class="badge ok">Confirmed</span> by walking <code>Coupe.deform</code>: consecutive names
+(CHASSIS_FRONT @ 0x1134, HUB_FL @ 0x1198, …, DISC_FL @ 0x1774) sit exactly <code>0x64</code> bytes apart,
+17 records ending at EOF. The names are human-readable and match the EBOOT's <code>PartGroups</code> menu:</p>
+<pre class="hex">001648  48 55 42 5f 46 52 00 00 …   "HUB_FR"   (front-right wheel hub)
+0016ac  48 55 42 5f 42 52 00 00 …   "HUB_BR"   (back-right wheel hub)
+001710  57 49 53 48 42 4f 4e 45 5f 42 52 00 … "WISHBONE_BR"
+001774  44 49 53 43 5f 46 4c 00 …   "DISC_FL"  (front-left brake disc)</pre>
+<p>Other observed names include <code>CHASSIS_FRONT</code>, <code>CHASSIS_REAR</code>,
+<code>WISHBONE_BL</code>, <code>RADIATOR</code> and <code>LIGHT_BR</code>. Each record is laid out as:</p>
+<table class="struct">
+<thead><tr><th>Offset (rel)</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>0x00</code></td><td><code>~0x10</code></td><td><code>char[]</code></td><td>name</td><td>Null-terminated part-group name (e.g. <code>HUB_FR</code>).</td></tr>
+<tr><td><code>~0x18</code></td><td><code>0x4</code></td><td><code>uint32_t</code></td><td>hash</td><td>A hashed id (e.g. <code>20 e8 20 13</code>). <span class="badge theory">Theory</span>.</td></tr>
+<tr><td><code>+pad</code></td><td><code>0x18</code></td><td><code>uint32_t[6]</code></td><td>vertRanges</td><td>Three min/max index pairs into the vertex/edge arrays — the group's span (e.g. <code>0x31,0x34, 0x23,0x24, 0x45,0x48</code>).</td></tr>
+<tr><td><code>+tail</code></td><td><code>~0x20</code></td><td><code>float32_t[]</code></td><td>weights</td><td>Axis weights / stiffness (values like 0.5, 0.707, 1.0). <span class="badge theory">Theory</span>.</td></tr>
+</tbody>
+</table>
+
+<h2>Footer — chassis link</h2>
+<p>Body files (under <code>Vehicles/Bodies/</code>) close with a short footer: a null-terminated
+chassis-name string followed by three <code>1.0</code> floats interleaved with zero words (reading as a
+scale triple, see below). This binds the body's deformation cage to the shared chassis it sits on
+(<code>Supercar_01.deform → "Supercar_Low"</code>, <code>Truck_01.deform → "Truck"</code>) — mirroring the
+<a href="system-vehicles.html">vehicle</a> Body/Chassis split. Chassis files
+(<code>Vehicles/Chassis/</code>) have no such footer (their <code>countF</code>/<code>countG</code> header
+words are both <code>0</code>). Confirmed: <code>Supercar_01.deform</code> ends with
+<code>"Supercar_Low\0"</code> at <code>0x6cfc</code>.</p>
+<pre class="hex">006cf0  3f 80 00 00 00 00 00 00 00 00 00 00 53 75 70 65   "Supe   &larr; end of last part-group, name begins 0x6cfc
+006d00  72 63 61 72 5f 4c 6f 77 00 00 80 3f 00 00 00 00   rcar_Low...?....   "Supercar_Low\0" then 00 00 80 3f
+006d10  00 00 80 3f 00 00 00 00 00 00 80 3f               ...?.......?       trailing scale ≈ (1.0, 1.0, 1.0)</pre>
+<div class="warn">The three footer floats read as <em>little-endian</em> <code>1.0</code>
+(<code>00 00 80 3f</code>) even though the body of the file is big-endian
+(<code>3f 80 00 00</code>). This is almost certainly an exporter quirk; treat the footer scale as
+<span class="badge theory">Theory</span> until cross-checked at runtime.</div>
+
+<h2>How it fits the engine</h2>
+<p>The cage feeds GPU deformation: the model's vertex shader samples the moved positions via the
+<code>DeformVertexPosition_DeformTexture</code> attribute seen in the EBOOT shader-context strings, so the
+visible body crumples without re-skinning. Tuning lives in the per-car
+<code>SurfaceDamage.params</code> and <code>Vehicles/Generic/SurfaceDamageCommon.params</code>
+(<code>DeformerPlaneAngle/Height/Dist</code>, scrape planes, <code>MaxVertDeformations</code>). Compare
+this to Burnout Paradise's crash deformation idea — the <em>concept</em> (a deformable vehicle cage) is
+similar, but Split/Second's <code>DFM2</code> container is its own Black Rock format with no Havok and no
+shared layout.</p>
+
+<h2>Confidence &amp; open questions</h2>
+<p>Overall <span class="badge partial">Partial</span>. Solid: the <code>DFM2</code> magic and its EBOOT
+check; the 16-byte big-endian vertex array sized by header field A; the 100-byte named part-group records
+sized by header field D; the chassis-link footer. Open: the precise role of header counts B/C/E/F/G; the
+two flag bytes in the spring records; the exact field layout inside each 100-byte part-group record (name
+length vs. padding boundary); and the footer-float endianness.</p>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-havok.html">Havok Packfiles</a> — why <code>.deform</code> is the odd one out (not Havok)</li>
+  <li><a href="format-phys.html">Vehicle Physics (.phys)</a> — the Havok rigid body the deform cage rides on</li>
+  <li><a href="format-model.html">Model (.model)</a> — the render mesh the cage deforms</li>
+  <li><a href="system-vehicles.html">Vehicles</a> — Body/Chassis split, damage &amp; colours</li>
+  <li><a href="data-params.html">.params Tuning System</a> — <code>SurfaceDamage.params</code> deformer tuning</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

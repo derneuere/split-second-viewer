@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { dctHandler } from '../dct';
-import { parseDct } from '../../../dct';
+import { parseDct, writeDct } from '../../../dct';
 import { ssCtx } from '../../handler';
 import { hasSample, readSample } from '@/test/dataRoot';
 
@@ -51,8 +51,13 @@ describe('dct parser', () => {
 
 	it('describe() reports entry + string counts', () => {
 		const text = dctHandler.describe(parseDct(INLINE));
-		expect(text).toContain('1 entries');
+		expect(text).toContain('1 entry');
 		expect(text).toContain('NO AWARD');
+	});
+
+	it('byte-exact passthrough writer round-trips the inline doc', () => {
+		const out = writeDct(parseDct(INLINE));
+		expect(Array.from(out)).toEqual(Array.from(INLINE));
 	});
 
 	it.skipIf(!hasSample(REAL_EN))('parses the REAL ENGLISH_PS3.dct (142 entries)', () => {
@@ -65,5 +70,12 @@ describe('dct parser', () => {
 		// Readable UI text is present in the tail blob (per wiki).
 		expect(m.strings).toContain('MAIN MENU');
 		expect(m.strings.length).toBeGreaterThan(50);
+	});
+
+	it.skipIf(!hasSample(REAL_EN))('dct round-trips a real sample byte-for-byte', () => {
+		const raw = readSample(REAL_EN);
+		const out = dctHandler.writeRaw!(dctHandler.parseRaw(raw, ssCtx()), ssCtx());
+		expect(out.byteLength).toBe(raw.byteLength);
+		expect(Array.from(out)).toEqual(Array.from(raw));
 	});
 });

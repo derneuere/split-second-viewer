@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Middleware Stack — Split/Second RE Wiki</title>
+<meta name="description" content="The third-party libraries linked into Split/Second's Black Rock engine — Havok 5.5, FMOD Ex 4.28, Quazal Net-Z 2008.9, Bink, Scaleform GFx, Sony Edge, oscpack — with versions and roles.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Middleware Stack" data-category="Engine &amp; Tech">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Middleware Stack</h1>
+<p>Split/Second runs on Black Rock Studio's in-house engine, but — like every console title of its
+generation — it leans on a stack of licensed third-party libraries for physics, audio, networking,
+video, UI and SPU geometry. Every one of these libraries leaves <strong>source-tree paths and
+version banners</strong> behind in the EBOOT, so the exact versions are not guesswork: they are
+quoted verbatim below from <code>eboot_strings.txt</code>. All third-party code lives under
+<code>c:/Projects/proj_1/ws_0/Code/contrib/&lt;Vendor&gt;/&lt;Lib&gt;/</code> in the build tree
+(the audio branch uses a parallel <code>C:/Projects/SplitSecond/ss_audio_dev/Code/contrib/…</code> root).</p>
+
+<div class="infobox"><div class="ib-title">Middleware at a glance</div><table>
+  <tr><th>Physics</th><td>Havok 5.5.0</td></tr>
+  <tr><th>Audio</th><td>FMOD Ex 4.28.00</td></tr>
+  <tr><th>Network</th><td>Quazal Net-Z 2008.9 SP2 + RV</td></tr>
+  <tr><th>Video</th><td>RAD Bink</td></tr>
+  <tr><th>UI</th><td>Scaleform GFx 2.x</td></tr>
+  <tr><th>SPU geom/anim</th><td>Sony Edge v0_4_3</td></tr>
+  <tr><th>Telemetry net</th><td>oscpack (OSC/UDP)</td></tr>
+  <tr><th>Compression</th><td>zlib 1.2.3</td></tr>
+  <tr><th>Image</th><td>libpng 1.2.35</td></tr>
+  <tr><th>Build</th><td>Devkit/QA (NPXX00575)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<div class="note">Versions here are read straight from compiled-in file paths and copyright banners in
+the executable, so they are <span class="badge ok">Confirmed</span>. What each library is used
+<em>for</em> inside the game is mostly confirmed from class names and asset extensions, but a few
+specific responsibilities are marked <span class="badge theory">Theory</span> where the evidence is
+circumstantial.</div>
+
+<h2>The stack</h2>
+<p>The table below lists each linked middleware component, the version proven by the binary, where it
+appears in the source tree, and its role. Click through to the format pages for the on-disk data each
+library consumes.</p>
+
+<table>
+  <tr><th>Library</th><th>Version</th><th>Source-tree path</th><th>Role in Split/Second</th><th>Status</th></tr>
+  <tr>
+    <td><b>Havok</b></td>
+    <td>5.5.0</td>
+    <td><code>contrib/Havok/Havok550</code></td>
+    <td>Rigid-body dynamics, collision, character/animation (hkaSkeletalAnimation). Drives all
+        <a href="format-phys.html">vehicle physics</a> and <a href="format-hkcoll.html">collision</a>.</td>
+    <td><span class="badge ok">Confirmed</span></td>
+  </tr>
+  <tr>
+    <td><b>FMOD Ex</b> (+ Event System)</td>
+    <td>4.28.00</td>
+    <td><code>contrib/FmodEx/42800</code></td>
+    <td>Low-level audio mixing, streaming and DSP. Wrapped by in-house <a href="engine-audio.html">LLAudio2</a>.
+        Consumes <a href="format-fsb.html">.fsb</a> banks and <a href="format-fev.html">.fev</a> events.</td>
+    <td><span class="badge ok">Confirmed</span></td>
+  </tr>
+  <tr>
+    <td><b>Quazal Net-Z</b></td>
+    <td>2008.9 SP2</td>
+    <td><code>contrib/Quazal/NetZ</code></td>
+    <td>Peer-to-peer object replication (Duplicated Objects), session clock, voice chat. See
+        <a href="engine-networking.html">Networking &amp; Online</a>.</td>
+    <td><span class="badge ok">Confirmed</span></td>
+  </tr>
+  <tr>
+    <td><b>Quazal Rendez-Vous (RV)</b></td>
+    <td>(bundled with Net-Z 2008.9)</td>
+    <td><code>contrib/Quazal/RV</code></td>
+    <td>Matchmaking / lobby / online-service back-end (Rendez-Vous). Headers referenced from the
+        object-duplication layer.</td>
+    <td><span class="badge ok">Confirmed</span></td>
+  </tr>
+  <tr>
+    <td><b>RAD Bink</b></td>
+    <td>(unbannered)</td>
+    <td>(linked; no <code>contrib</code> path in strings)</td>
+    <td>Full-motion video playback for intros, tutorials and cut sequences (<a href="format-bik.html">.bik</a>),
+        wrapped by <code>MMBinkMovie</code>.</td>
+    <td><span class="badge ok">Confirmed</span></td>
+  </tr>
+  <tr>
+    <td><b>Scaleform GFx</b></td>
+    <td>2.x (GFX file format)</td>
+    <td>(linked; <code>GFx*</code> classes)</td>
+    <td>Flash-based UI / frontend / HUD rendering. Consumes <a href="format-gfx.html">.gfx</a> assets.
+        See <a href="system-hud.html">HUD &amp; Frontend</a>.</td>
+    <td><span class="badge ok">Confirmed</span></td>
+  </tr>
+  <tr>
+    <td><b>Sony Edge</b> (EdgeGeom)</td>
+    <td>v0_4_3</td>
+    <td><code>contrib/Sony/Edge/EdgeGeom</code></td>
+    <td>SPU-side geometry decompression / culling for the deferred <a href="engine-rendering.html">renderer</a>.
+        Debug-menu node <code>Renderer/Edge/SelectBatch*</code>.</td>
+    <td><span class="badge ok">Confirmed</span></td>
+  </tr>
+  <tr>
+    <td><b>oscpack</b></td>
+    <td>(unbannered)</td>
+    <td><code>contrib/oscpack/oscpack</code></td>
+    <td>Open Sound Control over UDP — used for the live audio auditioning / TrackTivity network link
+        (<code>UdpSocket</code>, <code>OscOutboundPacketStream</code>).</td>
+    <td><span class="badge ok">Confirmed</span></td>
+  </tr>
+  <tr>
+    <td><b>zlib</b> (inflate)</td>
+    <td>1.2.3</td>
+    <td>(linked)</td>
+    <td>DEFLATE decompression — used by GFx, PNG and the Quazal <code>ZLibCompression</code> layer.
+        Banner: <code>inflate 1.2.3 Copyright 1995-2005 Mark Adler</code>.</td>
+    <td><span class="badge ok">Confirmed</span></td>
+  </tr>
+  <tr>
+    <td><b>libpng</b></td>
+    <td>1.2.35 (Feb 14 2009)</td>
+    <td>(linked)</td>
+    <td>PNG decode for GFx user images / textures.</td>
+    <td><span class="badge ok">Confirmed</span></td>
+  </tr>
+  <tr>
+    <td><b>libjpeg</b> (IJG)</td>
+    <td>(IJG, Thomas G. Lane)</td>
+    <td>(linked)</td>
+    <td>JPEG decode behind GFx <code>DefineBitsJpeg2/3</code> image loaders.</td>
+    <td><span class="badge ok">Confirmed</span></td>
+  </tr>
+</table>
+
+<h2>Physics — Havok 5.5.0</h2>
+<p>Every physics file in the data tree is a Havok 5.5 packfile (magic <code>57 E0 E0 57</code>). The
+EBOOT is full of paths like
+<code>contrib/Havok/Havok550/Animation/Animation/Animation/hkaSkeletalAnimation.inl</code>, confirming
+that Black Rock used not only Havok Physics but also <strong>Havok Animation</strong>
+(<code>hkaSkeletalAnimation</code>) for car and character skinning. A dedicated Havok heap is allocated
+at startup — error strings warn when "we've blown the havok memory pool" and "Havok memory limit
+reached for geometry particle models".</p>
+<p>The exporter pipeline tags physics objects with custom user-data containers whose class names
+survive in the binary, e.g. <code>HavokTriggerPhantomExportUserDataContainer</code>,
+<code>HavokRespotBoxSystemExportUserData</code>, <code>HavokAreaOfEffectSystemExportUserData</code>,
+<code>HavokFurnitureObjectExportUserData</code> and <code>HavokAnimatedRigidBodyExportUserDataContainer</code>.
+These map directly onto game systems: respot boxes (<a href="system-difficulty.html">Difficulty &amp;
+Race Director</a>), trigger phantoms (<a href="format-triggers.html">triggers</a>), and
+<a href="system-areaofeffects.html">area-of-effect</a> blast volumes.</p>
+<div class="tip">There is a tuning constant for blending Havok's solver against a scripted line:
+<code>CarCollision/004; Blend coefficient for mixing Havok response and on-rail behaviour</code>. The
+cars are not pure ragdoll physics — they are a controlled mix of Havok response and an "on-rail"
+handling model. See <a href="format-phys.html">Vehicle Physics (.phys)</a>.</div>
+
+<h2>Audio — FMOD Ex 4.28.00</h2>
+<p>The audio code was built in a separate branch
+(<code>C:/Projects/SplitSecond/ss_audio_dev/Code/contrib/FmodEx/42800/…</code>). The <code>42800</code>
+directory name is the FMOD version: <strong>4.28.00</strong>. Both the low-level FMOD Ex API and the
+higher-level FMOD <strong>Event System</strong> are linked (error strings reference
+<code>EventSystem::unloadFSB</code> and <code>FMOD_EVENT_INIT_FAIL_ON_MAXSTREAMS</code>). The codec
+source files compiled in include FSB, Ogg Vorbis, MPEG, WAV/RIFF, AIFF, MIDI/DLS, IT/S3M/XM/MOD
+trackers and Sony SWVAG — though on disk Split/Second ships banks as <a href="format-fsb.html">.fsb</a>
+with <a href="format-fev.html">.fev</a> event projects.</p>
+<p>FMOD is never called directly by gameplay code; it sits under the in-house <strong>LLAudio2</strong>
+wrapper (<code>libs/Audio/Wrappers/LLAudio2</code>). The full architecture — DynamicMixer, the
+EventManager/SoundBankManager pools, reverb, and the bespoke <code>Tonic</code> granular engine
+synthesizer — is documented on the <a href="engine-audio.html">Audio Engine</a> page.</p>
+
+<h2>Networking — Quazal Net-Z 2008.9 SP2 + Rendez-Vous</h2>
+<p>The online stack is Quazal's middleware, the same family used across many late-2000s console
+titles. The banner string reads <code>Quazal Net-Z / Version 2008.9 SP2</code> with
+<code>Copyright (C) 1998-2009, Quazal Technologies Inc.</code> Two Quazal products are present:
+<strong>Net-Z</strong> (object replication, the "Duplicated Object" / DO model) and
+<strong>Rendez-Vous (RV)</strong> (matchmaking and online services).</p>
+<p>Black Rock wrapped Quazal in a game-side layer called <strong>ATVNet</strong>
+(<code>games/SplitSecond/Shared/ATVNet/NetZ/</code>). Each networked entity has a Duplicated-Object
+class, e.g. <code>cATVNetDOGameModeUpdaterDDL</code>, <code>cATVNetDOPlayerUpdaterDDL</code>,
+<code>cATVNetDOPhysicsObjectUpdaterDDL</code> and <code>cATVNetDORoomStateDDL</code>. Voice chat runs
+over Net-Z AVStreams using the <strong>LPC10</strong> and <strong>OpenLPC</strong> codecs. A watchdog
+thread <code>cKeepNetZAlive</code> pumps the session. Full detail is on
+<a href="engine-networking.html">Networking &amp; Online</a>.</p>
+
+<h2>Video — RAD Bink</h2>
+<p>All pre-rendered video ships as <a href="format-bik.html">.bik</a> (RAD Bink). The wrapper class is
+<code>MMBinkMovie</code> and the loader logs <code>Opened Bink movie %s</code> /
+<code>Setting Bink Audio with %d channels</code>. There are dozens of Bink files — title sequence,
+"Previously on Split/Second" recaps, season finale, per-mode tutorials and frontend background loops
+(<code>FE_MM_Static.bik</code>, <code>FE_Online.bik</code>, etc.). No version banner is embedded, which
+is normal for Bink (the runtime is a static lib with no copyright string in the payload).</p>
+
+<h2>UI — Scaleform GFx 2.x</h2>
+<p>The frontend, menus and in-race HUD are built in Adobe Flash and rendered by
+<strong>Scaleform GFx</strong>. The loader expects the <strong>GFX 2.x</strong> file format — the
+error string is explicit: <code>incompatible GFX file, version 2.x expected</code>. The binary
+contains the full GFx object zoo (<code>GFxLoader</code>, <code>GFxSprite</code>,
+<code>GFxDrawTextManager</code>, <code>GFxMorphCharacterDef</code>, font/PNG/JPEG providers). GFx in
+turn relies on zlib (<code>GFx_InflateWrapper</code>) for compressed SWF/GFX data. UI assets are
+<a href="format-gfx.html">.gfx</a> files; see <a href="system-hud.html">HUD &amp; Frontend</a>.</p>
+
+<h2>SPU geometry — Sony Edge v0_4_3</h2>
+<p>Geometry processing on the PS3's SPUs uses Sony's <strong>Edge</strong> library. The path proves
+the version: <code>contrib/Sony/Edge/EdgeGeom/spu/../../v0_4_3/target/spu/src/edge/geom/edgegeom.cpp</code>
+(plus <code>edgegeom_compress.cpp</code> / <code>edgegeom_decompress.cpp</code>). Edge handles
+on-SPU vertex decompression and primitive culling that feeds the RSX, complementing Black Rock's
+own <a href="engine-jobstream.html">JobStream/SPURS</a> jobs and the deferred
+<a href="engine-rendering.html">renderer</a>. Debug-menu hooks expose
+<code>Renderer/Edge/LockEdgeCameraUpdate</code> and <code>Renderer/Edge/SelectBatchMin|Max</code>.</p>
+<div class="note">Only <strong>EdgeGeom</strong> is positively identified in the strings. Edge also
+ships an animation library (EdgeAnim); whether Split/Second uses it (versus Havok Animation for
+skinning) is <span class="badge theory">Theory</span> — no EdgeAnim path was found.</div>
+
+<h2>Telemetry transport — oscpack</h2>
+<p>The <strong>oscpack</strong> library (Open Sound Control packet/UDP) is linked under
+<code>contrib/oscpack/oscpack</code>, with both the outbound packet stream
+(<code>OscOutboundPacketStream.cpp</code>) and the PS3 UDP socket
+(<code>ip/ps3/UdpSocket.cpp</code>) compiled in. OSC is a real-time messaging protocol popular in
+audio tooling; in this devkit build it is the most likely transport for live audio auditioning from
+the FMOD Designer host and possibly for <a href="format-track.html">TrackTivity</a> telemetry
+streaming. The precise use is <span class="badge theory">Theory</span> — only the library's presence
+is confirmed.</p>
+
+<h2>Support libraries</h2>
+<p>Beyond the headline middleware, the EBOOT carries the usual C/C++ runtime dependencies, each with
+an identifiable banner:</p>
+<table>
+  <tr><th>Library</th><th>Version / banner</th><th>Use</th></tr>
+  <tr><td>zlib</td><td><code>inflate 1.2.3 Copyright 1995-2005 Mark Adler</code></td><td>DEFLATE decompression (GFx, PNG, Quazal)</td></tr>
+  <tr><td>libpng</td><td><code>libpng version 1.2.35 - February 14, 2009</code></td><td>PNG image decode</td></tr>
+  <tr><td>libjpeg (IJG)</td><td><code>Copyright (C) 1998, Thomas G. Lane</code></td><td>JPEG decode (GFx images)</td></tr>
+  <tr><td>Dinkumware STL</td><td><code>Copyright (c) 1992-2003 by P.J. Plauger … Dinkumware, Ltd.</code></td><td>C++ standard library</td></tr>
+  <tr><td>Voice codecs (Quazal)</td><td>LPC10 / OpenLPC</td><td>Compressed voice chat over Net-Z AVStreams</td></tr>
+</table>
+
+<h2>How it fits together</h2>
+<p>A useful mental model of the dependency graph as actually linked:</p>
+<ul>
+  <li><b>Simulation</b> → Havok 5.5 (physics + animation), blended with an on-rail handling model.</li>
+  <li><b>Rendering</b> → Black Rock "Crayon2" deferred renderer, fed by Sony Edge on the SPUs.</li>
+  <li><b>Audio</b> → LLAudio2 → FMOD Ex 4.28 (+ Event System) + the in-house Tonic synth.</li>
+  <li><b>Online</b> → ATVNet → Quazal Net-Z 2008.9 (DO replication, voice) + Rendez-Vous (matchmaking).</li>
+  <li><b>UI</b> → Scaleform GFx 2.x, decompressed via zlib, images via libpng/libjpeg.</li>
+  <li><b>Video</b> → RAD Bink (MMBinkMovie).</li>
+  <li><b>Tooling/telemetry</b> → oscpack (OSC/UDP) for live auditioning &amp; data capture.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="engine-overview.html">Engine Architecture</a> — the Black Rock engine these libraries plug into</li>
+  <li><a href="engine-audio.html">Audio Engine</a> — LLAudio2 over FMOD Ex 4.28 in detail</li>
+  <li><a href="engine-networking.html">Networking &amp; Online</a> — Quazal Net-Z / RV and ATVNet</li>
+  <li><a href="engine-rendering.html">Rendering Pipeline</a> · <a href="engine-jobstream.html">Threading &amp; JobStream</a> — where Sony Edge runs</li>
+  <li><a href="format-havok.html">Havok Packfiles</a> · <a href="format-phys.html">Vehicle Physics (.phys)</a> — Havok 5.5 data</li>
+  <li><a href="format-fsb.html">FMOD Sound Banks (.fsb)</a> · <a href="format-fev.html">FMOD Events (.fev)</a> · <a href="format-bik.html">Bink Video (.bik)</a> · <a href="format-gfx.html">Scaleform UI (.gfx)</a></li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

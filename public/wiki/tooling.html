@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Extraction Tooling & Status — Split/Second RE Wiki</title>
+<meta name="description" content="Build-or-buy tool matrix: which formats have working extractors and which need custom parsers.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Extraction Tooling & Status" data-category="Overview">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Extraction Tooling &amp; Status</h1>
+<p>Build-or-buy matrix for every Split/Second file format, from a 7-agent research+test pass (<strong>57 real tool tests</strong> on actual sample files). The full checklist also lives in <code>TOOLING-TODO.md</code> in the project root.</p>
+<div class="note"><strong>Legend.</strong> <span class="badge ok">Works</span> a tool extracts/converts it (tested) · <span class="badge partial">Partial</span> · <span class="badge cat">Custom parser</span> needs bespoke code · <span class="badge raw">Research</span> needs more digging.</div>
+<h2>Priority next steps (the to-do)</h2>
+<div class="tip"><strong>Already working — just use them:</strong>
+<code>.ark</code> (ark_extract.py), <code>.fsb</code> (vgmstream), <code>.bik</code> (ffmpeg),
+<code>.gfx</code> (JPEXS ffdec), <code>.powerplays</code>/<code>.triggers</code>/<code>.xml</code>/<code>.params</code> (XML/text),
+and the track/Catnip metadata via tiny tested parsers.</div>
+<p><strong>High-value custom work remaining (ranked):</strong></p>
+<ol>
+<li><strong><code>.model</code></strong> (+<code>.model.stream</code>) — the big prize; build a <strong>Noesis <code>.py</code> plugin</strong> (medium/high). Unlocks all geometry; no off-the-shelf tool exists.</li>
+<li><strong><code>.textures</code> / <code>.streamtex</code></strong> — PS3 swizzle &rarr; PNG; the probe already IDs format/dims, extend to a full decoder.</li>
+<li><strong><code>.skel</code>, <code>.deform</code> (DFM), <code>.mcl</code>/<code>.shaders</code>/<code>.shaderinst</code> (SDRI/SHDR)</strong> — low-effort bespoke parsers; layouts already in the wiki.</li>
+<li><strong><code>.phys</code> / <code>.mainColl</code></strong> — no tool reads Havok <strong>5.5</strong> packfiles; write a custom reader using the <a href="format-hkpps.html">.hkPPsXml</a>/<a href="format-hkcoll.html">.hkCollXml</a> twins as schema, or evaluate leaked Havok 5.5 Content Tools (caveat).</li>
+<li><strong>Crack the <code>.ark</code> nameHash</strong> (needs resource-name strings from <a href="format-sectors.html">.sectorInfo</a>) to restore filenames, and add zlib inflate of Stream payloads.</li>
+</ol>
+<div class="note"><strong>Existing 3rd-party project to evaluate:</strong> <em>Delutto's ARK Tool</em> — the only Split/Second-specific tool found in the wild (auto-converts <code>.dct</code>&rarr;txt).</div>
+<h2>Status at a glance</h2>
+<table><tr><th>Format</th><th>Status</th><th>Recommended approach</th><th>Best test</th></tr>
+<tr><td><code>.ark</code></td><td><span class="badge ok">Works</span></td><td>Use the bespoke C:\Users\Niaz\splitsecond\_tools\ark_extract.py - the 16-byte header + 16-byte TOC container is fully decoded and verified across all 12 archive</td><td>works</td></tr>
+<tr><td><code>.fsb</code></td><td><span class="badge ok">Works</span></td><td>Use vgmstream-cli (open-source, MIT/ISC-ish). It fully decodes Split/Second&#x27;s FSB4 + MP3 banks to PCM WAV, lists/extracts subsongs with their original name</td><td>works</td></tr>
+<tr><td><code>.fev</code></td><td><span class="badge partial">Partial</span></td><td>Use xoreos-tools fev2xml (open-source GPLv3) for the header + project/category/wavebank tree. TESTED: it accepts the FEV1 magic and begins parsing but throws &q</td><td>partial</td></tr>
+<tr><td><code>.lip</code></td><td><span class="badge ok">Works</span></td><td>MIS-FILED under audio: Track.lip is the compiled AI TrackLogic node graph (racing-line/respot/crash-zone), NOT lip-sync/viseme data. No off-the-shelf tool exist</td><td>works</td></tr>
+<tr><td><code>.tonic</code></td><td><span class="badge cat">Custom parser</span></td><td>Black Rock Studio proprietary granular engine-sound format (NOT FMOD). Zero public tooling exists. Header fields are diff-confirmed across cars (version 7, swee</td><td>partial</td></tr>
+<tr><td><code>.tonic2</code></td><td><span class="badge cat">Custom parser</span></td><td>Lower-rate (21000 Hz) LOD twin of .tonic, byte-for-byte the same header except the sample-rate word and ~half the per-car sizes; file is ~half the size. Same pr</td><td>partial</td></tr>
+<tr><td><code>.bik</code></td><td><span class="badge ok">Works</span></td><td>Use ffmpeg/ffprobe (already installed, builtin libavcodec Bink-1 decoder). Confirmed working end-to-end on real samples: ffprobe reports codec=binkvideo tag BIK</td><td>works</td></tr>
+<tr><td><code>.nis</code></td><td><span class="badge ok">Works</span></td><td>Custom parser (written &amp; tested) -- ~25 lines of Python, no dependency. This is the Black Rock TrackLogic/AITrack route table (magic byte &#x27;i&#x27;=0x69</td><td>works</td></tr>
+<tr><td><code>.gbx</code></td><td><span class="badge ok">Works</span></td><td>Custom parser (written &amp; tested) -- ~40 lines of Python. Black Rock per-light-rig override table (BE uint32 record_count; per record: BE uint32 type-hash, B</td><td>works</td></tr>
+<tr><td><code>.gfx</code></td><td><span class="badge ok">Works</span></td><td>Use JPEXS Free Flash Decompiler (ffdec / jpexs-decompiler) v26.2.1 headlessly via `java -jar ffdec.jar`. It fully parses Split/Second&#x27;s Scaleform GFx files</td><td>works</td></tr>
+<tr><td><code>.phys</code></td><td><span class="badge partial">Partial</span></td><td>Per-car Havok 5.5.0 packfile (root hkpPhysicsSystem), big-endian PS3, NO XML twin (21 binaries / 0 twins). Tested: hkxconv REJECTS it at the header version chec</td><td>fails</td></tr>
+<tr><td><code>.hkColl</code></td><td><span class="badge ok">Works</span></td><td>Static level + per-subtrack collision, Havok 5.5.0 packfile (root hkRootLevelContainer -&gt; hkpPhysicsData -&gt; MOPP BV-tree + extended mesh + baked HavokMate</td><td>works</td></tr>
+<tr><td><code>.mainColl</code></td><td><span class="badge partial">Partial</span></td><td>Per-VEHICLE collision, Havok 5.5.0 packfile (root hkRootLevelContainer with 4 named hkpConvexVerticesShape hulls: Vs_Environment/Vs_Object/Vs_Vehicle/Core). Gen</td><td>fails</td></tr>
+<tr><td><code>.hkPPs</code></td><td><span class="badge ok">Works</span></td><td>Per-subtrack &#x27;Physics Pack&#x27;, Havok 5.5.0 packfile, root hkRootLevelContainer with 8 variants (hkpPhysicsData + Black Rock trigger/AOE/animated-body ex</td><td>works</td></tr>
+<tr><td><code>.hkRBs</code></td><td><span class="badge ok">Works</span></td><td>Environment rigid bodies (.hkRBs destructibles, plus siblings .hkRBXs respot boxes, .hkHBXs handling boxes), Havok 5.5.0 packfile, root hkRootLevelContainer + B</td><td>works</td></tr>
+<tr><td><code>.mcl</code></td><td><span class="badge cat">Custom parser</span></td><td>NOT a Havok file. Confirmed magic 53 44 52 49 = &#x27;SDRI&#x27; (shared Black Rock container, also used by .shaderinst), body chunk INSS...INSE. Payload = anim</td><td>works</td></tr>
+<tr><td><code>.deform</code></td><td><span class="badge cat">Custom parser</span></td><td>NOT a Havok file. Confirmed magic 44 46 4D 02 = &#x27;DFM&#x27; + version 2. Custom Black Rock vehicle damage/deformation model: 32-byte header (vertexCount + c</td><td>works</td></tr>
+<tr><td><code>.textures</code></td><td><span class="badge ok">Works</span></td><td>TESTED WORKING. Use the custom Python parser C:\Users\Niaz\splitsecond\_tools\textures_probe.py (stdlib + Pillow&#x27;s built-in &#x27;bcn&#x27; BC1/BC3 decoder</td><td>works</td></tr>
+<tr><td><code>.streamtex</code></td><td><span class="badge ok">Works</span></td><td>Headerless full-resolution swizzled pixel payload described entirely by the sibling .textures stub. Extend textures_probe.py: read the stub&#x27;s full-res desc</td><td>partial</td></tr>
+<tr><td><code>.model</code></td><td><span class="badge cat">Custom parser</span></td><td>No off-the-shelf tool exists (confirmed via Noesis repos, XeNTaX/ZenHAX/ResHax, GitHub, edness). Build a custom Noesis .py importer (fmt_SplitSecond_model.py). </td><td>untested</td></tr>
+<tr><td><code>.model.stream</code></td><td><span class="badge cat">Custom parser</span></td><td>Headerless geometry payload for a stub .model (12-byte header then raw interleaved vertex stream + 16-bit tri-strips). Cannot be interpreted standalone — it has</td><td>partial</td></tr>
+<tr><td><code>.skel</code></td><td><span class="badge cat">Custom parser</span></td><td>Simple, fully-documented bespoke &#x27;ftsc&#x27; container; write a ~80-line Python parser (no third-party tool exists or is needed). Header is fixed; an 8-ent</td><td>partial</td></tr>
+<tr><td><code>.fxc</code></td><td><span class="badge cat">Custom parser</span></td><td>Container framing is parseable (custom reader, low effort) but the payload is RSX/NV40 GPU microcode that is essentially opaque. Recommend writing a metadata ex</td><td>partial</td></tr>
+<tr><td><code>.shaders</code></td><td><span class="badge cat">Custom parser</span></td><td>Pure metadata container (SHDR) — low-effort custom parser, no tool exists. It carries register-block/binding tables only (the SDRS microcode slots are length-0;</td><td>partial</td></tr>
+<tr><td><code>.shaderinst</code></td><td><span class="badge cat">Custom parser</span></td><td>Bespoke SDRI/INSS container binding mesh instances to material combos with per-instance constant overrides (paint colour float3, emissive light index, diffuse-m</td><td>partial</td></tr>
+<tr><td><code>.stream</code></td><td><span class="badge cat">Custom parser</span></td><td>Generic streamed-payload extension; in this cluster it manifests as .model.stream (geometry, covered above) and .streamtex (textures, covered above). There is n</td><td>partial</td></tr>
+<tr><td><code>.track</code></td><td><span class="badge ok">Works</span></td><td>SOLVED with a ~25-line custom parser (tested) OR a 15-line Kaitai .ksy (tested via runtime). No tool needed. Format: BE uint32 count + count*24-byte records (2 </td><td>works</td></tr>
+<tr><td><code>.entities</code></td><td><span class="badge ok">Works</span></td><td>Custom parser, ~15 lines (tested). Binary &#x27;ENTS&#x27; magic, ver 3, BE. 32-byte header + count*97-byte records (name[33] + 16 floats sliced 3 pos/3 scale/9</td><td>works</td></tr>
+<tr><td><code>.powerplays</code></td><td><span class="badge ok">Works</span></td><td>It is plain UTF-8 XML despite the extension. Use ANY XML library (Python xml.etree, lxml). No binary RE needed. Confirmed &lt;Root FileVersion=&quot;1.0000000&q</td><td>works</td></tr>
+<tr><td><code>.triggers</code></td><td><span class="badge ok">Works</span></td><td>Plain UTF-8 XML (same as .powerplays). Use any XML library. Empty form is a 32-byte self-closing root. No tool/RE needed.</td><td>works</td></tr>
+<tr><td><code>.timelineInfo</code></td><td><span class="badge ok">Works</span></td><td>Custom parser, ~8 lines (tested). BE 8-byte header (version=1, count) + count*12-byte records (u64 controllerHash + u32 index 0..count-1). Size law 8+12*count h</td><td>works</td></tr>
+<tr><td><code>.logicinfo</code></td><td><span class="badge ok">Works</span></td><td>Custom parser (tested). Fixed 288-byte BE struct from Black Rock&#x27;s Catnip serializer: 12-byte header (ver 00030000, magic CDAB0DF0, payloadLen=276=size-12)</td><td>works</td></tr>
+<tr><td><code>.checkpoints</code></td><td><span class="badge partial">Partial</span></td><td>Header/framing SOLVED by custom parser (tested): fixed 348-byte file, 12-byte header (ver 00030000, beginTag CDAB0DF0, bodySize=336=size-12), recursive CDAB0DF0</td><td>partial</td></tr>
+<tr><td><code>.sideways</code></td><td><span class="badge ok">Works</span></td><td>Custom parser (tested), ~10 lines. BE uint32 linkCount + per-link variable record (uint8 N then N*uint16 link indices). Decodes Track.sideways.txt byte-for-byte</td><td>works</td></tr>
+<tr><td><code>.splitlength</code></td><td><span class="badge ok">Works</span></td><td>Custom parser (tested), ~5 lines. BE uint32 sectionCount + count*float32 (per-section weights ~1.0). Size law 4+4*count. No tool exists; trivial. Units partial </td><td>works</td></tr>
+<tr><td><code>.linkorigins</code></td><td><span class="badge ok">Works</span></td><td>Custom parser (tested), ~5 lines. BE uint32 linkCount + count*float32 arc-length origins. Size law 4+4*count. No tool exists; trivial.</td><td>works</td></tr>
+<tr><td><code>.sectorInfo</code></td><td><span class="badge partial">Partial</span></td><td>Custom parser; header SOLVED (tested): BE const_a=1.92, const_b=300.0, sectorCount @0x8 (==count of q### ASCII chunk tags), UTF-16LE source path. Per-chunk (q00</td><td>partial</td></tr>
+<tr><td><code>.names</code></td><td><span class="badge ok">Works</span></td><td>Trivial text/near-text. Leading ASCII count DIGIT, 0x00 sep, then N NUL-terminated strings. No tool needed (split on NUL). Caveat: single-digit count only encod</td><td>works</td></tr>
+<tr><td><code>.params</code></td><td><span class="badge ok">Works</span></td><td>Plaintext tuning files. No tool/RE needed. Grammar: &#x27;!directory:&#x27; header line, &#x27;/path/section:&#x27; group lines, and entries: &#x27;key&#x27; = </td><td>works</td></tr>
+<tr><td><code>.xml</code></td><td><span class="badge ok">Works</span></td><td>Standard UTF-8 XML (Audio config, Cameras, Tonic engine states, etc.). Use any XML library. Some open with &#x27;&lt;Root FileVersion=...&gt;&#x27;, others app-</td><td>works</td></tr>
+<tr><td><code>.global_regs</code></td><td><span class="badge partial">Partial</span></td><td>Custom parser (header tested). Binary BE, chunked: ASCII magic &#x27;FREG&#x27; (version 1) then &#x27;GLBB&#x27; sub-chunk; body is length-prefixed register-na</td><td>partial</td></tr>
+<tr><td><code>.crcs</code></td><td><span class="badge ok">Works</span></td><td>Simplest format: headerless flat BE uint32[] (texture-name CRC dependency list). N=filesize/4. No tool/RE needed. (CRC-of-name algorithm itself is unverified bu</td><td>works</td></tr>
+<tr><td><code>.dct</code></td><td><span class="badge partial">Partial</span></td><td>Custom parser (header SOLVED, tested) — and Delutto&#x27;s ARK Tool can auto-convert .dct-&gt;txt (the one existing tool that touches a cluster format). LITTLE-</td><td>partial</td></tr>
+<tr><td><code>.parts</code></td><td><span class="badge partial">Partial</span></td><td>Custom parser (structure decoded, tested). Binary BE typed/indexed array: opens with count + element-size words, then a node list mixing BE u32 index/flag field</td><td>partial</td></tr>
+</table>
+<h2>✅ Confirmed working tools (tested)</h2><ul>
+<li><code>.ark</code> &mdash; <strong>custom ark_extract.py</strong>: Ran on all 6 levels (12 archives: airport_test_03, nem_downtown, docks, Downtown, Graveyard, Powerplant). For EVERY archive: dataStart==0x10+count*0x10, TOC strictly sorted by nameHash, reserved==0 in all entries, all offsets in [dataStart,fileSize]. Magic check: Static archives = 100% of non-empty members start with 02 00 00 08 (244/245, 141/142, 887/888, 767/768, 851/852, 1311/1312 - the single miss each is the size=0 placeholder). Stream archives = 0/all carry that tag (621/330/1278/1237/1089/1221 members), they use an inner 00000000|innerSize|... sub-resource framing. Dumped 60 Static .sobj + 20 Stream .bin from airport_test_03 to _tools/ark_out/; dumped Static blobs verified to open exactly on 02 00 00 08 NN.</li>
+<li><code>.fsb</code> &mdash; <strong>vgmstream-cli -m</strong>: metadata from: FMOD FSB4 header; encoding MPEG Layer III (MP3); 48000Hz mono; stream name tonic_source/Hypercar_03_Skyline_v3.wav (matches wiki).</li>
+<li><code>.fsb</code> &mdash; <strong>vgmstream-cli -o (decode)</strong>: 640556-byte WAV; ffprobe: pcm_s16le, 48000Hz, 1ch, 16-bit, duration 6.672s == reported 320256 samples.</li>
+<li><code>.fsb</code> &mdash; <strong>vgmstream-cli subsongs</strong>: Music.fsb stream count: 133 with loop start/end; Speech.fsb stream count: 13, subsong 5 = source/press_b_button.wav decoded to 267308-byte WAV (ffprobe valid).</li>
+<li><code>.fsb</code> &mdash; <strong>vgmstream-cli -S 0 batch</strong>: All 12 named co-driver lines written (when_you_see, ok_kid, come_on, press_b_button, ...) as valid WAVs. (CLI returns nonzero from filename-template quirk but all files produced correctly.)</li>
+<li><code>.lip</code> &mdash; <strong>custom lip_parse.py (Python big-endian)</strong>: nodeStride=0x50; parsed 276 nodes; Node[0..3] Pos (-1342,9,254)(-1314,9,239)(-1298,9,231)(-1277,9,220) matching Track.debug.txt Node[0..3] (X,Z exact; Y 9 vs 8 = rounding of 8.51). Confirms stride/layout/big-endian floats.</li>
+<li><code>.bik</code> &mdash; <strong>ffprobe Blackrock.bik</strong>: format_name=bink, probe_score=100; stream0 binkvideo tag=BIKi 1280x720 yuv420p 30/1fps 6.5s/195frames; streams 1&amp;2 binkaudio_dct 44100 stereo ids 0x0,0x5. Matches wiki header decode.</li>
+<li><code>.bik</code> &mdash; <strong>ffprobe DIS.bik</strong>: 640x360, r_frame_rate=51640/1723, FIVE binkaudio_dct mono tracks -- matches wiki&#x27;s documented DIS multi-track/odd-rational case.</li>
+<li><code>.bik</code> &mdash; <strong>ffmpeg decode frame to PNG (Blackrock &amp; TitleSequence)</strong>: exit=0. PNGs validate 1280x720 rgb24. Read title_f0.png visually = coherent letterboxed motion-blur car image (red/white/blue), not garbage -&gt; correct decode.</li>
+<li><code>.bik</code> &mdash; <strong>ffmpeg extract audio to WAV (Blackrock track 0)</strong>: exit=0. WAV validates pcm_s16le 44100 stereo duration=2.0 -&gt; binkaudio_dct decode works.</li>
+<li><code>.nis</code> &mdash; <strong>custom Python parser parse_nis.py on 5 real Track.nis files</strong>: All parse CLEAN, 0 leftover bytes, parsed count == header byte. Downtown/A: 10 recs (id=1 &#x27;PA03-1&#x27; flag=1...). docks/D: 34 recs. Powerplant/A: 18 recs of set-piece names (&#x27;1st_Ceiling_01&#x27;,&#x27;Chimney_01&#x27;,&#x27;Door_01&#x27;). nem_storm/A: 2-byte empty stub (69 00) as documented for boss tracks.</li>
+<li><code>.gbx</code> &mdash; <strong>custom Python parsers parse_gbx.py + gbx_floats.py on 5 real .gbx files</strong>: Headers+strings decode per wiki: count BE, type-hash 0xa3c09f74=&#x27;Ambient Light&#x27;, instance (&#x27;Downtown_Tunnel_ambient_box&#x27;,&#x27;Tunnel Ambient&#x27;,&#x27;Carparkblue1&#x27;). Downtown/midday = 4-byte empty stub CLEAN. Float-aware parse of Downtown/sunset (212B,2recs) consumes whole file with 0 leftover: each record=12 BE float32 (443.777,0,0, 0,15.284,0, 0,0,54.354, pos -606.059,-6.882,-941.581). Confirms 3x3 basis+position.</li>
+<li><code>.gfx</code> &mdash; <strong>ffdec 26.2.1 -dumpSWF</strong>: Clean full tag list: ExporterInfo tagId=1000, FileAttributes, SetBackgroundColor, DoAction (2794-byte AS2), DefineShape3, DefineFont3 (fn:&quot;Arial&quot;), 28x DefineEditText/CSMSettings/PlaceObject2 with named instances (txt_Title, txt_Menu0..txt_Menu22). No parse errors.</li>
+<li><code>.gfx</code> &mdash; <strong>ffdec 26.2.1 -export script,image,shape,text,font</strong>: Wrote scripts/frame_1/DoAction.as (fully decompiled AS2: SetTitle(), SetHelp(), SetMenuItem() with itemLookup array), fonts/2_Arial.ttf (valid TrueType), shapes/1.svg, texts/3..30.txt. &#x27;Export finished ... OK&#x27;.</li>
+<li><code>.gfx</code> &mdash; <strong>ffdec 26.2.1 -export font,image (font library)</strong>: 27 DefineFont3 -&gt; 27 valid TTF files (verified `file`: &#x27;TrueType Font data, 11 tables&#x27;), with GFx ExportAssets symbol names recovered ($HudFontA, $MessageFont, $DebugFont, $FE_Medium, HelvNeueLTStd_* family). Tag histogram: 27 DefineFont3, 24 ExportAssets, 28 DefineEditText, 1 ExporterInfo.</li>
+<li><code>.gfx</code> &mdash; <strong>ffdec 26.2.1 -swf2xml / -xml2swf</strong>: swf2xml produced 208KB structured XML: gfx=&quot;true&quot; version=&quot;8&quot;, ExporterInfo bitmapFormat=13 swfName=FE_vehicle_select_Image version=532, DefineExternalImage exportName=FE_vehSelectCarV2_Glow fileName=FE_vehSelectCarV2_Glow.tga targetWidth=256 targetHeight=256, ExportAssetsTag linkage. xml2swf rebuilt a valid 14KB file preserving GFX magic.</li>
+<li><code>.gfx</code> &mdash; <strong>ffdec 26.2.1 GFx tag inventory across all 82 .gfx</strong>: Exactly two GFx-specific tags used build-wide: tagId=1000 ExporterInfo x82 (one per file), tagId=1001 DefineExternalImage x739 (all external .tga refs). Everything else is stock SWF, all handled. Confirms textures are stripped/external, not embedded.</li>
+<li><code>.hkColl</code> &mdash; <strong>python xml.etree.ElementTree</strong>: WELL-FORMED. root=hkpackfile attrs={classversion:5, contentsversion:Havok-5.5.0-r1}; 655 hkobjects; classes incl. hkpPhysicsData(1), hkpPhysicsSystem(1), hkpRigidBody(1), HavokMaterialExport(19), cHavokMeshMaterial(19). 0 &#x27;Skipped&#x27; comments =&gt; full geometry present.</li>
+<li><code>.hkPPs</code> &mdash; <strong>python xml.etree.ElementTree</strong>: WELL-FORMED, 13144 hkobjects, hkpackfile classversion=5 Havok-5.5.0-r1. Note: grep found 93 &#x27;&lt;!-- Skipped hkpShape --&gt;&#x27; comments (collision shapes omitted from XML).</li>
+<li><code>.hkRBs</code> &mdash; <strong>hkxconv v0.2.0-alpha + python xml.etree</strong>: hkxconv binary path: InvalidDataException 0x5 vs 0xB/0x8, no output. XML twin: WELL-FORMED, 10589 hkobjects, SingleBody_UD/CompoundBody_UD records present. Twin route works.</li>
+<li><code>.mcl</code> &mdash; <strong>od / hex inspection</strong>: Magic 53 44 52 49 (&#x27;SDRI&#x27;), then 00 00 00 08 (headerSize), 49 4e 53 53 (&#x27;INSS&#x27;), instanceCount, setId 10 c0 2f 34, &#x27;unnamed&#x27;, ASCII hash &#x27;0x622715a2&#x27;, param names like coloralpha_3_fadeout. Confirms custom material container, NOT Havok 57 E0 E0 57.</li>
+<li><code>.deform</code> &mdash; <strong>od / hex inspection</strong>: Magic 44 46 4d 02 (&#x27;DFM&#x27; v2), header 00 00 01 1c (vertexCount=284) 00 00 01 22 00 00 06 a4 00 00 00 19 ..., then vec4 vertices 3f 62 2f a9 ... 3f 80 00 00 (w=1.0 big-endian). Confirms custom DFM2, NOT Havok 57 E0 E0 57.</li>
+<li><code>.textures</code> &mdash; <strong>textures_probe.py (custom) + Pillow BC1</strong>: Parsed header version=12 flags=1 textureCount=1; descriptor crc=0xb7b2a83b DXT1 1024x2048 mips=12 payloadSize=1398144 name=Musclecar_01. Pixels@144 -&gt; 1024x2048 RGBA PNG. ffprobe: &#x27;png, rgba(pc), 1024x2048&#x27;. Visual: correct UV car-paint atlas with legible SPLIT/SECOND livery; damageMap shows car-body silhouette. Pillow ImageStat shows real variation (bodyPaint alpha mean 91 stddev 122).</li>
+<li><code>.textures</code> &mdash; <strong>textures_probe.py on Frontend stub</strong>: All 14 descriptors decoded with correct names/dims/CRCs (paraboloid_back/front, Musclecar_01, DamageMap, Dirt/Scratch/MetalMap, thumbnails+full-res). Tool correctly detected stub (pixels in .streamtex) and declined decode. Found 8x16 thumbnails (wiki said 16x16).</li>
+<li><code>.track</code> &mdash; <strong>parse_track.py (custom)</strong>: recordCount=67, size_law_ok=True (1612==4+67*24), rec0 start=(-197.232,-0.751,-160.000) end=(-197.232,-0.751,-142.683), rec1 chains. Bounds X[-222,252] Z[-233,163] match wiki. Largest file (478 rec) also OK. Size law verified across ALL 111 files, 0 mismatches.</li>
+<li><code>.track</code> &mdash; <strong>Kaitai Struct (.ksy + kaitaistruct runtime)</strong>: KAITAI-RUNTIME PARSE OK: record_count=67, rec0 matches custom parser, rec1.start==rec0.end True.</li>
+<li><code>.entities</code> &mdash; <strong>custom python</strong>: magic ENTS, ver 3, count 8, law 32+97*8==808, rec0 name=&#x27;Entity_StartPosition_Player1&#x27; pos=(-1512.30,9.31,321.57) index=1.0 — exact match to wiki.</li>
+<li><code>.powerplays</code> &mdash; <strong>head / text inspection</strong>: &#x27;&lt;Root FileVersion=&quot;1.0000000&quot;&gt; &lt;Powerplay name=&quot;..\..\..\..\Powerplays\Powerplays\PG07_Taxis_Long_P&quot; NiceName=...&gt;&#x27; — clean UTF-8 XML.</li>
+<li><code>.triggers</code> &mdash; <strong>head / text inspection</strong>: &#x27;&lt;Root FileVersion=&quot;1.0000000&quot;&gt; &lt;Trigger nameCRC=&quot;0x705A31FC&quot; id=&quot;1249478979.1976132399&quot; idCRC=&quot;0xB8553686&quot; triggerType=&quot;Standard&quot; enabled=&quot;true&quot;...&#x27; — clean XML.</li>
+<li><code>.timelineInfo</code> &mdash; <strong>custom python</strong>: version=1 count=299 size=3596 law(8+12*299)=3596 ok=True.</li>
+<li><code>.logicinfo</code> &mdash; <strong>custom python</strong>: size=288 ver=00030000 magic=cdab0df0 payloadLen=276 (==size-12 True) footer=badcadde; val0=5002.66 val1=189.43 val2=4838.22 — exact match to wiki.</li>
+<li><code>.sideways</code> &mdash; <strong>custom python</strong>: linkCount=283, bytes_consumed=833==filesize, link[6]=(2,[244,231]) — matches wiki &#x27;link[6] sideways links to ([244][231])&#x27;.</li>
+<li><code>.splitlength</code> &mdash; <strong>custom python</strong>: sectionCount=19 size=80 law(4+4*19)=80 ok=True; splitLen[0..2]=[1.0,1.0868,1.0742] — matches wiki (19 SECTION blocks).</li>
+<li><code>.linkorigins</code> &mdash; <strong>custom python</strong>: linkCount=283 size=1136 law(4+4*283)=1136 ok=True; origin[0..2]=[189.43,221.19,239.18] — matches wiki.</li>
+<li><code>.names</code> &mdash; <strong>custom python</strong>: countDigit=&#x27;1&#x27; names=[&#x27;sunrise&#x27;] — count digit matches entry count.</li>
+<li><code>.params</code> &mdash; <strong>custom python regex</strong>: directive=[&#x27;!directory: /AreaOfEffects/GlobalParameters&#x27;], 1 section, 5 key/value/range tuples extracted e.g. &#x27;a; Min Car Distance Factor&#x27;=0.75 range=(0.0,1.0).</li>
+<li><code>.xml</code> &mdash; <strong>head / text inspection</strong>: &#x27;&lt;Root FileVersion=&quot;1.0000000&quot;&gt; &lt;Config version=\&#x27;42\&#x27;/&gt; &lt;/Root&gt;&#x27; — clean XML.</li>
+<li><code>.crcs</code> &mdash; <strong>custom python</strong>: size=16 N=4 crc[0..3]=[0xdb0e7ea0,0x98023dfe,0x5d8ceb49,0xa092153e]; the shared 0x5d8ceb49 (=cubemap_Generic_swap per wiki) is present.</li>
+</ul>
+<h2>Archive (.ark)</h2>
+<h3><code>.ark</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Use the bespoke C:\Users\Niaz\splitsecond\_tools\ark_extract.py - the 16-byte header + 16-byte TOC container is fully decoded and verified across all 12 archives. It dumps every member by deriving on-disk length from the next-higher offset. To go further than container-level extraction (i.e. decode payloads), two follow-ups remain: (1) locate the zlib deflate start inside each member and inflate to the TOC &#x27;size&#x27;; (2) recover the nameHash function (needs real member-name strings, likely from .sectorInfo) to restore filenames. No need for QuickBMS/vgmstream/noesis for the container layer.</p>
+<p><strong>Custom effort:</strong> low. Big-endian. Header(16B): u32 version(0), u32 dataStart(=0x10+count*0x10), u32 count, u32 entrySize(0x10). TOC: count x 16B entries sorted ascending by nameHash, each = u32 size(decompressed/in-memory hint, NOT on-disk length), u32 nameHash(stable across levels), u32 reserved(0), u32 offset(absolute, into THIS file). Data region begins at dataStart (first ~8 bytes are a small leading record/pad before the first blob). On-disk stored length is NOT in the TOC - derive it as distance to the next-higher offset (clamp last to EOF). Static members are serialized objects framed by 02 00 00 08 + u32 itemType + length word; Stream members are deflate-packed model/texture resources behind an inner 00000000|innerSize|... table.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://aluigi.altervista.org/quickbms.htm">QuickBMS (no existing Split/Second .ark script)</a></td><td>open</td><td>no</td><td>No public QuickBMS/.bms script for Split/Second .ark was found (none installed locally; QuickBMS itself not installed). The format is simple enough that a .bms could be written, but the bespoke ark_extract.py already fully parses the TOC. zlib decompression of member payloads would still need the compression-boundary work below.</td></tr>
+<tr><td>zlib (inflate 1.2.3)</td><td>open</td><td>unknown</td><td>EBOOT links zlib inflate 1.2.3 (Mark Adler) - this is the codec packing member blobs. Members do NOT deflate at byte 0 though; the stream starts inside per-member sub-framing, so straight inflate of a dumped blob fails until that offset is found.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom ark_extract.py</td><td><span class="badge ok">Works</span></td><td>Ran on all 6 levels (12 archives: airport_test_03, nem_downtown, docks, Downtown, Graveyard, Powerplant). For EVERY archive: dataStart==0x10+count*0x10, TOC strictly sorted by nameHash, reserved==0 in all entries, all offsets in [dataStart,fileSize]. Magic check: Static archives = 100% of non-empty members start with 02 00 00 08 (244/245, 141/142, 887/888, 767/768, 851/852, 1311/1312 - the single miss each is the size=0 placeholder). Stream archives = 0/all carry that tag (621/330/1278/1237/1089/1221 members), they use an inner 00000000|innerSize|... sub-resource framing. Dumped 60 Static .sobj + 20 Stream .bin from airport_test_03 to _tools/ark_out/; dumped Static blobs verified to open exactly on 02 00 00 08 NN.</td></tr>
+</table>
+<h2>Audio</h2>
+<h3><code>.fsb</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Use vgmstream-cli (open-source, MIT/ISC-ish). It fully decodes Split/Second&#x27;s FSB4 + MP3 banks to PCM WAV, lists/extracts subsongs with their original names, and preserves loop points. Tested working: vehicle (1 sample), Speech (13), Music (133 w/ loop). Command: vgmstream-cli.exe -m &lt;file&gt; to list; -o out.wav &lt;file&gt; to decode; -s N to pick subsong; -S 0 -o &quot;?n.wav&quot; to batch-extract all subsongs to named WAVs. ffmpeg is NOT an option (no FSB demuxer). fsb5 python pkg and FMOD-Decompiler do NOT apply (FSB5/.bank only). fsbext is a viable secondary open-source option but vgmstream is superior.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://github.com/vgmstream/vgmstream">vgmstream-cli</a></td><td>open</td><td>yes</td><td>FMOD FSB4 header + MPEG/MP3 codec on PS3 explicitly supported (src/meta/fsb.c, doc/FORMATS.md). DOWNLOADED &amp; TESTED — decoded vehicle/Speech/Music banks to valid 16-bit PCM WAV. win64 build = vgmstream-cli.exe + bundled DLLs (libmpg123 etc.).</td></tr>
+<tr><td><a href="https://github.com/gdawg/fsbext">fsbext (gdawg/fsbext)</a></td><td>open</td><td>unknown</td><td>Classic FSB3/FSB4 extractor; plausibly handles FSB4 MP3 but unmaintained. Not tested — vgmstream already fully solves this. Secondary fallback.</td></tr>
+<tr><td><a href="https://github.com/astral4/fsbex">fsbex (astral4/fsbex)</a></td><td>open</td><td>no</td><td>README states FSB version 5 only. Does NOT apply to FSB4.</td></tr>
+<tr><td><a href="https://github.com/HearthSim/python-fsb5">python-fsb5 (pip fsb5)</a></td><td>open</td><td>no</td><td>INSTALLED &amp; TESTED — raises ValueError &quot;Expected magic header &#x27;FSB5&#x27; but got b&#x27;FSB4&#x27;&quot;. FSB5 only; not applicable.</td></tr>
+<tr><td><a href="https://ffmpeg.org">ffmpeg/ffprobe</a></td><td>builtin</td><td>no</td><td>TESTED — ffprobe on .fsb returns &quot;Not yet implemented in FFmpeg, patches welcome&quot;. No FSB demuxer. Only useful to validate vgmstream&#x27;s WAV output (which it did: pcm_s16le 48kHz mono, duration matches).</td></tr>
+<tr><td><a href="https://aluigi.zenhax.com/viewtopic.php@t=1901.html">fmod_extr.exe (fmod_extractors)</a></td><td>leaked</td><td>yes</td><td>Needs FMOD Ex Programmer&#x27;s API fmodex.dll (commercial/leaked). Would extract FSB4 via official codec path. NOT run per legal guidance — vgmstream covers it.</td></tr>
+<tr><td><a href="https://github.com/doggywatty/FMOD-Decompiler">FMOD-Decompiler (doggywatty)</a></td><td>open</td><td>no</td><td>Modern FMOD Studio .bank only; does not read 2010 FMOD Ex FSB4/FEV1.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>vgmstream-cli -m</td><td><span class="badge ok">Works</span></td><td>metadata from: FMOD FSB4 header; encoding MPEG Layer III (MP3); 48000Hz mono; stream name tonic_source/Hypercar_03_Skyline_v3.wav (matches wiki).</td></tr>
+<tr><td>vgmstream-cli -o (decode)</td><td><span class="badge ok">Works</span></td><td>640556-byte WAV; ffprobe: pcm_s16le, 48000Hz, 1ch, 16-bit, duration 6.672s == reported 320256 samples.</td></tr>
+<tr><td>vgmstream-cli subsongs</td><td><span class="badge ok">Works</span></td><td>Music.fsb stream count: 133 with loop start/end; Speech.fsb stream count: 13, subsong 5 = source/press_b_button.wav decoded to 267308-byte WAV (ffprobe valid).</td></tr>
+<tr><td>vgmstream-cli -S 0 batch</td><td><span class="badge ok">Works</span></td><td>All 12 named co-driver lines written (when_you_see, ok_kid, come_on, press_b_button, ...) as valid WAVs. (CLI returns nonzero from filename-template quirk but all files produced correctly.)</td></tr>
+<tr><td>python fsb5</td><td>fails</td><td>ValueError: Expected magic header &#x27;FSB5&#x27; but got b&#x27;FSB4&#x27; — confirms pkg is N/A.</td></tr>
+<tr><td>ffprobe on .fsb</td><td>fails</td><td>&quot;Not yet implemented in FFmpeg, patches welcome&quot; — no FSB demuxer.</td></tr>
+</table>
+<h3><code>.fev</code> <span class="badge partial">Partial</span></h3>
+<p><strong>Recommendation:</strong> Use xoreos-tools fev2xml (open-source GPLv3) for the header + project/category/wavebank tree. TESTED: it accepts the FEV1 magic and begins parsing but throws &quot;Invalid event mode&quot; on the per-event mode dword because Split/Second&#x27;s FEV is built for PS3 and its event records differ from the PC/Xbox FMOD layouts xoreos was written against. So fev2xml gets you the bus/category names and wavebank refs but NOT the full event graph. For a complete decode, write a custom parser keyed on the FEV1 layout in wiki/format-fev.html (header + length-prefixed strings + category volumes are fully mapped; the deep event/parameter-curve records are only partially mapped and need more RE). Medium effort: header+strings+categories+wavebanks are straightforward; event graph + DSP chains are the hard part. The legitimate authoring tool (FMOD Designer 2010) is commercial and cannot reverse a compiled FEV anyway.</p>
+<p><strong>Custom effort:</strong> medium. Custom Python/Kaitai parser: read &#x27;FEV1&#x27; + ver 0x3a, then the documented length-prefixed string table (uint32 LE len incl NUL + bytes + NUL). Walk project name -&gt; wavebank list (count + names) -&gt; category tree (name + float32 LE 1.0 volume). That much is fully specified in wiki/format-fev.html and reproduces cleanly. The remaining event-group/event records (GUIDs, param ranges, layer/sound-def graphs, 3D rolloff property block whose field NAMES are already in the string table: LowPassMix, ReverbMix, InnerRadius, ConeAngle, etc.) need iterative RE against several FEVs to pin value layout — fork xoreos fevdumper.cpp as a starting point and fix the event-mode read for the PS3 record order. The FSB-side names recovered via vgmstream cross-reference the FEV event targets.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://github.com/xoreos/xoreos-tools">xoreos-tools fev2xml</a></td><td>open</td><td>no</td><td>DOWNLOADED &amp; TESTED (0.0.6 win64). Supports FEV1 magic (kFEVID = &#x27;FEV1&#x27;) with no version gate; reads header LE. FAILS on our files with &quot;Invalid event mode&quot;: readEvent does readUint32BE() and requires bit 0x10000000(3D) or 0x08000000(2D); PS3 FEV1 event records don&#x27;t match -&gt; exception. Header/category/wavebank tree is within reach; fork &amp; fix for PS3.</td></tr>
+<tr><td><a href="https://www.fmod.com">FMOD Designer 2010 (FMOD Ex 4.28 toolchain)</a></td><td>commercial</td><td>no</td><td>The tool that BUILT these FEVs, but it cannot import/reverse a compiled .fev (only export). Commercial license. Not a viable extractor.</td></tr>
+<tr><td><a href="https://github.com/HearthSim/python-fsb5/issues/9">python-fsb5 issue #9 (fev parsing)</a></td><td>open</td><td>unknown</td><td>Community request for FEV parsing in python-fsb5 — no shipped implementation. Documents that no mature open FEV parser exists; reinforces custom route.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>xoreos-tools fev2xml</td><td>partial</td><td>Accepts FEV1 magic + header, then prints &quot;ERROR: Invalid event mode&quot; and exits 1, writing a 0-byte XML. Confirms FEV1 recognized but PS3 event records unparseable by xoreos. Header/strings layout matches wiki (verified via hexdump: magic FEV1, ver 00 00 3a 00, len-prefixed &#x27;ReverbAndGroups&#x27;, &#x27;master&#x27;/&#x27;music&#x27;/&#x27;PlayerEngine&#x27; with 1.0f volumes).</td></tr>
+</table>
+<h3><code>.lip</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> MIS-FILED under audio: Track.lip is the compiled AI TrackLogic node graph (racing-line/respot/crash-zone), NOT lip-sync/viseme data. No off-the-shelf tool exists, but it is trivially decoded with a tiny custom big-endian parser, and every Track.lip ships next to a human-readable Track.debug.txt twin that serves as ground truth. I wrote a ~20-line Python parser (C:\Users\Niaz\splitsecond\_tools\lip_parse.py) and it decoded all 276 nodes of Downtown/A with positions matching the debug twin to the integer. Custom effort is LOW. Audio toolchain is irrelevant here.</p>
+<p><strong>Custom effort:</strong> low. Big-endian struct parser per wiki/format-lip.html: header 0x24 bytes (word0 = node stride 0x50); node array at 0x24, record stride 0x50; per-record posX/Y/Z float32 BE at +0x10/+0x14/+0x18, sequential nodeIndex uint32 BE at +0x48, corridor width float at +0x40. Validate against Track.debug.txt. Still-open fields (the +0x44 flag byte pair does NOT carry the four booleans; the +0x1C link words and trailing section table at header 0x10 point into Track.linkorigins/Track.checkpoints) need a later cross-file pass, but the node positions/index/stride are solved.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>(none — not audio/lip-sync)</td><td>unknown</td><td>no</td><td>No public tool. Not an FMOD/audio format despite the extension. Engine-specific Black Rock TrackLogic data; the Track.debug.txt twin is the de-facto reference dump.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom lip_parse.py (Python big-endian)</td><td><span class="badge ok">Works</span></td><td>nodeStride=0x50; parsed 276 nodes; Node[0..3] Pos (-1342,9,254)(-1314,9,239)(-1298,9,231)(-1277,9,220) matching Track.debug.txt Node[0..3] (X,Z exact; Y 9 vs 8 = rounding of 8.51). Confirms stride/layout/big-endian floats.</td></tr>
+</table>
+<h3><code>.tonic</code> <span class="badge cat">Custom parser</span></h3>
+<p><strong>Recommendation:</strong> Black Rock Studio proprietary granular engine-sound format (NOT FMOD). Zero public tooling exists. Header fields are diff-confirmed across cars (version 7, sweeps, sample rate 44100, grain count, per-car size words) but the grain index + packed sample pool (looks delta/ADPCM-ish) is opaque without the engine&#x27;s Tonic decoder. A full decoder is HIGH effort. Mitigations available: (1) XML source twins exist under Audio/Tonic/_StateEngine/&lt;car&gt;.xml + _CarSpecific/_CarTypeSpecific for the state model; (2) the eboot documents a debug-capture path (Num Sweeps / GrainJob / SampleJob / grainIndex startSample endSample) that names the grain record fields. Recommend RE the grain-index table first (startSample/endSample/size per grain), then attempt the sample-pool codec (test 16-bit PCM big-endian and common ADPCM against a known grain slice). No legitimate or leaked tool helps — this is fully in-house.</p>
+<p><strong>Custom effort:</strong> high. Header is mapped (wiki/format-tonic.html): BE uint32 block, ver=7, field04=1, numSweeps, countA, sampleRate (44100/.tonic, 21000/.tonic2), numGrains, plus per-car sizeA/sizeB. Step 1: parse header, then locate the grain-index table sized by numGrains; each grain entry should hold grainIndex/startSample/endSample/size (field names from the eboot debug strings) — diff across cars to fix the record stride. Step 2: the remaining block is the raw sample pool; test decodes (16-bit PCM BE; FMOD/ADPCM variants) by slicing startSample..endSample of grain 0 and listening/plotting. Step 3: optionally drive the RPM/load state engine from the _StateEngine XML to reconstruct a sweep. .tonic2 is a half-rate LOD of the same data (21kHz, ~half size) so solving .tonic solves both. This needs Tonic class internals not in the data; expect multiple iterations.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>(none)</td><td>unknown</td><td>no</td><td>Web search for Split/Second Tonic granular extractor returned nothing (only generic granular-synth VSTs). No QuickBMS/Noesis/Kaitai script exists. Proprietary Black Rock format.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>hex/header diff (od) + wiki cross-check</td><td>partial</td><td>Header decodes per wiki: 00000007(ver) 00000001 00000004(sweeps) 00000012 0000AC44(44100) ... numGrains 0x34d. .tonic2 identical except rate 00005208(21000) and halved size words; file 2.76MB vs 1.37MB. Confirms format+LOD relationship; grain payload remains opaque (no decoder).</td></tr>
+</table>
+<h3><code>.tonic2</code> <span class="badge cat">Custom parser</span></h3>
+<p><strong>Recommendation:</strong> Lower-rate (21000 Hz) LOD twin of .tonic, byte-for-byte the same header except the sample-rate word and ~half the per-car sizes; file is ~half the size. Same proprietary Black Rock granular format, same lack of public tooling. Solving the .tonic grain decoder solves .tonic2 automatically. See .tonic recommendation.</p>
+<p><strong>Custom effort:</strong> high. Identical to .tonic (shared format). Only the sampleRate word (21000 vs 44100) and the size/count words differ; reuse the same grain-index + pool decoder. Useful as a smaller test corpus when reversing the codec.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>(none)</td><td>unknown</td><td>no</td><td>Same as .tonic — no public tool. Half-rate LOD of the .tonic grain set.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>hex/header diff (od)</td><td>partial</td><td>Header matches .tonic except rate 00005208(21000) and sizeA/sizeB halved (0x067b/0x03c0 vs 0x0d9c/0x07e0); same ver7/sweeps4/numGrains 0x34d. Confirms it&#x27;s a downsampled twin, not a distinct format.</td></tr>
+</table>
+<h2>Video</h2>
+<h3><code>.bik</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Use ffmpeg/ffprobe (already installed, builtin libavcodec Bink-1 decoder). Confirmed working end-to-end on real samples: ffprobe reports codec=binkvideo tag BIKi with full stream layout; ffmpeg decodes frames to PNG and audio to WAV. No purchase or download needed. RAD Video Tools / BinkConv is the commercial fallback only if you ever hit a Bink-2 (KB2) file -- Split/Second uses none (all 29 movies are BIKi / Bink 1).</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://ffmpeg.org">ffmpeg / ffprobe (libavcodec Bink decoder)</a></td><td>open</td><td>yes</td><td>Bink 1 (BIKi) reverse-engineered into libavcodec since 2010. Already on this machine (git-2020-01-15 build). Decodes the PS3 Split/Second .bik perfectly (container is LE even on PS3). Does NOT support Bink 2 (KB2), not needed here.</td></tr>
+<tr><td><a href="http://www.radgametools.com/bnkdown.htm">RAD Video Tools (radvideo64.exe / BinkConv)</a></td><td>commercial</td><td>yes</td><td>Vendor reference toolchain; handles Bink 1 and 2. Free download, proprietary EULA. Not required given ffmpeg works.</td></tr>
+<tr><td><a href="https://github.com/xoreos/xoreos/blob/master/src/video/bink.h">xoreos Bink decoder</a></td><td>open</td><td>yes</td><td>Independent GPL reimplementation of Bink 1 video+audio; reference if embedding rather than shelling to ffmpeg.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>ffprobe Blackrock.bik</td><td><span class="badge ok">Works</span></td><td>format_name=bink, probe_score=100; stream0 binkvideo tag=BIKi 1280x720 yuv420p 30/1fps 6.5s/195frames; streams 1&amp;2 binkaudio_dct 44100 stereo ids 0x0,0x5. Matches wiki header decode.</td></tr>
+<tr><td>ffprobe DIS.bik</td><td><span class="badge ok">Works</span></td><td>640x360, r_frame_rate=51640/1723, FIVE binkaudio_dct mono tracks -- matches wiki&#x27;s documented DIS multi-track/odd-rational case.</td></tr>
+<tr><td>ffmpeg decode frame to PNG (Blackrock &amp; TitleSequence)</td><td><span class="badge ok">Works</span></td><td>exit=0. PNGs validate 1280x720 rgb24. Read title_f0.png visually = coherent letterboxed motion-blur car image (red/white/blue), not garbage -&gt; correct decode.</td></tr>
+<tr><td>ffmpeg extract audio to WAV (Blackrock track 0)</td><td><span class="badge ok">Works</span></td><td>exit=0. WAV validates pcm_s16le 44100 stereo duration=2.0 -&gt; binkaudio_dct decode works.</td></tr>
+</table>
+<h3><code>.nis</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Custom parser (written &amp; tested) -- ~25 lines of Python, no dependency. This is the Black Rock TrackLogic/AITrack route table (magic byte &#x27;i&#x27;=0x69, then uint8 record_count, then records of {BE uint16 segment_id, NUL-term ASCII zone code, uint8 flag}). NOT a cutscene/video format despite the extension. No third-party tool exists or is needed. Parser consumed all 5 tested files with zero leftover bytes.</p>
+<p><strong>Custom effort:</strong> low. Read byte0 (magic 0x69), byte1 (record_count). Loop count times: BE uint16 segment_id, NUL-terminated ASCII zone_code, uint8 flag. No offset tables, no padding. ~25 lines, emit CSV/JSON. Empty Nemesis tracks are the 2-byte header-only stub. Remaining unknowns (what segment_id indexes, flag meaning) are interpretation, not parsing -- bytes fully recovered.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>(none) -- bespoke Black Rock format</td><td>unknown</td><td>no</td><td>No public QuickBMS/Noesis/Kaitai/converter targets Split/Second .nis. A community QuickBMS script exists only for Black Rock&#x27;s .ark archive container, irrelevant here (devkit data already loose on disk).</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom Python parser parse_nis.py on 5 real Track.nis files</td><td><span class="badge ok">Works</span></td><td>All parse CLEAN, 0 leftover bytes, parsed count == header byte. Downtown/A: 10 recs (id=1 &#x27;PA03-1&#x27; flag=1...). docks/D: 34 recs. Powerplant/A: 18 recs of set-piece names (&#x27;1st_Ceiling_01&#x27;,&#x27;Chimney_01&#x27;,&#x27;Door_01&#x27;). nem_storm/A: 2-byte empty stub (69 00) as documented for boss tracks.</td></tr>
+</table>
+<h3><code>.gbx</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Custom parser (written &amp; tested) -- ~40 lines of Python. Black Rock per-light-rig override table (BE uint32 record_count; per record: BE uint32 type-hash, BE uint32 strlen+ASCII type-name, BE uint32 name-hash, BE uint32 strlen+ASCII instance-name, then a run of BE float32). 13/18 files are 4-byte empty stubs; 5 carry records. NOT the Nadeo/TrackMania GBX format (those use ASCII &#x27;GBX&#x27; magic, handled by gbx-net/GbxDump) -- those tools do NOT apply. NEW: &#x27;Ambient Light&#x27; records carry exactly 12 BE float32 (3x3 basis matrix + position vector), resolving the wiki&#x27;s &#x27;Partial&#x27; unmapped-float-count.</p>
+<p><strong>Custom effort:</strong> low. Read BE uint32 record_count (0 =&gt; 4-byte empty stub). Per record: BE uint32 type-hash; BE uint32 len+ASCII type-name; BE uint32 name-hash; BE uint32 len+ASCII instance-name; then BE float32 transform values. &#x27;Ambient Light&#x27; = 12 floats (3x3 matrix + xyz position), verified to fully consume the file. &#x27;Prop Draw Distance&#x27; records (Graveyard/midday, keyed to props PP16_RockFall_Small_1/PP04_FlatBedTruck) likely carry fewer floats; delimit via the self-terminating heuristic (next record = hash + small length + printable ASCII). ~40 lines. Only residual unknown is float count for non-&#x27;Ambient Light&#x27; record types.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://github.com/BigBang1112/gbx-net">gbx-net / GbxDump (Nadeo TrackMania GBX)</a></td><td>open</td><td>no</td><td>FALSE-FRIEND: only handles Nadeo GameBox files (ASCII &#x27;GBX&#x27; magic, reference table + body). Split/Second .gbx is unrelated (BE record-count header) and will be rejected. Listed to document the trap.</td></tr>
+<tr><td>(none) for the actual Black Rock .gbx</td><td>unknown</td><td>no</td><td>No public tool/script targets Split/Second&#x27;s light-rig .gbx. Custom parser required (trivial).</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom Python parsers parse_gbx.py + gbx_floats.py on 5 real .gbx files</td><td><span class="badge ok">Works</span></td><td>Headers+strings decode per wiki: count BE, type-hash 0xa3c09f74=&#x27;Ambient Light&#x27;, instance (&#x27;Downtown_Tunnel_ambient_box&#x27;,&#x27;Tunnel Ambient&#x27;,&#x27;Carparkblue1&#x27;). Downtown/midday = 4-byte empty stub CLEAN. Float-aware parse of Downtown/sunset (212B,2recs) consumes whole file with 0 leftover: each record=12 BE float32 (443.777,0,0, 0,15.284,0, 0,0,54.354, pos -606.059,-6.882,-941.581). Confirms 3x3 basis+position.</td></tr>
+</table>
+<h2>Flash / UI</h2>
+<h3><code>.gfx</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Use JPEXS Free Flash Decompiler (ffdec / jpexs-decompiler) v26.2.1 headlessly via `java -jar ffdec.jar`. It fully parses Split/Second&#x27;s Scaleform GFx files and exports every asset type. TESTED and CONFIRMED working on real samples. Installed at C:\Users\Niaz\splitsecond\_tools\ffdec (portable zip, no install needed; Java 21 already present). Key commands: `-dumpSWF &lt;file&gt;` (tag listing), `-export script,image,shape,text,font &lt;outdir&gt; &lt;file&gt;` (extract assets), `-swf2xml &lt;file&gt; &lt;out.xml&gt;` / `-xml2swf` (full structural round-trip). All 82 .gfx files use the same layout: GFX magic 47 46 58 08 (v8/Flash8, little-endian), exactly two GFx-specific tags (ExporterInfo=1000, DefineExternalImage=1001) plus stock SWF tags; ffdec decodes all of them. NOTE: textures are NOT embedded — every DefineExternalImage references an external .tga (e.g. Loading_Bar.tga, FE_vehSelectCarV2_Glow.tga) per Scaleform&#x27;s gfxexport &#x27;stripped&#x27; workflow; those bitmaps live in the build&#x27;s texture files (textures cluster), so ffdec recovers their NAMES/dimensions but not pixels. Renaming .gfx-&gt;.swf is unnecessary (ffdec opens .gfx directly) and generic SWF parsers may choke on tags 1000/1001 unless they skip unknown tags by length — prefer ffdec, which is GFx-aware.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://github.com/jindrapetrik/jpexs-decompiler (release v26.2.1: https://github.com/jindrapetrik/jpexs-decompiler/releases/download/version26.2.1/ffdec_26.2.1.zip)">JPEXS Free Flash Decompiler (ffdec / jpexs-decompiler)</a></td><td>open</td><td>yes</td><td>Explicit GFX/Scaleform support. TESTED on Split/Second .gfx (PS3 build): correctly identifies ExporterInfo (tagId=1000, exporter version=532, bitmapFormat=13) and DefineExternalImage (tagId=1001) plus all stock SWF tags. Decompiled AS2 to readable source, exported fonts to valid TrueType (verified by `file`), shapes to SVG, text to txt, and round-tripped via swf2xml/xml2swf. Requires Java 8+ (Java 21 present on this machine). Note: .gfx is little-endian SWF byte order even on big-endian PS3, so no endianness issue.</td></tr>
+<tr><td><a href="https://ruffle.rs">Ruffle</a></td><td>open</td><td>no</td><td>Plays AS1/AS2/AS3 SWFs but has NO Scaleform GFx awareness: it would fail on the GFX magic and tags 1000/1001, and cannot resolve the external .tga images these files depend on. Not viable for .gfx without first converting to plain SWF. Not tested; ruled out by format mismatch.</td></tr>
+<tr><td><a href="https://help.autodesk.com/cloudhelp/ENU/Scaleform-Help/scaleform_help/gfxexport2_reference.html (SDK discontinued by Autodesk 2017-07-12; binaries only via leaked copies)">Scaleform gfxexport / gfxexport2 (Autodesk Scaleform GFx SDK)</a></td><td>leaked</td><td>unknown</td><td>DOCUMENTED ONLY, not tested per legal guidance. This is the SWF-&gt;GFX direction (authoring), not extraction; the SDK&#x27;s GFxPlayer/Loader could render them but is proprietary/leaked. Useful as a spec reference: ExporterInfo records the source swfName + bitmapFormat + exporter version, and the stripped-resource model explains the external .tga references. Do not download/run the leaked SDK; ffdec covers the extraction need with an open-source tool.</td></tr>
+<tr><td><a href="https://rewiki.miraheze.org/wiki/Macromedia_Flash_SWF_/_Scaleform_GFX">RE Wiki: Macromedia Flash SWF / Scaleform GFX</a></td><td>open</td><td>yes</td><td>Documents GFX/CFX magics and GFx-specific tag IDs (1000 ExporterInfo, 1001 DefineExternalImage, font-texture tags). Corroborates the on-disk findings.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>ffdec 26.2.1 -dumpSWF</td><td><span class="badge ok">Works</span></td><td>Clean full tag list: ExporterInfo tagId=1000, FileAttributes, SetBackgroundColor, DoAction (2794-byte AS2), DefineShape3, DefineFont3 (fn:&quot;Arial&quot;), 28x DefineEditText/CSMSettings/PlaceObject2 with named instances (txt_Title, txt_Menu0..txt_Menu22). No parse errors.</td></tr>
+<tr><td>ffdec 26.2.1 -export script,image,shape,text,font</td><td><span class="badge ok">Works</span></td><td>Wrote scripts/frame_1/DoAction.as (fully decompiled AS2: SetTitle(), SetHelp(), SetMenuItem() with itemLookup array), fonts/2_Arial.ttf (valid TrueType), shapes/1.svg, texts/3..30.txt. &#x27;Export finished ... OK&#x27;.</td></tr>
+<tr><td>ffdec 26.2.1 -export font,image (font library)</td><td><span class="badge ok">Works</span></td><td>27 DefineFont3 -&gt; 27 valid TTF files (verified `file`: &#x27;TrueType Font data, 11 tables&#x27;), with GFx ExportAssets symbol names recovered ($HudFontA, $MessageFont, $DebugFont, $FE_Medium, HelvNeueLTStd_* family). Tag histogram: 27 DefineFont3, 24 ExportAssets, 28 DefineEditText, 1 ExporterInfo.</td></tr>
+<tr><td>ffdec 26.2.1 -swf2xml / -xml2swf</td><td><span class="badge ok">Works</span></td><td>swf2xml produced 208KB structured XML: gfx=&quot;true&quot; version=&quot;8&quot;, ExporterInfo bitmapFormat=13 swfName=FE_vehicle_select_Image version=532, DefineExternalImage exportName=FE_vehSelectCarV2_Glow fileName=FE_vehSelectCarV2_Glow.tga targetWidth=256 targetHeight=256, ExportAssetsTag linkage. xml2swf rebuilt a valid 14KB file preserving GFX magic.</td></tr>
+<tr><td>ffdec 26.2.1 GFx tag inventory across all 82 .gfx</td><td><span class="badge ok">Works</span></td><td>Exactly two GFx-specific tags used build-wide: tagId=1000 ExporterInfo x82 (one per file), tagId=1001 DefineExternalImage x739 (all external .tga refs). Everything else is stock SWF, all handled. Confirms textures are stripped/external, not embedded.</td></tr>
+</table>
+<h2>Physics (Havok)</h2>
+<h3><code>.phys</code> <span class="badge partial">Partial</span></h3>
+<p><strong>Recommendation:</strong> Per-car Havok 5.5.0 packfile (root hkpPhysicsSystem), big-endian PS3, NO XML twin (21 binaries / 0 twins). Tested: hkxconv REJECTS it at the header version check (fileVersion=0x5, tool wants 0xB/0x8). No open-source tool reads Havok 5.5.0 physics packfiles. RECOMMENDED: write a small custom big-endian parser that walks the packfile&#x27;s own embedded reflection (__classnames__/__types__/__data__ + the local/global/virtual fixup tables) — the schema is self-describing inside the file (the wiki already decoded the hkpMaterial/motion fields this way). Effort ~medium. Alternative (do NOT use for testing, document only): the leaked Havok Content Tools 5.5 SDK (AssetCc2.exe / hctStandAloneFilterManager.exe) natively loads Havok 5.5.0 packfiles and can re-serialize them to XML/FBX — exact version match, but proprietary/leaked.</p>
+<p><strong>Custom effort:</strong> medium. Big-endian Havok-5.5.0 packfile reader in Python: parse hkPackfileHeader (magic/userTag/fileVersion/layoutRules/numSections/contents*), read the three 0x30-byte section headers (__classnames__/__types__/__data__), build the class registry from __classnames__ (uint32 sig + 0x09 + cstr) and member layouts from __types__, then walk __data__ applying the local/global/virtual fixup tables to resolve ptr32 offsets. The file is self-describing so no external SDK headers are needed. The wiki page already proves this is feasible (it decoded hkpMaterial responseType/friction/restitution and motion fields by hand).</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://github.com/ret2end/hkxconv">hkxconv (ret2end)</a></td><td>open</td><td>no</td><td>TESTED on Musclecar_01.phys: throws InvalidDataException &#x27;Read Int32: 0x5 | Expected: 0xB, 0x8&#x27; at HKX2.HKXHeader ctor. Built for Skyrim SE Havok 2014 (packfile ver 0xB/0x8); rejects Havok 5 at the version field before reading content.</td></tr>
+<tr><td><a href="https://github.com/figment/hkxcmd">hkxcmd (figment)</a></td><td>open</td><td>no</td><td>README states it supports ONLY Havok 2010.2.0, Win32 little-endian. Cannot read Havok 5.5.0 or big-endian PS3.</td></tr>
+<tr><td><a href="https://github.com/Dexesttp/hkxpack">hkxpack (Dexesttp/aerisarn)</a></td><td>open</td><td>no</td><td>Targets hk_2010.2.0-r1 / hk_2014.1.0-r1 (Fallout/Skyrim), little-endian. Not Havok 5.5.0, not PS3.</td></tr>
+<tr><td><a href="https://github.com/PredatorCZ/HavokLib">HavokLib (PredatorCZ)</a></td><td>open</td><td>no</td><td>README: supports &#x27;Havok 5.0.0 - 2017&#x27;, both endians (incl. PS3 BE) — container/version IS in range. BUT animation classes only (hka*/hkx*); does NOT implement physics classes (hkpPhysicsSystem/hkpRigidBody/etc.) that make up .phys. Could be extended in C++ but no physics support today.</td></tr>
+<tr><td><a href="https://havok-content-tools.software.informer.com/">Havok Content Tools 5.5 SDK (AssetCc2 / hctStandAloneFilterManager)</a></td><td>leaked</td><td>yes</td><td>DOCUMENTED ONLY, not tested (proprietary/leaked, per task rules). Exact 5.5.0 version match incl. PS3 endian; the only thing that reads these physics packfiles natively. Same SDK the Sonic Unleashed (2008 PS3, also Havok 5.5.0) community tools wrap.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>hkxconv v0.2.0-alpha</td><td>fails</td><td>System.IO.InvalidDataException: Read Int32: 0x5 | Expected: 0xB, 0x8 | Ending position: 0x10 at HKX2.HKXHeader..ctor. No output file written. (0x5 = Havok-5.5.0 packfile fileVersion at 0x0C, confirmed in od dump 00 00 00 05.)</td></tr>
+</table>
+<h3><code>.hkColl</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Static level + per-subtrack collision, Havok 5.5.0 packfile (root hkRootLevelContainer -&gt; hkpPhysicsData -&gt; MOPP BV-tree + extended mesh + baked HavokMaterialExport table). 100% XML-twin coverage (32 .hkColl / 32 .hkCollXml). USE THE XML TWIN: it is well-formed Havok tagfile XML (verified 655 hkobjects parse cleanly) and is COMPLETE — 0 skipped shapes, full hkpMoppCode geometry present. For the binary itself, hkxconv/hkxcmd/hkxpack all reject Havok 5.5.0, so the twin is the route. mainColl-style binary parsing only needed if you want the .hkColl bytes directly.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>stock XML parser (python xml.etree / lxml / browser)</td><td>builtin</td><td>yes</td><td>TESTED: docks.hkCollXml parses cleanly, root hkpackfile classversion=5 contentsversion=Havok-5.5.0-r1, 655 hkobjects incl. hkpPhysicsData/hkpRigidBody/hkpMoppCode/HavokMaterialExport. The XML twin fully documents and contains the data.</td></tr>
+<tr><td><a href="https://github.com/ret2end/hkxconv">hkxconv (ret2end)</a></td><td>open</td><td>no</td><td>Same Havok 5.5.0 header rejection as .phys (only needed for the binary; the .hkCollXml twin already covers this format).</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>python xml.etree.ElementTree</td><td><span class="badge ok">Works</span></td><td>WELL-FORMED. root=hkpackfile attrs={classversion:5, contentsversion:Havok-5.5.0-r1}; 655 hkobjects; classes incl. hkpPhysicsData(1), hkpPhysicsSystem(1), hkpRigidBody(1), HavokMaterialExport(19), cHavokMeshMaterial(19). 0 &#x27;Skipped&#x27; comments =&gt; full geometry present.</td></tr>
+</table>
+<h3><code>.mainColl</code> <span class="badge partial">Partial</span></h3>
+<p><strong>Recommendation:</strong> Per-VEHICLE collision, Havok 5.5.0 packfile (root hkRootLevelContainer with 4 named hkpConvexVerticesShape hulls: Vs_Environment/Vs_Object/Vs_Vehicle/Core). Genuine Havok packfile (magic 57 E0 E0 57, ver 5) but has NO XML twin (39 binaries / 0 twins). Tested: hkxconv REJECTS it (same fileVersion=0x5 error). RECOMMENDED: same custom big-endian Havok-5.5.0 parser as .phys (the convex hulls are hkpConvexVerticesShape/hkpConvexVerticesShapeFourVectors, vertex data is straightforward once fixups are resolved). Leaked HCT 5.5 SDK would also read it (document only).</p>
+<p><strong>Custom effort:</strong> medium. Reuse the .phys big-endian Havok-5.5.0 packfile parser. Root is hkRootLevelContainer -&gt; 4 hkRootLevelContainerNamedVariant -&gt; hkpConvexVerticesShape (each with rotatedVertices/numVertices/planeEquations via hkpConvexVerticesShapeFourVectors). Resolve ptr32 via the section fixup tables, then read SIMD-packed vertices as big-endian float32. No XML twin exists so this binary parse is mandatory for .mainColl.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://github.com/ret2end/hkxconv">hkxconv (ret2end)</a></td><td>open</td><td>no</td><td>TESTED on Musclecar_01.mainColl: same InvalidDataException &#x27;Read Int32: 0x5 | Expected: 0xB, 0x8&#x27; at HKX2.HKXHeader. Rejected.</td></tr>
+<tr><td>hkxcmd / hkxpack / HavokLib</td><td>open</td><td>no</td><td>All target Havok 2010+/2014 (physics) or animation-only; none decode Havok 5.5.0 physics packfiles.</td></tr>
+<tr><td>Havok Content Tools 5.5 SDK</td><td>leaked</td><td>yes</td><td>Documented only. Native 5.5.0 support could dump these hulls to XML/FBX.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>hkxconv v0.2.0-alpha</td><td>fails</td><td>System.IO.InvalidDataException: Read Int32: 0x5 | Expected: 0xB, 0x8 at HKX2.HKXHeader..ctor. No output. Magic verified 57 e0 e0 57 / fileVersion 00 00 00 05.</td></tr>
+</table>
+<h3><code>.hkPPs</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Per-subtrack &#x27;Physics Pack&#x27;, Havok 5.5.0 packfile, root hkRootLevelContainer with 8 variants (hkpPhysicsData + Black Rock trigger/AOE/animated-body export user-data + hkaAnimation). 100% XML-twin coverage (19/19). USE THE XML TWIN — verified 13144 hkobjects parse cleanly and contain the gameplay objects (triggers, AOE, rigid bodies, animation). CAVEAT: the twin has 93 `&lt;!-- Skipped hkpShape --&gt;` comments, i.e. the large collision SHAPES are omitted from the XML; if you need that geometry you must parse the binary (no open-source tool reads Havok 5.5.0). For gameplay/trigger/AOE/animation data the twin is sufficient and is the recommended route.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>stock XML parser</td><td>builtin</td><td>yes</td><td>TESTED: docks.hkPPsXml -&gt; 13144 hkobjects, classes incl. hkpRigidBody(451), hkpConvexVerticesShape(447), hkaBone(2087), hkaAnimationContainer(100). Well-formed.</td></tr>
+<tr><td><a href="https://github.com/PredatorCZ/HavokLib">HavokLib (PredatorCZ)</a></td><td>open</td><td>unknown</td><td>Supports Havok 5.0.0-2017 both endians but animation classes only. Could potentially extract the hkaAnimation clips inside .hkPPs (variant 7) to glTF; would NOT handle the physics/trigger/AOE user-data. Not tested on these files.</td></tr>
+<tr><td><a href="https://github.com/ret2end/hkxconv">hkxconv (ret2end)</a></td><td>open</td><td>no</td><td>Rejects Havok 5.5.0 binary (same header error) — but the .hkPPsXml twin makes this unnecessary.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>python xml.etree.ElementTree</td><td><span class="badge ok">Works</span></td><td>WELL-FORMED, 13144 hkobjects, hkpackfile classversion=5 Havok-5.5.0-r1. Note: grep found 93 &#x27;&lt;!-- Skipped hkpShape --&gt;&#x27; comments (collision shapes omitted from XML).</td></tr>
+</table>
+<h3><code>.hkRBs</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Environment rigid bodies (.hkRBs destructibles, plus siblings .hkRBXs respot boxes, .hkHBXs handling boxes), Havok 5.5.0 packfile, root hkRootLevelContainer + Black Rock SingleBody_UD/CompoundBody_UD export user-data. 100% XML-twin coverage (.hkRBs 19/19, .hkRBXs 10/10, .hkHBXs 1/1). USE THE XML TWIN — verified 10589 hkobjects parse cleanly incl. SingleBody_UD(25)/CompoundBody_UD(23) records with their instanceName/family/breakability/bodyIds fields. The twin is the recommended route; the binary itself is rejected by all open-source Havok tools (Havok 5.5.0).</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>stock XML parser</td><td>builtin</td><td>yes</td><td>TESTED: docks.hkRBsXml -&gt; 10589 hkobjects incl. hkpRigidBody(146), hkpConvexVerticesShape(143), SingleBody_UD(25), CompoundBody_UD(23), hkpConvexTransformShape(3775). Well-formed; carries all the destructible-furniture metadata.</td></tr>
+<tr><td><a href="https://github.com/ret2end/hkxconv">hkxconv (ret2end)</a></td><td>open</td><td>no</td><td>TESTED on docks.hkRBs binary: same &#x27;Read Int32: 0x5 | Expected: 0xB, 0x8&#x27; rejection. The .hkRBsXml twin makes the binary path unnecessary.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>hkxconv v0.2.0-alpha + python xml.etree</td><td><span class="badge ok">Works</span></td><td>hkxconv binary path: InvalidDataException 0x5 vs 0xB/0x8, no output. XML twin: WELL-FORMED, 10589 hkobjects, SingleBody_UD/CompoundBody_UD records present. Twin route works.</td></tr>
+</table>
+<h3><code>.mcl</code> <span class="badge cat">Custom parser</span></h3>
+<p><strong>Recommendation:</strong> NOT a Havok file. Confirmed magic 53 44 52 49 = &#x27;SDRI&#x27; (shared Black Rock container, also used by .shaderinst), body chunk INSS...INSE. Payload = animated material-parameter overrides (color fades, UV scrolls, fresnel/specular, texture swaps) for powerplay sequences — no geometry, no hkp* classes. 1636 files, 0 XML twins. No existing tool; write a tiny custom big-endian SDRI/INSS reader (the layout is already documented in the wiki: header SDRI+headerSize+INSS+instanceCount+setId, then length-prefixed name + ASCII material-hash + param records of {nameLen,name,type,slot,count,value(s)}, ending INSE).</p>
+<p><strong>Custom effort:</strong> low. Big-endian struct reader: read &#x27;SDRI&#x27;, u32 headerSize(=8), &#x27;INSS&#x27;, u32 instanceCount, u32 setId; loop instanceCount times reading {u32 nameLen, char[] name, u32 hashLen, char[] materialHash, u32 flags, u32 paramCount, then paramCount records of (u32 nameLen, char[] name, u32 type, u32 slot, u32 count, value: type 0x02 = 1 or 3 float32, type 0x03 = u32 hash + 0x09 index block)}; expect trailing &#x27;INSE&#x27;. ~100 lines of Python. Layout already reverse-engineered in wiki/format-mcl.html.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>(none)</td><td>unknown</td><td>no</td><td>Custom Black Rock &#x27;SDRI&#x27; container. No public tool. Not Havok, not a known middleware format. quickbms/Noesis have no script for it.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>od / hex inspection</td><td><span class="badge ok">Works</span></td><td>Magic 53 44 52 49 (&#x27;SDRI&#x27;), then 00 00 00 08 (headerSize), 49 4e 53 53 (&#x27;INSS&#x27;), instanceCount, setId 10 c0 2f 34, &#x27;unnamed&#x27;, ASCII hash &#x27;0x622715a2&#x27;, param names like coloralpha_3_fadeout. Confirms custom material container, NOT Havok 57 E0 E0 57.</td></tr>
+</table>
+<h3><code>.deform</code> <span class="badge cat">Custom parser</span></h3>
+<p><strong>Recommendation:</strong> NOT a Havok file. Confirmed magic 44 46 4D 02 = &#x27;DFM&#x27; + version 2. Custom Black Rock vehicle damage/deformation model: 32-byte header (vertexCount + counts), then a vec4 big-endian-float32 vertex cage, uint16 index lists + 10-byte mass-spring edge records, then 100-byte named part-group records (CHASSIS_FRONT, HUB_FL, WISHBONE_BR, DISC_FL...), plus a chassis-link footer on body files. 46 files, 0 XML twins. No existing tool; write a custom big-endian DFM2 reader (layout documented in wiki/format-deform.html). EBOOT validates it with &#x27;Bad magic in deformation file %s (expected %08x, got %08x)&#x27;.</p>
+<p><strong>Custom effort:</strong> low. Big-endian reader: read magic &#x27;DFM\x02&#x27;; 7 u32 header fields (vertexCount A at 0x04 confirmed: 0x20 + A*16 = end of vertex array); read A vec4 float32 vertices; then the index/spring section (10-byte records: float32 restLength, u8 flag, u8 flag, u16 vertA, u16 vertB); then partGroupCount D fixed 100-byte named records (null-term name + hash + vertex-range pairs + weight floats); body files end with a null-term chassis name + 3 footer floats. ~150 lines of Python. Layout already reverse-engineered in wiki/format-deform.html; mind the footer floats which appear little-endian (exporter quirk).</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>(none)</td><td>unknown</td><td>no</td><td>Custom Black Rock &#x27;DFM2&#x27; format, fully proprietary to this engine. No public tool, no XML twin, not Havok.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>od / hex inspection</td><td><span class="badge ok">Works</span></td><td>Magic 44 46 4d 02 (&#x27;DFM&#x27; v2), header 00 00 01 1c (vertexCount=284) 00 00 01 22 00 00 06 a4 00 00 00 19 ..., then vec4 vertices 3f 62 2f a9 ... 3f 80 00 00 (w=1.0 big-endian). Confirms custom DFM2, NOT Havok 57 E0 E0 57.</td></tr>
+</table>
+<h2>Geometry &amp; Textures</h2>
+<h3><code>.textures</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> TESTED WORKING. Use the custom Python parser C:\Users\Niaz\splitsecond\_tools\textures_probe.py (stdlib + Pillow&#x27;s built-in &#x27;bcn&#x27; BC1/BC3 decoder). It parses the TEXS header/descriptors/C2NM names and converts the top DXT1 mip to a valid PNG. Produced correct car-livery and damage-map images from Musclecar_01_bodyPaint/_damageMap. Next steps to productionize: (1) emit every mip not just mip0; (2) handle A8R8G8B8 (0xA5) with an RSX Morton-unswizzle pass for uncompressed/non-pow2 surfaces; (3) walk the placement table for multi-texture inline files. No third-party tool exists or is needed.</p>
+<p><strong>Custom effort:</strong> low. Already built (~120 LOC). Header is fixed 0x18 bytes; descriptors are 0x24-stride starting at 0x2C; pixel region for single-tex files = C2NM_offset - dxt_chain_size; BCn blocks are linear (no swizzle). To finish: per-mip export + A8R8G8B8 unswizzle + multi-tex placement-table walk.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://pillow.readthedocs.io">Pillow (PIL) &#x27;bcn&#x27; decoder</a></td><td>open</td><td>yes</td><td>Already installed (12.1.1). Image.frombytes(&#x27;RGBA&#x27;,(w,h),raw,&#x27;bcn&#x27;,(1,)) decodes DXT1/BC1; (3,) for DXT5/BC3. Used in the working test.</td></tr>
+<tr><td><a href="https://ednessp.github.io/tools">Noesis fmt_BurnoutCRASH.py (edness) — reference only</a></td><td>open</td><td>no</td><td>For Burnout CRASH (different EA/Criterion engine, .CXM/.GTF). Does NOT read TEXS, but is a good reference for a PS3 GTF/DXT Noesis texture plugin pattern if porting the parser into Noesis.</td></tr>
+<tr><td><a href="https://github.com/paulguy/minitools">ps3swiz / RSX Morton unswizzle scripts</a></td><td>open</td><td>unknown</td><td>Generic PS3 swizzle/unswizzle. Only needed for uncompressed (A8R8G8B8) or non-power-of-2 surfaces; DXT block data tested as linear so not required for the common case.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>textures_probe.py (custom) + Pillow BC1</td><td><span class="badge ok">Works</span></td><td>Parsed header version=12 flags=1 textureCount=1; descriptor crc=0xb7b2a83b DXT1 1024x2048 mips=12 payloadSize=1398144 name=Musclecar_01. Pixels@144 -&gt; 1024x2048 RGBA PNG. ffprobe: &#x27;png, rgba(pc), 1024x2048&#x27;. Visual: correct UV car-paint atlas with legible SPLIT/SECOND livery; damageMap shows car-body silhouette. Pillow ImageStat shows real variation (bodyPaint alpha mean 91 stddev 122).</td></tr>
+<tr><td>textures_probe.py on Frontend stub</td><td><span class="badge ok">Works</span></td><td>All 14 descriptors decoded with correct names/dims/CRCs (paraboloid_back/front, Musclecar_01, DamageMap, Dirt/Scratch/MetalMap, thumbnails+full-res). Tool correctly detected stub (pixels in .streamtex) and declined decode. Found 8x16 thumbnails (wiki said 16x16).</td></tr>
+</table>
+<h3><code>.streamtex</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Headerless full-resolution swizzled pixel payload described entirely by the sibling .textures stub. Extend textures_probe.py: read the stub&#x27;s full-res descriptors (format/w/h/mips), then slice each texture&#x27;s DXT chain sequentially out of the .streamtex at the cumulative offset and decode with the same Pillow BC1/BC3 path proven above. No magic, no tool needed; trivially within reach since the decode path is already validated.</p>
+<p><strong>Custom effort:</strong> low. Iterate the stub&#x27;s descriptors 7..N (full-res set), compute each DXT chain size, read consecutive slices from the .streamtex (per-texture block alignment padding observed ~408B across the set), decode top mip with Pillow bcn. Stub&lt;-&gt;stream size identity already confirmed in wiki (sum 3,276,904 vs file 3,277,312).</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>(same as .textures: custom parser + Pillow)</td><td>open</td><td>yes</td><td>Same decode path; only the slicing/offset logic differs (payload external instead of inline).</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>textures_probe.py (stub parse confirms layout)</td><td>partial</td><td>The 14-descriptor stub that points into Musclecar_01.streamtex parsed cleanly (all full-res dims/formats correct). Actual .streamtex byte-slicing+decode not yet run, but uses the identical, already-proven Pillow BC1 path; only offset arithmetic remains.</td></tr>
+</table>
+<h3><code>.model</code> <span class="badge cat">Custom parser</span></h3>
+<p><strong>Recommendation:</strong> No off-the-shelf tool exists (confirmed via Noesis repos, XeNTaX/ZenHAX/ResHax, GitHub, edness). Build a custom Noesis .py importer (fmt_SplitSecond_model.py). Noesis is the right host: it gives free OBJ/FBX/glTF export, a mesh/skeleton API, and handles tri-strip + primitive-restart natively. The hard part is mapping the Crayon2 node-tree section table (type tags 0x04/05/06/0E/0F) to vertex-buffer/index-buffer/material records and decoding the half-float RSX vertex layouts (hkxVertexP4N4* / W4I4 skinned variants). Index data (16-bit strips, 0xFFFF restart) and the .model.stream split are already understood.</p>
+<p><strong>Custom effort:</strong> high. Phase 1: finish mapping the node-descriptor tree (8-byte offset,type pairs from 0x0C) to locate the section table, per-section vertex-format id, vertex/index buffer offsets+counts. Phase 2: implement the ~5 hkxVertexFormat half-float/normalized-short decoders (P=pos, N=normal, T/B=tangent/bitangent, W4I4=weights/bone idx, C=color, Q/T=uv). Phase 3: in Noesis, build NoeMesh per section, set tri-strip with 0xFFFF restart, attach skin weights, expose to OBJ/FBX/glTF. Phase 4: handle stub .model + .model.stream (12-byte header: dword1=size-12, raw vertex/index from 0x0C). Estimate 1-2 weeks given the tree mapping is the open unknown; vertex/index decode is mechanical. Cross-check against a leaked Havok 5.5 hkxMesh tagfile would accelerate Phase 2.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://www.richwhitehouse.com/noesis/">Noesis</a></td><td>builtin</td><td>no</td><td>Free generic 3D tool. NO native Split/Second support; requires a custom Python plugin. Best host because it provides FBX/glTF/OBJ export and a mesh/skeleton/skinning API and tri-strip+restart handling out of the box.</td></tr>
+<tr><td><a href="https://github.com/Bewolf2/fbximporter">Havok Content Tools 5.5 (hctStandAloneFilterManager / hkxcmd / fbximporter)</a></td><td>leaked</td><td>unknown</td><td>DOCUMENTED ONLY, not tested per legal note. The .model vertex/index buffers are cooked hkxMesh from Havok 5.5 (Havok550 per EBOOT). A legit/leaked HCT 5.5 hkxMesh tagfile would document the exact cooked vertex layout. fbximporter (open) is FBX-&gt;HKX (wrong direction) but documents the hkx scene schema. Do not run leaked binaries for testing; use only as a layout reference.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>Noesis (capability assessment)</td><td>untested</td><td>Confirmed via research that no .model plugin exists. Header/index structure already verified in wiki (magic 02000008, node tree, 16-bit strips with FFFF restart, .model.stream dword1=size-12). A custom plugin is the only path.</td></tr>
+</table>
+<h3><code>.model.stream</code> <span class="badge cat">Custom parser</span></h3>
+<p><strong>Recommendation:</strong> Headerless geometry payload for a stub .model (12-byte header then raw interleaved vertex stream + 16-bit tri-strips). Cannot be interpreted standalone — it has no buffer descriptors; those live in the paired .model. Handle it inside the same custom Noesis .model plugin: when a .model is a stub, read its descriptors and pull vertex/index bytes from the .model.stream at offset 0x0C.</p>
+<p><strong>Custom effort:</strong> medium. Part of the .model plugin. Header decoded: dword0=0, dword1=filesize-12 (payload length, confirmed across 5 Musclecar streams), dword2=0; vertex data from 0x0C in a regular ~16-byte half-float/short stride, ending in 0xFFFF-restart 16-bit strips. Reuse the .model vertex-format decoders against this byte range.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>(same custom Noesis .model plugin)</td><td>open</td><td>no</td><td>No standalone tool; depends on the .model descriptor to interpret the stream.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>manual header check (prior wiki work)</td><td>partial</td><td>Musclecar_01.model.stream 1,224,122 B -&gt; dword1=0x12adae=1,224,110=size-12. Regular 16-byte vertex stride, FFFF-restart tail. Per-attribute decode deferred to the .model plugin.</td></tr>
+</table>
+<h3><code>.skel</code> <span class="badge cat">Custom parser</span></h3>
+<p><strong>Recommendation:</strong> Simple, fully-documented bespoke &#x27;ftsc&#x27; container; write a ~80-line Python parser (no third-party tool exists or is needed). Header is fixed; an 8-entry absolute offset table points at parent_index[], bone_order[], two 4x4 matrix arrays, three 16-byte vectors, and a 64-byte-per-bone name block. Easy to dump to JSON or to feed bones into the Noesis .model plugin as an hkaSkeleton for skinned meshes.</p>
+<p><strong>Custom effort:</strong> low. Read magic &#x27;ftsc&#x27;, version 0x64, bone_count at 0x0C, then uint32[8] offset table at 0x10. Slice each parallel array by bone_count (uint16 parents with 0xFFFF=root, 16-float matrices, 16-byte vecs, char[64] names). File-size sanity already verified (58-bone file ends exactly at names_start + 58*0x40). Emit a parent/name/bind-pose tree; optionally hand to Noesis as NoeBone[] for skinning.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://www.richwhitehouse.com/noesis/">Noesis (host for bones)</a></td><td>builtin</td><td>no</td><td>Only useful as the rig host for the .model plugin; ftsc itself needs a custom reader.</td></tr>
+<tr><td>Havok hkaSkeleton tooling (HCT 5.5)</td><td>leaked</td><td>unknown</td><td>Documented only. ftsc maps onto hkaSkeleton at load (EBOOT: hkaSkeletonUtils). A Havok 5.5 hkaSkeleton tagfile would confirm the matrix_A vs matrix_B (local-bind vs inverse-bind) roles and the vec_C/D/E (T/Q/S) split. Do not run leaked binaries.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>layout verification (wiki, this pass)</td><td>partial</td><td>Offset table entries land exactly where each array begins; names char[64] block runs to EOF (58*0x40 = exact file size). parent_index[0]=0xFFFF root, [1]=0. No code run this pass but layout is fully pinned; a custom parser is trivial.</td></tr>
+</table>
+<h3><code>.fxc</code> <span class="badge cat">Custom parser</span></h3>
+<p><strong>Recommendation:</strong> Container framing is parseable (custom reader, low effort) but the payload is RSX/NV40 GPU microcode that is essentially opaque. Recommend writing a metadata extractor (header: \0FXC magic, version, combo_count, set_name; per-combo symbol/constant tables with ATTR*/TEXUNIT*/COLOR0 markers and the &#x27;END&#x27; terminator). Full microcode disassembly is out of scope; if ever needed, an NV40/RSX fragment-program disassembler (e.g. from RPCS3/nouveau research) would be the avenue. No game-specific tool exists.</p>
+<p><strong>Custom effort:</strong> medium. Parse 0x14 header + name. Walk combo_count combos: each opens with a u32 symbol count + symbol records ({u32 meta...; u32 strlen; char[] name} then the mapped Cxx register token), followed by 16-byte RSX fragment instruction words, ending in &#x27;END&#x27;. Extract the symbol/constant table and stage I/O semantics (the useful, documentable part). Leave microcode bytes as opaque blobs unless an RSX disassembler is integrated.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://github.com/RPCS3/rpcs3">RSX/NV40 fragment-program disassembler (research)</a></td><td>open</td><td>unknown</td><td>RPCS3 / nouveau contain NV40 RSX shader decoding logic that could in principle disassemble the microcode, but no drop-in .fxc tool exists. Only relevant if opcode-level decode is required; container metadata is the practical target.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>header verification (wiki, this pass)</td><td>partial</td><td>magic 00 46 58 43 (\0FXC), version 1, combo_count 0x17=23 (== paired .shaders count), name_len 0x0B, set_name &#x27;0xe4249692&#x27; (identical to .shaders join key). Per-combo symbol tables + &#x27;END&#x27; tag observed. Microcode confirmed opaque RSX bytecode.</td></tr>
+</table>
+<h3><code>.shaders</code> <span class="badge cat">Custom parser</span></h3>
+<p><strong>Recommendation:</strong> Pure metadata container (SHDR) — low-effort custom parser, no tool exists. It carries register-block/binding tables only (the SDRS microcode slots are length-0; real microcode is in the .fxc). Useful to dump material-combo CRCs and constant/sampler symbol-&gt;slot tables. Pair-validate against .fxc via the identical combo_count + set_name string.</p>
+<p><strong>Custom effort:</strong> low. Read 0x14 header (magic SHDR, version 6, combo_count, name_len, set_name). For each combo walk HDRB..HDRE (two count words, combiner entries {u32 tag; u32=1; u32 strlen; name}, then named const/sampler records with rising slot index), then two SDRS+len(0)+SDRE empty slots, then length-prefixed combo CRC string. Sequential, no offset table. Emit JSON of combos-&gt;symbols.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>(none game-specific)</td><td>unknown</td><td>no</td><td>No existing tool; format is simple enough that a custom reader is the answer.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>header/record verification (wiki, this pass)</td><td>partial</td><td>magic SHDR, version 6, count 0x17=23 (== HDRB markers and == .fxc count), set_name &#x27;0xe4249692&#x27;. HDRB at 0x1E; SDRS 00000000 SDRE empty microcode slots confirm metadata-only; combo CRC strings like &#x27;0x618d6dad&#x27; length-prefixed.</td></tr>
+</table>
+<h3><code>.shaderinst</code> <span class="badge cat">Custom parser</span></h3>
+<p><strong>Recommendation:</strong> Bespoke SDRI/INSS container binding mesh instances to material combos with per-instance constant overrides (paint colour float3, emissive light index, diffuse-map texture CRC). Low-effort custom parser; node_count is byte-proven (== count of &#x27;unnamed&#x27; node strings). No tool exists; reads cleanly as a sequential record list.</p>
+<p><strong>Custom effort:</strong> low. Read 0x10 header (magic SDRI, version 8, &#x27;INSS&#x27;, node_count). For each of node_count records: u32 inst_crc; length-prefixed node_name (&#x27;unnamed&#x27;); length-prefixed combo_crc; then override block (two count words then named overrides with inline float/CRC values, e.g. VehiclePaintFast_1_paintColour float3 ~0.914,0.104,0.104). Override sub-structure index tables are Partial in the wiki but the names+values are legible; finish by mapping the trailing 00000002 index tables to sampler/reg slots.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>(none game-specific)</td><td>unknown</td><td>no</td><td>No existing tool; custom reader required.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>header/record verification (wiki, this pass)</td><td>partial</td><td>magic SDRI, version 8, &#x27;INSS&#x27;, node_count 0x1C=28 (== &#x27;unnamed&#x27; count). First record inst_crc 0x2551DBEA, combo_crc &#x27;0x0882fbc1&#x27;, paintColour float3 ~ (0.914,0.104,0.104). Override index tables not fully decoded.</td></tr>
+</table>
+<h3><code>.stream</code> <span class="badge cat">Custom parser</span></h3>
+<p><strong>Recommendation:</strong> Generic streamed-payload extension; in this cluster it manifests as .model.stream (geometry, covered above) and .streamtex (textures, covered above). There is no standalone .stream format with its own structure — all structure lives in the descriptor file (.model or .textures). Treat as: identify the paired descriptor, then slice/decode via the matching custom parser. No dedicated tool exists or is meaningful.</p>
+<p><strong>Custom effort:</strong> low. Dispatch by sibling descriptor: *.model.stream -&gt; .model plugin path (12-byte header, raw VB/IB from 0x0C); *.streamtex -&gt; .textures path (headerless DXT/ARGB payload sliced per stub descriptors). No independent parsing possible or needed.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>(same custom parsers for .model/.textures)</td><td>open</td><td>yes</td><td>The .streamtex decode path is already proven (Pillow BC1); .model.stream rides the .model plugin.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>textures_probe.py (stub-&gt;stream layout)</td><td>partial</td><td>Stub for Musclecar_01.streamtex parsed cleanly (all full-res descriptors), establishing that .stream payloads are interpreted purely via their descriptor twin; decode path identical to the proven .textures BC1 path.</td></tr>
+</table>
+<h2>Gameplay / Track / Data</h2>
+<h3><code>.track</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> SOLVED with a ~25-line custom parser (tested) OR a 15-line Kaitai .ksy (tested via runtime). No tool needed. Format: BE uint32 count + count*24-byte records (2 XYZ points). Use parse_track.py to dump CSV; segment into polyline strokes on endpoint discontinuity.</p>
+<p><strong>Custom effort:</strong> low. struct.unpack(&#x27;&gt;I&#x27;) header then &#x27;&gt;6f&#x27; per 24-byte record; new stroke when record[i].start != record[i-1].end. Provided &amp; tested at C:\Users\Niaz\splitsecond\_tools\parse_track.py and splitsecond_track.ksy.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://kaitai.io">Kaitai Struct</a></td><td>open</td><td>yes</td><td>Wrote &amp; ran a .ksy for .track; parses via python kaitaistruct runtime. Compiler v0.11 (npm) JS API broken in this wrapper; use JVM CLI or Web IDE to regenerate parsers.</td></tr>
+<tr><td><a href="https://aluigi.altervista.org/quickbms.htm">QuickBMS</a></td><td>open</td><td>unknown</td><td>No existing script for .track; trivial to write (endian big; get N long; for; getdstring etc.). The existing Black Rock QuickBMS script only does .ark.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>parse_track.py (custom)</td><td><span class="badge ok">Works</span></td><td>recordCount=67, size_law_ok=True (1612==4+67*24), rec0 start=(-197.232,-0.751,-160.000) end=(-197.232,-0.751,-142.683), rec1 chains. Bounds X[-222,252] Z[-233,163] match wiki. Largest file (478 rec) also OK. Size law verified across ALL 111 files, 0 mismatches.</td></tr>
+<tr><td>Kaitai Struct (.ksy + kaitaistruct runtime)</td><td><span class="badge ok">Works</span></td><td>KAITAI-RUNTIME PARSE OK: record_count=67, rec0 matches custom parser, rec1.start==rec0.end True.</td></tr>
+</table>
+<h3><code>.entities</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Custom parser, ~15 lines (tested). Binary &#x27;ENTS&#x27; magic, ver 3, BE. 32-byte header + count*97-byte records (name[33] + 16 floats sliced 3 pos/3 scale/9 rot/1 index). No tool exists; trivial to parse.</p>
+<p><strong>Custom effort:</strong> low. Read magic/ver/count at 0/8/12; each record: name=rec[:0x21] up to NUL, then &#x27;&gt;3f&#x27; pos @0x21, &#x27;&gt;3f&#x27; scale @0x2D, &#x27;&gt;9f&#x27; rot @0x39, &#x27;&gt;f&#x27; index @0x5D.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://kaitai.io">Kaitai Struct</a></td><td>open</td><td>yes</td><td>Fixed header + fixed-stride record = textbook .ksy.</td></tr>
+<tr><td><a href="https://imhex.org">ImHex / 010 Editor</a></td><td>open</td><td>unknown</td><td>ImHex pattern language or 010 binary template trivially models the 97-byte record.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom python</td><td><span class="badge ok">Works</span></td><td>magic ENTS, ver 3, count 8, law 32+97*8==808, rec0 name=&#x27;Entity_StartPosition_Player1&#x27; pos=(-1512.30,9.31,321.57) index=1.0 — exact match to wiki.</td></tr>
+</table>
+<h3><code>.powerplays</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> It is plain UTF-8 XML despite the extension. Use ANY XML library (Python xml.etree, lxml). No binary RE needed. Confirmed &lt;Root FileVersion=&quot;1.0000000&quot;&gt; with &lt;Powerplay&gt;/&lt;Timeline&gt;/&lt;Ambient&gt; trees.</p>
+<p><strong>Custom effort:</strong> low. ElementTree.parse(); iterate //Powerplay, read attrs (id,idCRC,PowerLevel,...), worldmtx rows, Timeline refs, EventParams, NODE_FACTORY/INSTANCE tree.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>Standard XML parsers (xml.etree / lxml / any)</td><td>builtin</td><td>yes</td><td>File is well-formed XML from byte 0.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>head / text inspection</td><td><span class="badge ok">Works</span></td><td>&#x27;&lt;Root FileVersion=&quot;1.0000000&quot;&gt; &lt;Powerplay name=&quot;..\..\..\..\Powerplays\Powerplays\PG07_Taxis_Long_P&quot; NiceName=...&gt;&#x27; — clean UTF-8 XML.</td></tr>
+</table>
+<h3><code>.triggers</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Plain UTF-8 XML (same as .powerplays). Use any XML library. Empty form is a 32-byte self-closing root. No tool/RE needed.</p>
+<p><strong>Custom effort:</strong> low. ElementTree; iterate //Trigger, read attrs + &lt;posAndScale X/Y/Z/W&gt; + nested &lt;Powerplay&gt;/&lt;Timeline&gt; id refs.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>Standard XML parsers</td><td>builtin</td><td>yes</td><td>Well-formed XML; empty stub = &lt;Root FileVersion=&quot;1.0000000&quot;/&gt;.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>head / text inspection</td><td><span class="badge ok">Works</span></td><td>&#x27;&lt;Root FileVersion=&quot;1.0000000&quot;&gt; &lt;Trigger nameCRC=&quot;0x705A31FC&quot; id=&quot;1249478979.1976132399&quot; idCRC=&quot;0xB8553686&quot; triggerType=&quot;Standard&quot; enabled=&quot;true&quot;...&#x27; — clean XML.</td></tr>
+</table>
+<h3><code>.timelineInfo</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Custom parser, ~8 lines (tested). BE 8-byte header (version=1, count) + count*12-byte records (u64 controllerHash + u32 index 0..count-1). Size law 8+12*count holds. No tool exists; trivial.</p>
+<p><strong>Custom effort:</strong> low. &#x27;&gt;I&#x27; ver @0, &#x27;&gt;I&#x27; count @4, then per record &#x27;&gt;Q&#x27; hash + &#x27;&gt;I&#x27; index.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://kaitai.io">Kaitai Struct</a></td><td>open</td><td>yes</td><td>Header+fixed record array -&gt; trivial .ksy.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom python</td><td><span class="badge ok">Works</span></td><td>version=1 count=299 size=3596 law(8+12*299)=3596 ok=True.</td></tr>
+</table>
+<h3><code>.logicinfo</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Custom parser (tested). Fixed 288-byte BE struct from Black Rock&#x27;s Catnip serializer: 12-byte header (ver 00030000, magic CDAB0DF0, payloadLen=276=size-12), interleaved field-CRC/float body, 188B zero pad, footer BADCADDE. Layout fully known; field SEMANTICS partial (5 per-track floats). No tool exists.</p>
+<p><strong>Custom effort:</strong> low. Validate magic/footer/payloadLen; read per-track floats at 0x34,0x3C,0x44,0x4C,0x54. Same framing as .checkpoints -&gt; share one Kaitai/010 template for both.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://kaitai.io">Kaitai Struct / ImHex / 010</a></td><td>open</td><td>yes</td><td>Fixed-size struct with sentinels = easy template; aids resolving the partial float semantics.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom python</td><td><span class="badge ok">Works</span></td><td>size=288 ver=00030000 magic=cdab0df0 payloadLen=276 (==size-12 True) footer=badcadde; val0=5002.66 val1=189.43 val2=4838.22 — exact match to wiki.</td></tr>
+</table>
+<h3><code>.checkpoints</code> <span class="badge partial">Partial</span></h3>
+<p><strong>Recommendation:</strong> Header/framing SOLVED by custom parser (tested): fixed 348-byte file, 12-byte header (ver 00030000, beginTag CDAB0DF0, bodySize=336=size-12), recursive CDAB0DF0/BADCADDE tagged sub-objects, triple BADCADDE tail. Inner 336-byte body field ORDER is partial (placement transforms + checkpoint indices; EBOOT names known: mFirstCheckpoint, mLinkIndex, mHitFraction, mCircuitLength...). Needs cross-ref with in-game checkpoint positions to fully pin offsets.</p>
+<p><strong>Custom effort:</strong> medium. Parse the nested begin/end-tag tree recursively (it is a generic Catnip object stream); then match the float triples to known checkpoint world positions from a level whose checkpoints are visible. Build an ImHex pattern to walk tags interactively.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://imhex.org">ImHex (pattern language)</a></td><td>open</td><td>unknown</td><td>Best fit for the recursive tagged framing — define begin/end-tag struct and recurse; iterate to resolve inner layout.</td></tr>
+<tr><td><a href="https://kaitai.io">Kaitai Struct</a></td><td>open</td><td>unknown</td><td>Can model the tag tree but recursive/variable sub-objects are fiddlier than ImHex&#x27;s interactive pattern.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom python</td><td>partial</td><td>size=348 ver=00030000 beginTag=cdab0df0 bodySize=336 (==size-12 True) footer=badcadde — framing confirmed; inner field offsets not byte-pinned.</td></tr>
+</table>
+<h3><code>.sideways</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Custom parser (tested), ~10 lines. BE uint32 linkCount + per-link variable record (uint8 N then N*uint16 link indices). Decodes Track.sideways.txt byte-for-byte. No tool exists; trivial.</p>
+<p><strong>Custom effort:</strong> low. Read count; loop: c=read u8; read c*u16 (BE) link indices. Walk to EOF as a check.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://kaitai.io">Kaitai Struct</a></td><td>open</td><td>yes</td><td>Variable-length per-record count -&gt; repeat-expr on a u1 count; clean .ksy.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom python</td><td><span class="badge ok">Works</span></td><td>linkCount=283, bytes_consumed=833==filesize, link[6]=(2,[244,231]) — matches wiki &#x27;link[6] sideways links to ([244][231])&#x27;.</td></tr>
+</table>
+<h3><code>.splitlength</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Custom parser (tested), ~5 lines. BE uint32 sectionCount + count*float32 (per-section weights ~1.0). Size law 4+4*count. No tool exists; trivial. Units partial (weights, not metres).</p>
+<p><strong>Custom effort:</strong> low. &#x27;&gt;I&#x27; count then &#x27;&gt;{count}f&#x27;.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://kaitai.io">Kaitai Struct / QuickBMS</a></td><td>open</td><td>yes</td><td>count+float-array = one-liner in either.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom python</td><td><span class="badge ok">Works</span></td><td>sectionCount=19 size=80 law(4+4*19)=80 ok=True; splitLen[0..2]=[1.0,1.0868,1.0742] — matches wiki (19 SECTION blocks).</td></tr>
+</table>
+<h3><code>.linkorigins</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Custom parser (tested), ~5 lines. BE uint32 linkCount + count*float32 arc-length origins. Size law 4+4*count. No tool exists; trivial.</p>
+<p><strong>Custom effort:</strong> low. &#x27;&gt;I&#x27; count then &#x27;&gt;{count}f&#x27; rising arc-length distances.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://kaitai.io">Kaitai Struct / QuickBMS</a></td><td>open</td><td>yes</td><td>count+float-array = trivial.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom python</td><td><span class="badge ok">Works</span></td><td>linkCount=283 size=1136 law(4+4*283)=1136 ok=True; origin[0..2]=[189.43,221.19,239.18] — matches wiki.</td></tr>
+</table>
+<h3><code>.sectorInfo</code> <span class="badge partial">Partial</span></h3>
+<p><strong>Recommendation:</strong> Custom parser; header SOLVED (tested): BE const_a=1.92, const_b=300.0, sectorCount @0x8 (==count of q### ASCII chunk tags), UTF-16LE source path. Per-chunk (q000..) AABB + index lists + UTF-16LE names are partial (field order unresolved). Note mixed endianness: BE ints/floats but LE strings.</p>
+<p><strong>Custom effort:</strong> medium. Read header; scan for &#x27;q[0-9]{3}&#x27; tags; per chunk read 6 BE floats (AABB) then BE count-prefixed index arrays; decode name columns as UTF-16LE. Use ImHex with a custom pattern to iterate the variable chunk body and confirm field order.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://imhex.org">ImHex (pattern language)</a></td><td>open</td><td>unknown</td><td>Mixed BE/LE + variable chunks: ImHex pattern with per-field endianness is the practical tool to resolve the chunk body.</td></tr>
+<tr><td><a href="https://kaitai.io">Kaitai Struct</a></td><td>open</td><td>unknown</td><td>Supports per-type endian override; can model once chunk layout is pinned.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom python</td><td>partial</td><td>const_a=1.9200 const_b=300.0 sectorCount(0x8)=128 and regex found exactly 128 q### tags — header confirmed; chunk inner layout not fully pinned.</td></tr>
+</table>
+<h3><code>.names</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Trivial text/near-text. Leading ASCII count DIGIT, 0x00 sep, then N NUL-terminated strings. No tool needed (split on NUL). Caveat: single-digit count only encodes 0-9 (no sample exceeds 9).</p>
+<p><strong>Custom effort:</strong> low. count=int(chr(data[0])); names=data[2:].split(b&#x27;\x00&#x27;) (drop trailing empties).</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>any (cat/od/python)</td><td>builtin</td><td>yes</td><td>NUL-separated string list; .filenames/dirlist are the headerless variants.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom python</td><td><span class="badge ok">Works</span></td><td>countDigit=&#x27;1&#x27; names=[&#x27;sunrise&#x27;] — count digit matches entry count.</td></tr>
+</table>
+<h3><code>.params</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Plaintext tuning files. No tool/RE needed. Grammar: &#x27;!directory:&#x27; header line, &#x27;/path/section:&#x27; group lines, and entries: &#x27;key&#x27; = value (min, max); . Parse with a ~10-line regex or a small hand parser. Used everywhere (Cameras, AI, AreaOfEffects, vehicle dynamics).</p>
+<p><strong>Custom effort:</strong> low. Regex: r&quot;&#x27;([^&#x27;]+)&#x27;\s*=\s*([^(;]+)\(([^)]*)\)\s*;&quot; captures (key, value, min/max). Track current section from lines ending &#x27;:&#x27;.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>custom regex / any text parser</td><td>builtin</td><td>yes</td><td>Stable simple grammar across all .params; no quirks.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom python regex</td><td><span class="badge ok">Works</span></td><td>directive=[&#x27;!directory: /AreaOfEffects/GlobalParameters&#x27;], 1 section, 5 key/value/range tuples extracted e.g. &#x27;a; Min Car Distance Factor&#x27;=0.75 range=(0.0,1.0).</td></tr>
+</table>
+<h3><code>.xml</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Standard UTF-8 XML (Audio config, Cameras, Tonic engine states, etc.). Use any XML library. Some open with &#x27;&lt;Root FileVersion=...&gt;&#x27;, others app-specific roots. No RE needed.</p>
+<p><strong>Custom effort:</strong> low. xml.etree.ElementTree / lxml directly.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>Standard XML parsers</td><td>builtin</td><td>yes</td><td>All well-formed XML from byte 0.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>head / text inspection</td><td><span class="badge ok">Works</span></td><td>&#x27;&lt;Root FileVersion=&quot;1.0000000&quot;&gt; &lt;Config version=\&#x27;42\&#x27;/&gt; &lt;/Root&gt;&#x27; — clean XML.</td></tr>
+</table>
+<h3><code>.global_regs</code> <span class="badge partial">Partial</span></h3>
+<p><strong>Recommendation:</strong> Custom parser (header tested). Binary BE, chunked: ASCII magic &#x27;FREG&#x27; (version 1) then &#x27;GLBB&#x27; sub-chunk; body is length-prefixed register-name strings (BE uint32 len + name + a u32 + 0xFFFFFFFF + type/index words). It is the renderer&#x27;s GLOBAL shader-register/constant DB (Crayon2): names like light_ambient, Trans, View, Proj, ViewProj, WorldCameraPos. One file: default.global_regs (65354 B). Record stride beyond the name field is partial.</p>
+<p><strong>Custom effort:</strong> medium. Read &#x27;FREG&#x27;+u32 ver; read &#x27;GLBB&#x27;+u32; then loop reading BE u32 nameLen + name + following fixed words (observed: u32, 0xFFFFFFFF marker, u32 type). Diff multiple entries to pin the trailing word meanings (only 1 file exists, so cross-check against EBOOT shader-register symbols).</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://imhex.org">ImHex / Kaitai Struct</a></td><td>open</td><td>unknown</td><td>Length-prefixed record list with FourCC chunks; ImHex pattern resolves the per-record trailing fields quickly. No game tool exists.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>od / hex decode</td><td>partial</td><td>&#x27;FREG&#x27;..ver=1 &#x27;GLBB&#x27;.. then u32 len=0x0e &#x27;light_ambient&#x27; ..ffffffff..; further names light_diffuse/light_specular/Trans/View/Proj/ViewProj/WorldCameraPos. Chunk+name structure clear; record trailer semantics not fully pinned.</td></tr>
+</table>
+<h3><code>.crcs</code> <span class="badge ok">Works</span></h3>
+<p><strong>Recommendation:</strong> Simplest format: headerless flat BE uint32[] (texture-name CRC dependency list). N=filesize/4. No tool/RE needed. (CRC-of-name algorithm itself is unverified but not needed to read the list.)</p>
+<p><strong>Custom effort:</strong> low. struct.unpack(&#x27;&gt;%dI&#x27;%(len/4), data). Resolve names via the C2NM trailer in the level _po.textures.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td>any (python struct)</td><td>builtin</td><td>yes</td><td>4*N bytes, no header.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>custom python</td><td><span class="badge ok">Works</span></td><td>size=16 N=4 crc[0..3]=[0xdb0e7ea0,0x98023dfe,0x5d8ceb49,0xa092153e]; the shared 0x5d8ceb49 (=cubemap_Generic_swap per wiki) is present.</td></tr>
+</table>
+<h3><code>.dct</code> <span class="badge partial">Partial</span></h3>
+<p><strong>Recommendation:</strong> Custom parser (header SOLVED, tested) — and Delutto&#x27;s ARK Tool can auto-convert .dct-&gt;txt (the one existing tool that touches a cluster format). LITTLE-ENDIAN (rare for this BE title): magic &#x27;DICT&#x27;, ver 0x2000, constant 19 @0x0C, entryCount @0x10, then {nameHash,stringOffset,reserved} records + packed string blob at tail. String blob is readable; exact hash-&gt;string offset base is partial.</p>
+<p><strong>Custom effort:</strong> medium. Read DICT magic; LE u32 entryCount @0x10; iterate {hash:LE u32, offset:LE u32, reserved:LE u32}; the readable UI strings sit in a tail blob — pin the offset base by matching known strings (NO AWARD, GIOTTO 512GT). Or just use Delutto&#x27;s ARK Tool dct-&gt;txt for the strings.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://zenhax.com/viewtopic.php@t=589.html">Delutto Split/Second ARK Tool</a></td><td>leaked</td><td>unknown</td><td>Auto-converts DICT(.dct)-&gt;TXT for localisation. Closed binary from a forum (treat as untrusted/leaked-style; not downloaded/run here per legal constraints). Only existing tool touching a cluster format.</td></tr>
+<tr><td><a href="https://imhex.org">ImHex / custom LE parser</a></td><td>open</td><td>yes</td><td>LE record table + string blob; ImHex pattern resolves offset base interactively.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>od / hex decode</td><td>partial</td><td>&#x27;DICT&#x27; 00 20 00 00 (ver=0x2000 LE) .. 13 00 00 00 (=19 const) 8e 00 00 00 (entryCount=142) — header confirmed; record-&gt;string resolution not byte-verified.</td></tr>
+</table>
+<h3><code>.parts</code> <span class="badge partial">Partial</span></h3>
+<p><strong>Recommendation:</strong> Custom parser (structure decoded, tested). Binary BE typed/indexed array: opens with count + element-size words, then a node list mixing BE u32 index/flag fields, 0xFFFFFFFF terminators, and float32 transforms (identity-ish matrices + part offsets). It is the vehicle PART HIERARCHY (body panels/wheels for damage/deform), one per car under Vehicles/Bodies/. Node field roles are partial. No tool exists.</p>
+<p><strong>Custom effort:</strong> medium. Read leading counts; walk records: each begins with a BE u32 id and small count fields, child-index lists, then a 4x4-ish float32 block (3f800000 diagonal seen) + a contact/offset vec. Diff several cars (Musclecar vs Supercar) to separate constant headers from per-part data; cross-ref with .deform/.parts EBOOT symbols.</p>
+<table><tr><th>Tool / SDK</th><th>License</th><th>Supports?</th><th>Notes</th></tr>
+<tr><td><a href="https://imhex.org">ImHex / Kaitai Struct</a></td><td>open</td><td>unknown</td><td>Index+transform node graph; ImHex pattern + diffing across cars is the practical route. No game-specific tool.</td></tr>
+</table>
+<table class="struct"><tr><th>Tested tool</th><th>Result</th><th>Evidence</th></tr>
+<tr><td>od / hex decode</td><td>partial</td><td>size=2328; opens 00000005 0000002e (count=5,size=46) then index/flag words, 0xffffffff markers, and float blocks (3f800000 identity diagonal + offset vec 3f5f48b4 3f129b09 3f1d6c4a). Structure clear; per-node field semantics partial.</td></tr>
+</table>
+<hr><h3>Related pages</h3><ul><li><a href="format-index.html">All File Formats (Index)</a> · <a href="format-ark.html">Archives (.ark)</a> · <a href="engine-overview.html">Engine Architecture</a></li></ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

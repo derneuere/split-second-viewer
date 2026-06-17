@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Triggers (.triggers) — Split/Second RE Wiki</title>
+<meta name="description" content="Per-subtrack XML list of Split/Second powerplay trigger volumes: spherical activation buttons that, when entered, fire a referenced powerplay and timeline.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Triggers (.triggers)" data-category="Formats · Gameplay (Catnip)">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Triggers (<code>.triggers</code>)</h1>
+<p>The list of <strong>powerplay trigger volumes</strong> for one subtrack — the "buttons" a car drives
+into to fire a <a href="format-powerplays.html">powerplay</a>. Like its <code>.powerplays</code> sibling
+this is a <strong>plain UTF-8 XML</strong> file, not a binary blob. Each <code>&lt;Trigger&gt;</code> is a
+positioned spherical volume plus activation rules and a reference to the powerplay (and specific timeline)
+it should set off. The EBOOT calls these <em>TriggerButtons</em>.</p>
+
+<div class="infobox"><div class="ib-title">.triggers</div><table>
+  <tr><th>Category</th><td>Catnip trigger volumes</td></tr>
+  <tr><th>Encoding</th><td>UTF-8 XML (text)</td></tr>
+  <tr><th>Root</th><td><code>&lt;Root FileVersion="1.0000000"&gt;</code></td></tr>
+  <tr><th>Top element</th><td><code>&lt;Trigger&gt;</code> (one per volume)</td></tr>
+  <tr><th>Empty form</th><td><code>&lt;Root FileVersion="1.0000000"/&gt;</code> (32 B)</td></tr>
+  <tr><th>Size range</th><td>32 B (empty) … ~23 KB</td></tr>
+  <tr><th>Count</th><td>20 files (6 empty stubs)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span> structure · <span class="badge partial">Partial</span> volume geometry</td></tr>
+</table></div>
+
+<h2>At a glance</h2>
+<p>Each file is a flat list of <code>&lt;Trigger&gt;</code> elements under a versioned root. Several
+Nemesis subtracks have no powerplay triggers at all and ship the minimal 32-byte self-closing root
+<code>&lt;Root FileVersion="1.0000000"/&gt;</code> — a clean tell that the format is text and that an
+empty list is legal. The largest seen is <code>airport_test_03</code> at ~23 KB. The EBOOT confirms both
+the load path (<code>environment(noassert)|Subtracks/%s/%s.triggers</code>,
+<code>Resident(noassert)|UI/Frontend/Powerplays/frontend.triggers</code>) and the runtime label
+<code>Powerplays/TriggerButtons/%s</code>.</p>
+
+<div class="note">A trigger only points at a powerplay; it carries none of the powerplay's content. The
+matching definition (placement, timelines, props) lives in <a href="format-powerplays.html">.powerplays</a>,
+looked up by the shared <code>id</code>/<code>idCRC</code>.</div>
+
+<h2>Document structure</h2>
+<pre class="hex">&lt;Root FileVersion="1.0000000"&gt;
+   &lt;Trigger nameCRC="0x1849EA75" id="1224683456.10" idCRC="0xA0DD3248"
+            triggerType="Standard" enabled="true" autoTrigger="false"
+            enableForOwningPlayer="false" enableForOpponents="false"
+            dontSetOwner="false" notActiveOnLastLap="false"&gt;
+      &lt;posAndScale X="456.17694" Y="0.0000000" Z="-627.85522" W="35.608612"/&gt;
+      &lt;Powerplay id="1224682956.3" idCRC="0xA1246E8"&gt;
+         &lt;Timeline id="1224682956.4" idCRC="0x9476D34B"/&gt;
+      &lt;/Powerplay&gt;
+   &lt;/Trigger&gt;
+   …
+&lt;/Root&gt;</pre>
+
+<h3><code>&lt;Trigger&gt;</code> attributes</h3>
+<table class="struct">
+<tr><th>Attribute</th><th>Type</th><th>Example</th><th>Description</th></tr>
+<tr><td>nameCRC</td><td>hex32</td><td><code>0x1849EA75</code></td><td>CRC of the trigger's authoring name (the name string itself is not stored).</td></tr>
+<tr><td>id</td><td>uid</td><td><code>1224683456.10</code></td><td>Catnip unique id (<code>timestamp.serial</code>) of the trigger instance.</td></tr>
+<tr><td>idCRC</td><td>hex32</td><td><code>0xA0DD3248</code></td><td>CRC of <code>id</code>; the value the runtime hashes.</td></tr>
+<tr><td>triggerType</td><td>enum</td><td><code>Standard</code></td><td>Trigger behaviour, see enum below.</td></tr>
+<tr><td>enabled</td><td>bool</td><td><code>true</code></td><td>Whether the trigger is active at race start.</td></tr>
+<tr><td>autoTrigger</td><td>bool</td><td><code>false</code></td><td>Fires automatically (no player entry required) when reached.</td></tr>
+<tr><td>enableForOwningPlayer</td><td>bool</td><td><code>true</code></td><td>Can be fired by the player who "owns"/armed it.</td></tr>
+<tr><td>enableForOpponents</td><td>bool</td><td><code>true</code></td><td>Can be fired by other drivers.</td></tr>
+<tr><td>dontSetOwner</td><td>bool</td><td><code>false</code></td><td>If true, firing does not assign ownership of the powerplay to the firer.</td></tr>
+<tr><td>notActiveOnLastLap</td><td>bool</td><td><code>false</code></td><td>Disables the trigger during the final lap.</td></tr>
+</table>
+
+<h3><code>&lt;posAndScale&gt;</code></h3>
+<p>A single 4-component vector defining the activation volume: <code>X/Y/Z</code> is the world-space centre
+and <code>W</code> is interpreted as the (uniform) activation radius. Across all 394 triggers <code>W</code>
+is always a positive scalar ranging 1.0–193.8 with a median of ~35, consistent with a car-scale radius;
+the spherical reading is inferred from the single <code>W</code> scalar and the name <code>posAndScale</code>,
+not confirmed in code. <code>Y</code> is <em>not</em> uniformly ground level — it spans roughly −27 to +245
+(only ~37% of triggers sit within ±1 of zero), reflecting elevated and multi-level track sections.</p>
+<table class="struct">
+<tr><th>Attribute</th><th>Type</th><th>Description</th></tr>
+<tr><td>X, Y, Z</td><td>float</td><td>World-space centre of the trigger volume. Y varies widely (−27…+245), so volumes are placed at the track height, not clamped to the ground.</td></tr>
+<tr><td>W</td><td>float</td><td>Activation radius (inferred). Always positive; observed 1.0–193.8, median ~35.</td></tr>
+</table>
+<div class="note">The <code>&lt;posAndScale&gt;</code> name and lone <code>W</code> scalar point to a uniform
+sphere, but whether <code>W</code> is strictly a radius (vs. some other uniform scale) is inferred from its
+value distribution rather than read out of the runtime. <span class="badge partial">Partial</span> on the
+exact geometry.</div>
+
+<h3><code>&lt;Powerplay&gt;</code> / <code>&lt;Timeline&gt;</code> reference</h3>
+<p>The payload: which powerplay this trigger fires, and which timeline within it. Both are reference-only
+(<code>id</code> + <code>idCRC</code>, no <code>name</code> here) — they resolve against the
+<a href="format-powerplays.html">.powerplays</a> file's matching <code>id</code>. A single trigger
+references exactly one <code>&lt;Powerplay&gt;</code>, which in turn names one <code>&lt;Timeline&gt;</code>
+to run.</p>
+<table class="struct">
+<tr><th>Element</th><th>Attributes</th><th>Description</th></tr>
+<tr><td><code>&lt;Powerplay&gt;</code></td><td><code>id</code>, <code>idCRC</code></td><td>The powerplay definition to fire. Matches a <code>&lt;Powerplay id&gt;</code> in <code>.powerplays</code>.</td></tr>
+<tr><td><code>&lt;Timeline&gt;</code></td><td><code>id</code>, <code>idCRC</code></td><td>The specific timeline of that powerplay to play.</td></tr>
+</table>
+
+<h2>triggerType enum</h2>
+<p>Only two values occur across all <strong>394</strong> triggers in the shipped data set (388 + 6). The
+EBOOT, however, lists the enum as three consecutive names — <code>Standard</code>, <code>FireBestChild</code>,
+<code>VictimSelector</code> — so a third type exists in code but is never instanced on disk.</p>
+<table>
+<tr><th>Name</th><th>Count</th><th>Notes</th></tr>
+<tr><td><code>Standard</code></td><td>388</td><td>Ordinary single-shot button: enter the sphere → fire the referenced powerplay.</td></tr>
+<tr><td><code>FireBestChild</code></td><td>6</td><td>Selects and fires the most appropriate child/variant powerplay rather than a fixed one — used where one button can drive different outcomes (e.g. route-dependent picks).</td></tr>
+<tr><td><code>VictimSelector</code></td><td>0</td><td>Defined in the EBOOT enum but never used in shipped data. Name suggests it targets a specific victim/opponent rather than firing on entry; behaviour unverified.</td></tr>
+</table>
+<div class="warn">The two <em>names</em> <code>Standard</code> and <code>FireBestChild</code> (and the unused
+<code>VictimSelector</code>) are confirmed verbatim in <code>eboot_strings.txt</code>, but
+<code>FireBestChild</code>'s child-selection logic lives in <code>cPowerplayController</code>, not in this
+file — the behavioural description here is inferred from the name and its scarcity.
+<span class="badge theory">Theory</span> on the exact selection rule.</div>
+
+<h2>Empty / minimal file</h2>
+<p>Six subtracks have no powerplay triggers (<code>nem_downtown/A</code>, <code>nem_graveyard/A</code>,
+<code>nem_graveyard/B</code>, <code>nem_storm/A</code>, <code>nem_training/B</code>,
+<code>nem_warehouse/A</code>) and ship the 32-byte stub:</p>
+<pre class="hex">000000  3c 52 6f 6f 74 20 46 69 6c 65 56 65 72 73 69 6f   &lt;Root FileVersio
+000010  6e 3d 22 31 2e 30 30 30 30 30 30 30 22 2f 3e 0a   n="1.0000000"/&gt;·</pre>
+<p>The self-closing <code>/&gt;</code> and trailing newline make exactly 32 bytes — confirming the file is
+text and that an empty trigger list is a valid, deliberate state rather than a missing file.</p>
+
+<h2>How we know</h2>
+<blockquote>Files are readable XML from byte 0. Attribute and element names are taken verbatim from
+<code>nem_training/Subtracks/A/nem_training.triggers</code> and <code>docks/Subtracks/C/docks.triggers</code>,
+and cross-checked against <code>frontend.triggers</code>. The <code>triggerType</code> counts
+(<code>Standard</code>=388, <code>FireBestChild</code>=6) are an exhaustive tally across every
+<code>.triggers</code> file. The EBOOT (<code>eboot_strings.txt</code>) supplies the load paths and the
+<code>Powerplays/TriggerButtons/%s</code> label, plus the owning classes
+<code>cPowerplayManager</code>/<code>cPowerplayController</code> and the
+<code>cPowerplayTriggeredEvent</code> event type.</blockquote>
+
+<h2>Open questions</h2>
+<ul>
+<li><code>FireBestChild</code>'s exact selection algorithm is unknown. The <code>triggerType</code> enum is
+now known to include a third value, <code>VictimSelector</code> (from the EBOOT), but it is never instanced
+in shipped data so its behaviour and data shape are unverified.</li>
+<li>The owner/ownership semantics (<code>dontSetOwner</code>, <code>enableForOwningPlayer</code>) tie into
+the networked <code>cPowerplayTriggeredEvent</code> replication — see <a href="engine-networking.html">Networking &amp; Online</a> for the duplicated-object angle.</li>
+<li>Whether <code>posAndScale</code> volumes are always spheres (vs. <code>W</code> meaning something else
+for non-Standard types) is unverified, but every observed value is consistent with a radius.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="format-powerplays.html">Powerplays (.powerplays)</a> — the definitions these triggers fire.</li>
+<li><a href="system-powerplay.html">Powerplay System</a> — danger zones, the power bar, trigger buttons at runtime.</li>
+<li><a href="format-timeline.html">Timelines (.timelineInfo)</a> — the timeline assets referenced per trigger.</li>
+<li><a href="format-entities.html">Entities (.entities)</a> — sibling Catnip file in the same subtrack folder.</li>
+<li><a href="data-catnip.html">Catnip Entity System</a> — the data-driven trigger/timeline framework.</li>
+<li><a href="engine-networking.html">Networking &amp; Online</a> — how trigger ownership/firing replicates online.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

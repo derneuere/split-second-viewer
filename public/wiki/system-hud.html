@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HUD &amp; Frontend — Split/Second RE Wiki</title>
+<meta name="description" content="Split/Second's in-race HUD and Scaleform GFx frontend: per-mode GameModeHUDs layouts, the 2D/3D dial/power-bar components, Powerplay icons, fonts and the menu movie set.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="HUD &amp; Frontend" data-category="Game Systems">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>HUD &amp; Frontend</h1>
+<p>Split/Second's on-screen UI is split between a data-driven <strong>in-race HUD</strong> — laid out per
+game mode and per camera view by <code>GameModeHUDs/*.params</code> and rendered through
+<a href="format-gfx.html">Scaleform GFx</a> movies — and a <strong>frontend</strong> built from dozens of
+<code>.gfx</code> Flash assets driven by an XML state map. Both sit on the same GFx 2.x runtime and the same
+shared font library.</p>
+
+<div class="infobox"><div class="ib-title">UI / HUD</div><table>
+  <tr><th>Category</th><td>Game system / UI</td></tr>
+  <tr><th>UI runtime</th><td>Scaleform GFx 2.x</td></tr>
+  <tr><th>Asset format</th><td><code>.gfx</code> (magic <code>GFX</code> + ver 08)</td></tr>
+  <tr><th>HUD layouts</th><td><code>GameModeHUDs/*.params</code> (12)</td></tr>
+  <tr><th>HUD movies</th><td><code>UI/HUD/*.gfx</code> (9)</td></tr>
+  <tr><th>Frontend map</th><td><code>UI/Frontend/FrontendMapV2.xml</code></td></tr>
+  <tr><th>Fonts</th><td><code>UI/Fonts/gfxfontlib.gfx</code> (+EN/Latin)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<div class="note">The <code>.gfx</code> magic is verifiable in the data: <code>UI/HUD/Hud.gfx</code> starts
+<code>47 46 58 08</code> ("GFX" + version byte <code>08</code>), and the eboot's loader emits
+<code>incompatible GFX file, version 2.x expected</code> — confirming a Scaleform GFx 2.x pipeline (assets
+are exported from <code>.swf</code>; the eboot still references <code>gfxfontlib.swf</code>).</div>
+
+<h2>In-race HUD: GameModeHUDs</h2>
+<p>The HUD <em>layout</em> is decoupled from the HUD <em>art</em>. Twelve files in
+<code>GameModeHUDs/</code> describe, per game mode, exactly which HUD elements are visible and where they
+sit on screen. The eboot loads them on demand
+(<code>Resident(noassert)|GameModeHUDs/QuickRace.params</code>) and the layouts target the
+<code>RaceSetupHUD</code> controller.</p>
+
+<table>
+<tr><th>File</th><th>Mode</th></tr>
+<tr><td><code>QuickRace.params</code></td><td>Standard race</td></tr>
+<tr><td><code>TimeTrial.params</code></td><td>Time Trial</td></tr>
+<tr><td><code>Elimination.params</code></td><td>Elimination</td></tr>
+<tr><td><code>Demolition.params</code></td><td>Demolition / Air Revenge</td></tr>
+<tr><td><code>Nemesis.params</code>, <code>NemesisMulti.params</code>, <code>NemesisSplitScreen.params</code></td><td>Nemesis truck boss (SP / online / split)</td></tr>
+<tr><td><code>Helicopter.params</code>, <code>HelicopterMulti.params</code>, <code>HelicopterRevenge.params</code>, <code>HelicopterSurvival.params</code></td><td>Helicopter boss variants</td></tr>
+<tr><td><code>Tutorial.params</code></td><td>Tutorial</td></tr>
+</table>
+
+<h3>Per-camera-view layouts</h3>
+<p>Each file contains the same three sections — <code>/RaceSetupHUD/Bonnet</code>,
+<code>/RaceSetupHUD/Bumper</code> and <code>/RaceSetupHUD/Chase</code> — one for each
+<a href="system-cameras.html">camera view</a>, because element positions differ between bonnet, bumper and
+chase cams. Within a section, every HUD element has an <code>Enable …</code> boolean and an
+<code>X</code>/<code>Y</code> screen position (0–1 normalized, some allowing negatives to anchor off the
+right edge), plus a per-view <code>Power Bar Turned On</code> flag.</p>
+
+<pre>/RaceSetupHUD/Bonnet:
+	'Action Element X' = 0.25 (0.0, 1.0);
+	'Action Element Y' = 0.6109369 (0.0, 1.0);
+	'Enable Action Element' = true;
+	'Enable Lap Element' = true;
+	'Enable Position Element' = true;
+	'Enable Score Element' = false;
+	'Enable Timer Element' = false;
+	'Lap Element X' = 0.9617187 (0.0, 1.0);
+	'Position Element X' = -0.0859375 (-1.0, 1.0);
+	'Power Bar Turned On' = true;</pre>
+
+<h3>HUD elements</h3>
+<table>
+<tr><th>Element</th><th>Shows</th></tr>
+<tr><td>Action</td><td>Drift/Jump/Draft pop-ups (<code>TEXT_JUMP</code>/<code>TEXT_DRIFT</code>/<code>TEXT_DRAFT</code>) with score &amp; multiplier</td></tr>
+<tr><td>Position</td><td>Current race position</td></tr>
+<tr><td>Lap</td><td>Lap counter</td></tr>
+<tr><td>Timer</td><td>Race / countdown timer (<code>Is Timer Using Countdown</code>)</td></tr>
+<tr><td>Score</td><td>Cumulative score (Demolition etc.)</td></tr>
+<tr><td>Combo / Multiplier</td><td>Active combo and multiplier</td></tr>
+<tr><td>Opponent Score</td><td>Rival score (Demolition)</td></tr>
+<tr><td>Lives</td><td>Remaining lives (Survival)</td></tr>
+<tr><td>Elimination Position / Countdown</td><td>Last-place danger UI (Elimination)</td></tr>
+<tr><td>Target Time / Target Player / Target Distance</td><td>Time Trial / chase targets</td></tr>
+<tr><td>Distance Driven</td><td>Distance metre</td></tr>
+<tr><td>Power Bar</td><td>Powerplay charge (per-view toggle)</td></tr>
+</table>
+
+<h3>How the layout differs per mode</h3>
+<p>The enable-flags are what make each mode feel different. Comparing the <code>Bonnet</code> view across
+modes (all values read from the data):</p>
+
+<table>
+<tr><th>Element</th><th>QuickRace</th><th>Elimination</th><th>Demolition</th><th>TimeTrial</th><th>Nemesis</th><th>Helicopter</th></tr>
+<tr><td>Action</td><td>on</td><td>on</td><td>off</td><td>off</td><td>on</td><td>off</td></tr>
+<tr><td>Position</td><td>on</td><td>on</td><td>on</td><td>on</td><td>on</td><td>on</td></tr>
+<tr><td>Lap</td><td>on</td><td>off</td><td>on</td><td>off</td><td>off</td><td>off</td></tr>
+<tr><td>Score</td><td>off</td><td>off</td><td>off</td><td>off</td><td>on</td><td>off</td></tr>
+<tr><td>Opponent Score</td><td>off</td><td>off</td><td>off</td><td>off</td><td>on</td><td>off</td></tr>
+<tr><td>Multiplier</td><td>—</td><td>—</td><td>—</td><td>—</td><td>on</td><td>—</td></tr>
+<tr><td>Target Time</td><td>off</td><td>off</td><td>off</td><td>on</td><td>off</td><td>off</td></tr>
+<tr><td>Timer</td><td>off</td><td>off</td><td>off</td><td>off</td><td>off</td><td>on</td></tr>
+<tr><td>Power Bar</td><td>on</td><td>on</td><td>off</td><td>off</td><td>off</td><td>on</td></tr>
+<tr><td><code>Show Race Time In 2D</code></td><td>—</td><td>false</td><td>false</td><td>true</td><td>false</td><td>—</td></tr>
+</table>
+
+<p>So Time Trial swaps the action/lap furniture for a target-time readout and a 2D race clock, Demolition
+turns off the power bar and skill pop-ups in favour of score, and Nemesis adds Score + Opponent Score +
+Multiplier for the truck-overtake economy. The Demolition/TimeTrial files also add
+<code>Distance Driven</code> and <code>Target Distance</code> elements that the QuickRace file lacks.</p>
+
+<h2>2D vs 3D HUD components</h2>
+<p>The HUD is rendered in two layers. The flat overlay items (timer, position, messages) are <strong>2D
+components</strong>; the speedo/power dials are <strong>3D components</strong> floated in world space near
+the car. The 3D rig is tuned in <code>UI/HUD/Params/3D_HUD.params</code>, again split Bonnet/Bumper/Chase,
+with an <code>Infobar</code> per view that supports three placement modes:</p>
+
+<table>
+<tr><th>Position mode</th><th>Value</th><th>Behaviour</th></tr>
+<tr><td>Fixed</td><td>1</td><td>Anchored relative to the car (uses vehicle look pos/dir)</td></tr>
+<tr><td>Aim for cam</td><td>2</td><td>Lags toward the camera with limiting angles &amp; max position/angular lag</td></tr>
+<tr><td>2D</td><td>3</td><td>Screen-space fixed position</td></tr>
+</table>
+
+<pre>/UI/HUD/3D Components/Bonnet/Infobar:
+	'000;Distance from car'   = -0.361 (-3.0, 3.0);
+	'001;Y-offset for info bar'= 0.95  (-1.0, 1.0);
+	'002;Position mode (1=fixed, 2=aimforcam, 3=2d' = 1 (1, 3);
+	'003;Fixed Scale'         = 1.64  (0.25, 4.0);
+	'006;Dial scale'          = 0.5   (0.1, 2.0);</pre>
+
+<p>The eboot wires these layers up as named GFx movie views, each backed by a resident asset:</p>
+<table>
+<tr><th>Layer</th><th>Movie</th></tr>
+<tr><td>2D HUD Layer</td><td><code>UI/HUD/Hud.gfx</code></td></tr>
+<tr><td>Infobar Layer</td><td><code>UI/HUD/DialsInfo.gfx</code></td></tr>
+<tr><td>Powerbar Layer</td><td><code>UI/HUD/DialsPower.gfx</code></td></tr>
+<tr><td>Timer Overlay Layer</td><td><code>UI/HUD/TimerOverlay.gfx</code></td></tr>
+<tr><td>Letterbox Layer</td><td><code>UI/InGame/FE_RouteChangeLetterbox.gfx</code></td></tr>
+<tr><td>Pooled Icons</td><td><code>UI/HUD/ChopperBattleIcons.gfx</code></td></tr>
+<tr><td>Player name</td><td><code>UI/HUD/HUD_PlayerName.gfx</code></td></tr>
+</table>
+
+<p>The movies expose Flash callbacks the engine drives directly:
+<code>InfoBarShow</code>/<code>InfoBarHide</code>, <code>BumperCamPowerBarShow</code>/<code>Hide</code>,
+<code>ChaseCamPowerBarShow</code>/<code>Hide</code>, and the action ticker
+(<code>ActionShow</code>, <code>SetActionText</code>, <code>SetActionScore</code>,
+<code>SetActionMultiplier</code>, <code>ActionRePulse</code>). The big skill banners are string-table keys —
+<code>JUMP PASS!</code>, <code>BEST JUMP!</code>, <code>BEST DRIFT!</code> — driven by the
+<a href="system-scoring.html">scoring system</a>.</p>
+
+<h2>Powerplay icons</h2>
+<p>The diegetic markers floating above cars (and the Nemesis indicator) are the <strong>Powerplay
+icons</strong>, art in <code>GameLogic/PowerplayIcons.textures</code> (~598&nbsp;KB, a <code>TEXS</code>
+pack) rendered by <code>UI/HUD/PowerPlayIcons.gfx</code>. The eboot exposes a debug switch
+<code>UI/HUD/PowerplayIcons/Render the icons above cars in 3D or 2D.</code> plus per-icon offsets
+(<code>Car icon x/y offset</code>, <code>Nemesis Car icon x/y offset</code>,
+<code>On Nemesis icon x/y offset</code>), and the movie pools "3D PP Icons", "2D PP Icons" and
+"Chopper Target Icons" instances. The chopper-battle icon glow uses <code>SetAsGlow</code> on
+<code>ChopperBattleIcons.gfx</code>.</p>
+
+<h2>Fonts</h2>
+<p>Text is drawn from a shared GFx font library plus language packs:</p>
+<table>
+<tr><th>File</th><th>Size</th><th>Role</th></tr>
+<tr><td><code>UI/Fonts/gfxfontlib.gfx</code></td><td>~669 KB</td><td>Shared GFx font library (referenced as <code>gfxfontlib.swf</code> in the eboot)</td></tr>
+<tr><td><code>UI/Fonts/Fonts_EN.gfx</code></td><td>~317 KB</td><td>English glyph set</td></tr>
+<tr><td><code>UI/Fonts/Fonts_Latin.gfx</code></td><td>~189 KB</td><td>Extended Latin glyphs</td></tr>
+<tr><td><code>fonts/Debug.bed</code> + <code>.ker</code> + <code>.textures</code></td><td>~53 KB</td><td>Bitmap debug font (kerning <code>.ker</code> + glyph atlas), used by the <a href="glossary.html">QA</a> on-screen text</td></tr>
+</table>
+
+<div class="tip">The standalone <code>fonts/</code> directory is a non-GFx bitmap font: a
+<code>.bed</code> glyph/metrics file, a <code>.ker</code> kerning table and a <code>.textures</code> atlas.
+This is the renderer's own debug text path (the <code>%.2fms</code>, <code>Verts %.2f mill FPS</code>
+overlays), separate from the Scaleform fonts used for player-facing UI.</div>
+
+<h2>Frontend (menus)</h2>
+<p>The menu system is a large set of Scaleform movies under <code>UI/Frontend/Flash/</code>, organised by
+the naming convention <code>FE_&lt;screen&gt;_Billboard / _Poster / _Widget / _Ticker</code> — the
+billboard is the big 3D panel, the poster/widget the interactive parts. The screen graph itself is data —
+<code>UI/Frontend/FrontendMapV2.xml</code> — and the frontend renders against 3D
+<a href="format-model.html">models</a> in <code>UI/Frontend/Models/</code>
+(e.g. <code>FE_Asset_Billboard.model</code>) with its own
+<a href="system-postprocess.html">colour cubes</a> at <code>UI/Frontend/ColorCubes/</code>.</p>
+
+<table>
+<tr><th>Frontend screen (movie family)</th><th>Purpose</th></tr>
+<tr><td><code>FE_title_screen_Billboard</code>, <code>FE_pressStart_Overlay</code></td><td>Title / press-start</td></tr>
+<tr><td><code>FE_episode_select_*</code></td><td>Season episode select (see <a href="system-scoring.html">progression</a>)</td></tr>
+<tr><td><code>FE_event_select_*</code></td><td>Event select within an episode</td></tr>
+<tr><td><code>FE_track_select_*</code>, <code>FE_vehicleSelect</code>, <code>FE_vehicle_select_*</code></td><td>Track &amp; <a href="system-vehicles.html">vehicle</a> pickers</td></tr>
+<tr><td><code>FE_leaderboards_*</code>, <code>FE_weekly_challenge_*</code></td><td>Leaderboards &amp; weekly challenge</td></tr>
+<tr><td><code>FE_lobby_*</code>, <code>FE_room_list_*</code>, <code>SignIn</code>, <code>OnlineCountdown</code></td><td><a href="engine-networking.html">Online</a> lobby/rooms</td></tr>
+<tr><td><code>FE_options_*</code>, <code>FE_Credits</code>, <code>FE_DecalModule</code>, <code>FE_decals_viewer_*</code></td><td>Options, credits, livery/decal viewer</td></tr>
+<tr><td><code>CreateSave</code>, <code>InstallGameData</code>, <code>FE_BU_Middleware</code></td><td>Save/install/middleware boot screens</td></tr>
+</table>
+
+<p>Common chrome lives in <code>UI/CommonUI/</code> (<code>Message.gfx</code>, <code>Prompt_Bar.gfx</code>,
+<code>FE_LoadingScreen.gfx</code>, <code>SafeFrame.gfx</code>, plus the debug-only
+<code>QA_Menu.gfx</code> / <code>QA_Info.gfx</code> / <code>ResourceStats.gfx</code>), and the in-game
+overlays (pause, results, objectives) in <code>UI/InGame/</code>
+(<code>FE_PauseMenu_NEW.gfx</code>, <code>RaceResults.gfx</code>, <code>RaceEnd.gfx</code>,
+<code>EpisodeAwards.gfx</code>, <code>EventObjectives.gfx</code>, <code>DebugMenu.gfx</code>). The boot
+sequence uses its own <code>UI/Bootup/Bootup.gfx</code>.</p>
+
+<div class="warn">The presence of <code>QA_Menu.gfx</code>, <code>DebugHud.gfx</code> and
+<code>DebugMenu.gfx</code> is a fingerprint of this <strong>devkit/QA build</strong> (<code>qa_menus=true</code>);
+a retail disc would strip these. The Scaleform movie set is otherwise representative of the shipped UI.</div>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="format-gfx.html">Scaleform UI (.gfx)</a> — the GFx 2.x file format these movies use</li>
+<li><a href="format-textures.html">Textures (.textures)</a> — the <code>TEXS</code> packs for icons and UI art</li>
+<li><a href="system-scoring.html">Scoring &amp; Progression</a> — supplies score/combo/banner data and episode/leaderboard screens</li>
+<li><a href="system-powerplay.html">Powerplay System</a> — drives the power bar and Powerplay icons</li>
+<li><a href="system-cameras.html">Cameras &amp; Director</a> — Bonnet/Bumper/Chase views the HUD lays out against</li>
+<li><a href="system-gamemodes.html">Game Modes</a> · <a href="system-nemesis.html">Nemesis &amp; Heli Modes</a> — what each GameModeHUD targets</li>
+<li><a href="system-postprocess.html">Post-Processing DB</a> — the <code>Hud Message</code> / <code>Results</code> full-screen looks &amp; frontend colour cubes</li>
+<li><a href="engine-networking.html">Networking &amp; Online</a> — backs the lobby/leaderboard frontend</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

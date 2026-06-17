@@ -1,14 +1,21 @@
-// Havok packfile registry handler (PARTIAL — container header only).
+// Havok packfile registry handler (container + collision geometry + fields).
 //
 // Covers every Split/Second physics packfile: .phys, .mainColl, .hkColl,
 // .hkPPs, .hkRBs. They share the identical Havok-5.5.0 container, so one
 // handler claims all five extensions and sniffs unresolved .ark members by the
 // 0x57E0E057 / 0x10C0C010 magic.
 //
-// Read-only MVP (caps.write = false): we decode the self-documenting container
+// Read-only (caps.write = false). Decodes the self-documenting container
 // (magic, hkPackfileHeader, section table, __classnames__ registry, root
-// class) but do NOT deserialize the Havok object graph in __data__. Marked
-// partial honestly — only the header is decoded.
+// class), the __types__ class reflection, and COLLISION GEOMETRY from the
+// __data__ object graph:
+//   * hkpConvexVerticesShape -> real per-hull vertices (vehicle .mainColl /
+//     .phys), triangulated into a renderable convex-hull mesh (-> MeshViewer).
+//   * hkpExtendedMeshShape   -> subpart metadata + an AABB box (level .hkColl);
+//     the triangle buffers themselves are SERIALIZE_IGNORED and absent from the
+//     file, so only the AABB box is renderable (geometryComplete=false).
+// Surfaces hkpMaterial friction/restitution where present. Honest partial: the
+// level triangle soup is not in the file; the convex hulls are fully recovered.
 
 import { parseHavok, isHavokPackfile, type ParsedHavok } from '../../havok';
 import type { ResourceHandler } from '../handler';
@@ -26,13 +33,16 @@ export const havokHandler: ResourceHandler<ParsedHavok> = {
 	description:
 		'Havok 5.5.0 binary packfile (magic 0x57E0E057) used by every Split/Second physics asset ' +
 		'(.phys/.mainColl/.hkColl/.hkPPs/.hkRBs). Decodes the container header, the ' +
-		'__classnames__/__types__/__data__ section table and the embedded class registry; the Havok ' +
-		'object graph itself is not deserialized (partial). Some level packs ship an *Xml twin on disk.',
+		'__classnames__/__types__/__data__ section table, the embedded class reflection, and ' +
+		'collision GEOMETRY: hkpConvexVerticesShape hulls (vehicle .mainColl/.phys) are fully ' +
+		'recovered + triangulated; hkpExtendedMeshShape (level .hkColl) yields subpart metadata + an ' +
+		'AABB box only (its triangle buffers are SERIALIZE_IGNORED, absent from the file). Surfaces ' +
+		'hkpMaterial friction/restitution. Some level packs ship an *Xml twin on disk.',
 	category: 'Physics',
 	caps: { read: true, write: false },
 	extensions: ['.phys', '.maincoll', '.hkcoll', '.hkpps', '.hkrbs'],
 	magic: HAVOK_MAGIC,
-	wikiUrl: 'https://burnout.wiki/',
+	wikiUrl: 'format-hkcoll.html',
 
 	parseRaw: (raw) => {
 		if (!isHavokPackfile(raw)) {
@@ -43,14 +53,35 @@ export const havokHandler: ResourceHandler<ParsedHavok> = {
 
 	describe: (m) => {
 		const root = m.rootClassName ?? '(unresolved)';
-		const sectionSizes = m.sections
-			.map((s) => `${s.tag.replace(/^__|__$/g, '')}=${s.size}B`)
-			.join(', ');
 		const banner = m.header.contentsVersion || '(no banner)';
+		// Geometry summary.
+		const convex = m.shapes.filter((s) => s.className === 'hkpConvexVerticesShape');
+		const ext = m.shapes.filter((s) => s.className === 'hkpExtendedMeshShape');
+		const geomParts: string[] = [];
+		if (convex.length) {
+			const verts = convex.reduce((a, s) => a + (s.numVertices ?? 0), 0);
+			geomParts.push(`${convex.length} convex hull${convex.length === 1 ? '' : 's'} (${verts} verts)`);
+		}
+		if (ext.length) {
+			const tris = ext.reduce((a, s) => a + (s.numTriangles ?? 0), 0);
+			geomParts.push(
+				`${ext.length} mesh shape${ext.length === 1 ? '' : 's'} (${tris} tris — AABB box only, ` +
+					`triangle buffers not in file)`,
+			);
+		}
+		const geom = geomParts.length ? ` · ${geomParts.join(', ')}` : '';
+		// Physics fields.
+		const fric = m.fields.find((f) => f.name === 'friction');
+		const rest = m.fields.find((f) => f.name === 'restitution');
+		const phys =
+			fric || rest
+				? ` · material{${fric ? `friction=${fric.value.toFixed(3)}` : ''}${fric && rest ? ', ' : ''}${rest ? `restitution=${rest.value.toFixed(3)}` : ''}}`
+				: '';
 		return (
-			`${banner} root=${root} · ${m.classNames.length} classes · ` +
-			`${m.sections.length} sections [${sectionSizes}] · userTag=${m.header.userTag} · ` +
-			`${m.fileSize}B`
+			`${banner} root=${root} · ${m.classNames.length} classes · ${m.sections.length} sections` +
+			geom +
+			phys +
+			` · userTag=${m.header.userTag} · ${m.fileSize}B`
 		);
 	},
 
@@ -94,6 +125,19 @@ export const havokHandler: ResourceHandler<ParsedHavok> = {
 				after.classNames.length === before.classNames.length
 					? []
 					: [`class count ${after.classNames.length} != ${before.classNames.length}`],
+		},
+		{
+			name: 'geometry',
+			description: 'the recovered collision shapes/meshes are stable',
+			mutate: (m) => m,
+			verify: (before, after) =>
+				after.shapes.length === before.shapes.length &&
+				after.meshes.length === before.meshes.length
+					? []
+					: [
+							`shapes ${after.shapes.length} != ${before.shapes.length} or ` +
+								`meshes ${after.meshes.length} != ${before.meshes.length}`,
+						],
 		},
 	],
 };

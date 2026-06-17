@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { sidewaysHandler } from '../sideways';
 import { parseSideways, writeSideways } from '../../../sideways';
 import { ssCtx } from '../../handler';
-import { hasSample, readSample } from '@/test/dataRoot';
+import {
+	hasSample,
+	readSample,
+	listSamplesByExt,
+	readFileBytes,
+} from '@/test/dataRoot';
 
 // Inline fixture mirroring the wiki Downtown route-A head: 7 links, links 0-5
 // empty (count 0), link 6 has count=2 → (244, 231).
@@ -56,4 +61,26 @@ describe('sideways parser', () => {
 			expect(Array.from(out)).toEqual(Array.from(raw));
 		},
 	);
+
+	const ALL = listSamplesByExt('.sideways');
+	it.skipIf(ALL.length === 0)(
+		`sideways round-trips real sample byte-for-byte (${ALL.length} files)`,
+		() => {
+			const ctx = ssCtx();
+			const failures: string[] = [];
+			for (const abs of ALL) {
+				const raw = readFileBytes(abs);
+				const out = sidewaysHandler.writeRaw!(sidewaysHandler.parseRaw(raw, ctx), ctx);
+				if (!bytesEqual(out, raw)) failures.push(`${abs} (len ${out.length} vs ${raw.length})`);
+			}
+			expect(failures).toEqual([]);
+			expect(ALL.length).toBeGreaterThan(1);
+		},
+	);
 });
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+	if (a.length !== b.length) return false;
+	for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+	return true;
+}

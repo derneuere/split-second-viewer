@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Archives (.ark) — Split/Second RE Wiki</title>
+<meta name="description" content="The .ark packed asset archive: a hash-indexed table of contents over a packed blob region. Used for level sectors (Static/Stream) and, in retail, the global Resident/Frontend/InGame archives.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Archives (.ark)" data-category="Formats · Archive & Misc">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Archives (<code>.ark</code>)</h1>
+<p>
+The <code>.ark</code> format is Split/Second's packed asset archive. Each file is a flat header,
+a hash-sorted table of contents, and a region of packed asset blobs. The engine's
+<code>ArkLoader</code> opens one archive at a time and looks members up by a 32-bit name hash via
+binary search. In the loose <strong>devkit/QA build</strong> documented here the only archives on
+disk are the per-level sector archives (<code>&lt;Level&gt;.Static.ark</code> and
+<code>&lt;Level&gt;.Stream.ark</code>) — 20 files totalling roughly 2.2&nbsp;GB — but the EBOOT
+also references the retail global archives (<code>Resident.ark</code>, <code>Frontend.ark</code>,
+<code>InGame1/2/3.ark</code>) and per-rider animation archives.
+</p>
+
+<div class="infobox"><div class="ib-title">.ark</div><table>
+  <tr><th>Category</th><td>Packed asset archive</td></tr>
+  <tr><th>Loader class</th><td><code>ArkLoader</code></td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Magic</th><td>none — version/flags word <code>00 00 00 00</code></td></tr>
+  <tr><th>Header</th><td>16 bytes</td></tr>
+  <tr><th>TOC entry</th><td>16 bytes, sorted by name hash</td></tr>
+  <tr><th>Lookup key</th><td>32-bit name hash (binary search)</td></tr>
+  <tr><th>On disk</th><td>20 sector archives (~2.2&nbsp;GB)</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<h2>Where they live</h2>
+<p>
+The EBOOT builds archive paths from a handful of templates (see
+<code>eboot_strings.txt</code>):
+</p>
+<pre class="hex">Environments/Levels/%s.ark
+Characters/RiderAnimations/animationNetwork/rider_%02d.ark
+Resident.ark
+Frontend.ark
+InGame1.ark   InGame2.ark   InGame3.ark</pre>
+<p>
+On disk every level folder under <code>Environments/Levels/&lt;Level&gt;/Sectors/</code> carries a
+pair of archives:
+</p>
+<ul>
+  <li><strong><code>&lt;Level&gt;.Static.ark</code></strong> — resident geometry/data for a level
+      that stays loaded (2.9&nbsp;MB&nbsp;– 91&nbsp;MB across the 10 levels).</li>
+  <li><strong><code>&lt;Level&gt;.Stream.ark</code></strong> — the large streaming pool fetched per
+      sector as the player drives (38&nbsp;MB&nbsp;– 564&nbsp;MB). This is what the
+      <a href="engine-resources.html">streaming system</a> pulls sectors from at runtime; see also
+      <a href="format-sectors.html">Sectors (.sectorInfo)</a>.</li>
+</ul>
+<p>
+The two members of a pair are addressed through paired <strong>logical archive names</strong> the
+EBOOT builds from <code>CityStatic</code> / <code>CityStream</code> (and the
+<code>CityStaticOverlay</code> / <code>CityStreamOverlay</code> variants), using the same
+<code>&lt;Archive&gt;|&lt;member&gt;</code> syntax as the global archives — e.g.
+<code>CityStatic|%s_rig%d</code> and <code>CityStream|%s_rig%d</code>. The Static side carries the
+resident serialized objects; the Stream side carries the bulky geometry and textures
+(<code>%sMD.model.stream</code>, <code>%s|%s.streamtex</code>), which the engine logs about when one
+is oversized (<code>Stream model resource too big to stream: %s</code>,
+<code>Stream texture resource too big to stream: %s</code>). Each archive is self-contained: every
+<code>offset</code> in a TOC indexes its <em>own</em> file, so the Static and Stream archives are
+opened and read independently rather than one indexing into the other.
+</p>
+<div class="note">
+The global archives (<code>Resident.ark</code>, <code>Frontend.ark</code>, <code>InGame*.ark</code>)
+and the <code>rider_%02d.ark</code> animation archives are <em>not present</em> in this build — the
+data they would contain is loose on disk instead. References such as
+<code>Resident|UI/Bootup/Bootup.gfx</code> in the EBOOT show the
+<code>&lt;Archive&gt;|&lt;path&gt;</code> addressing the loader normally uses; in this build the
+part before the <code>|</code> selects a logical archive that falls through to the filesystem.
+</div>
+
+<h2>File layout</h2>
+<p>An archive is three regions, in order:</p>
+<ol>
+  <li><strong>Header</strong> (16 bytes) — points at the data region and counts the entries.</li>
+  <li><strong>Table of contents</strong> — <code>count</code> &times; 16-byte entries, sorted
+      ascending by 32-bit name hash.</li>
+  <li><strong>Data region</strong> — packed asset blobs, addressed by absolute offset from each
+      TOC entry.</li>
+</ol>
+
+<h3>Header</h3>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>0x4</td><td>uint32_t</td><td>version</td><td>Format/flags word. <code>0</code> in every sample examined.</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>uint32_t</td><td>dataStart</td><td>Byte offset where the data region begins. Equals <code>0x10 + count·0x10</code> exactly (header + TOC size). Verified on all samples.</td></tr>
+<tr><td>0x8</td><td>0x4</td><td>uint32_t</td><td>entryCount</td><td>Number of TOC entries. e.g. 142 (nem_downtown.Static), 768 (Downtown.Static), 330 (nem_downtown.Stream).</td></tr>
+<tr><td>0xC</td><td>0x4</td><td>uint32_t</td><td>entrySize</td><td>Size of one TOC entry in bytes. Always <code>0x10</code> (16) — confirmed by the <code>dataStart</code> arithmetic above.</td></tr>
+</table>
+
+<h3>TOC entry (16 bytes)</h3>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>0x4</td><td>uint32_t</td><td>size</td><td>Uncompressed / in-memory size of the member. Summing this field across all entries equals the data-region size to within one alignment pad (e.g. sum <code>0x2d921a</code> vs payload region <code>0x2da710</code>).</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>uint32_t</td><td>nameHash</td><td>32-bit hash of the member path. <strong>Strictly increasing</strong> across the TOC in every sample — the table is kept sorted so the loader can binary-search by hash. <strong>Stable across levels</strong>: a given resource hashes to the same value in every archive it appears in (e.g. <code>0x000ECB73</code> and <code>0x01C17470</code> are the 2nd and 3rd entries in <code>airport_test_03.Static</code>, <code>nem_downtown.Static</code> <em>and</em> <code>docks.Static</code>; 141 of nem_downtown's 142 hashes are shared with both other levels). This rules out the early "cumulative offset" reading of this field — it is a content-/name-keyed hash.</td></tr>
+<tr><td>0x8</td><td>0x4</td><td>uint32_t</td><td>reserved</td><td><code>0</code> in every entry. Likely a flags slot or the high dword of a 64-bit field that never exceeds 32 bits here.</td></tr>
+<tr><td>0xC</td><td>0x4</td><td>uint32_t</td><td>offset</td><td>Absolute byte offset of the member's stored data. Always in <code>[dataStart, fileSize)</code>; values verified to point at real blob starts.</td></tr>
+</table>
+
+<div class="warn">
+The members are <strong>not</strong> stored in TOC (hash) order, and <code>size</code> is
+<strong>not</strong> the on-disk stored length. Sorting the entries by <code>offset</code> and
+checking <code>offset + size</code> against the next member's start shows it almost never lands on a
+boundary, and — decisively — the largest <code>offset + size</code> in
+<code>nem_downtown.Static</code> reaches <code>0x318FDE</code>, well past the
+<code>0x2DB000</code>-byte file. <code>size</code> is therefore the <em>decompressed / in-memory</em>
+size (an "allocate this much" hint), and the on-disk blobs are smaller because they are packed. The
+EBOOT confirms the codec: it links <code>zlib</code> (<code>inflate 1.2.3 Copyright 1995-2005 Mark
+Adler</code>), so members are deflate-compressed rather than stored raw. There is no per-entry
+<em>stored</em> length in the 16-byte TOC, so a faithful extractor must derive each blob's on-disk
+extent from the next-higher <code>offset</code> (the approach <code>ark_extract.py</code> takes) and
+treat <code>size</code> as the inflate target size.
+</div>
+
+<h2>Hex walk-through</h2>
+<p>
+<code>nem_downtown.Static.ark</code> (2,994,176&nbsp;bytes = <code>0x2DB000</code>). First 32 bytes
+= header + the first TOC entry:
+</p>
+<pre class="hex">000000  00 00 00 00  00 00 08 f0  00 00 00 8e  00 00 00 10
+        └ version=0  └ dataStart  └ count=142  └ entrySize=16
+                       =0x8F0
+
+000010  00 00 00 00  00 00 08 f0  00 00 00 00  00 18 47 2c
+        └ size=0     └ hash       └ reserved   └ offset
+                       =0x8F0                    =0x18472C</pre>
+<p>
+<code>count·0x10 + 0x10 = 142·16 + 16 = 0x8F0 = dataStart</code> — the data region begins exactly
+where the TOC ends. The first member has <code>size = 0</code> (an empty/placeholder entry whose
+hash, <code>0x8F0</code>, happens to be the smallest). The next-to-last entry illustrates the size
+field:
+</p>
+<pre class="hex">Entry with hash 0x9AB5946B:  size=0x0E644  offset=0x1B26
+At 0x1B26 in the file:
+001b26  02 00 00 08  00 00 00 21  00 00 00 18  00 00 00 00
+        └ Static-archive members begin with this 02 00 00 08 record header
+          (a serialized-object / chunk tag, not part of the .ark container)</pre>
+<p>
+In the <code>.Static.ark</code> archives, <strong>every</strong> stored blob begins with the
+four-byte tag <code>02 00 00 08</code> followed by a small typed header. This was verified exhaustively
+by <code>ark_extract.py</code> across all six levels checked — every non-empty member matches:
+244/245 in <code>airport_test_03.Static</code>, 141/142 in <code>nem_downtown.Static</code>,
+887/888 in <code>docks.Static</code>, 767/768 in <code>Downtown.Static</code>, 851/852 in
+<code>Graveyard.Static</code> and 1311/1312 in <code>Powerplant.Static</code>. In every case the only
+miss is the single <code>size = 0</code> placeholder entry, so the real recognition rate is 100&nbsp;%.
+Immediately after the tag comes <code>00 00 00 NN</code> (the item type — the value behind
+<code>Unknown archive item type %d</code>) and a length/header word; this is the serialized-object
+framing the loader hands to the per-format reader.
+</p>
+<div class="warn">
+<strong>Stream members are different.</strong> Members of the <code>.Stream.ark</code> archives do
+<em>not</em> share this tag — <code>ark_extract.py</code> found <strong>0</strong> of the
+<code>02 00 00 08</code> tag across all six Stream archives (621, 330, 1278, 1237, 1089 and 1221
+members respectively). Instead each Stream member opens with its own little sub-resource framing
+of the shape <code>00 00 00 00 | innerSize | 00 00 00 00 | …</code> (e.g.
+<code>00000000 00035ACA 00000000 …</code>, where <code>0x35ACA</code> is smaller than the entry's
+<code>size</code> of <code>0x9E55C</code>) — an inner table of the packed
+<code>*.model.stream</code> / <code>*.streamtex</code> resources the streaming system pulls per
+sector. The leading word is not a zlib header and the member does not deflate-decode at offset 0, so
+the compression boundary is inside this sub-framing rather than at the member boundary. The
+<code>02 00 00 08</code> serialized-object framing is therefore specific to the Static archives.
+</div>
+
+<h2>Extraction &amp; verification</h2>
+<p>
+A standalone parser, <code>_tools/ark_extract.py</code>, reads the 16-byte header, walks the
+<code>count</code> &times; 16-byte TOC, and dumps each member. Because the TOC has no per-entry
+<em>stored</em> length, the extractor derives each blob's on-disk extent as the distance to the
+next-higher <code>offset</code> (trailing member runs to EOF) and writes the slice; <code>size</code>
+is kept only as the decompressed-size hint. It also sniffs the first bytes of every member against a
+table of known sub-format magics.
+</p>
+<pre class="hex"># analyze only (header checks + magic histogram)
+python _tools/ark_extract.py "<Level>/Sectors/<Level>.Static.ark"
+# analyze + dump blobs to _tools/ark_out/<archive>/
+python _tools/ark_extract.py --dump --limit 60 "<Level>/Sectors/<Level>.Static.ark"</pre>
+<div class="tip">
+<strong>Test result (all six levels, 12 archives).</strong> For every archive the header arithmetic
+held (<code>dataStart == 0x10 + count·0x10</code>), the TOC was strictly sorted by
+<code>nameHash</code>, and the <code>reserved</code> word was <code>0</code> in every entry. Magic
+sniffing then confirmed the container reading:
+<ul>
+  <li><strong>Static</strong> — <em>100&nbsp;% of non-empty members</em> begin with
+      <code>02 00 00 08</code>: 244/245, 141/142, 887/888, 767/768, 851/852 and 1311/1312 across
+      airport_test_03, nem_downtown, docks, Downtown, Graveyard and Powerplant (the lone miss in each
+      is the <code>size = 0</code> placeholder). Dumped <code>.sobj</code> blobs open exactly on the
+      tag.</li>
+  <li><strong>Stream</strong> — <em>0</em> members carry that tag in any of the six Stream archives;
+      they open with the inner <code>00 00 00 00 | innerSize | …</code> sub-resource framing instead.</li>
+</ul>
+That a single offset/length interpretation makes <em>every</em> Static member land on the same
+serialized-object tag is strong evidence the TOC layout
+(<code>size · nameHash · reserved · offset</code>) is correct.
+</div>
+<ol>
+  <li>Hash the requested member path to a 32-bit key.</li>
+  <li>Binary-search the sorted TOC on <code>nameHash</code>.</li>
+  <li>Seek to <code>offset</code>, allocate <code>size</code> bytes, and stream the member out.</li>
+</ol>
+<div class="tip">
+The EBOOT's archive diagnostics line up with sequential streaming rather than random reads:
+<code>Warning: Skipping backwards in archive by %d bytes</code> and
+<code>Skipping forwards in archive by %d bytes</code> are logged when reads jump around, and
+<code>can't have more than one archive open at a time!</code> shows <code>ArkLoader</code> keeps a
+single archive resident (<code>mInstanceCount</code>).
+</div>
+
+<h2>EBOOT evidence</h2>
+<table>
+<tr><th>String</th><th>Meaning</th></tr>
+<tr><td><code>******** Opening Archive [%s] ********</code></td><td>Archive open trace.</td></tr>
+<tr><td><code>******** Closing Archive [%s] ********</code></td><td>Archive close trace.</td></tr>
+<tr><td><code>Unknown archive item type %d</code></td><td>Members carry a type tag (the <code>02 …</code> payload header).</td></tr>
+<tr><td><code>open archive member</code></td><td>Per-member open path.</td></tr>
+<tr><td><code>ArkLoader::mInstanceCount = %d …</code></td><td>Loader is a near-singleton; one archive open at a time.</td></tr>
+<tr><td><code>Archives disabled - remove -noark to enable them</code></td><td><code>-noark</code> command-line switch falls back to loose files (the mode this build runs in).</td></tr>
+<tr><td><code>Stream Archive</code></td><td>Profiler label for the <code>.Stream.ark</code> read path.</td></tr>
+<tr><td><code>inflate 1.2.3 Copyright 1995-2005 Mark Adler</code></td><td>The build links <strong>zlib</strong> — the deflate codec used to pack member blobs (<code>size</code> is the inflate target).</td></tr>
+<tr><td><code>CityStatic</code> · <code>CityStream</code> · <code>CityStatic|%s_rig%d</code></td><td>Logical names for the Static/Stream pair and the <code>&lt;Archive&gt;|&lt;member&gt;</code> addressing into them.</td></tr>
+<tr><td><code>%sMD.model.stream</code> · <code>%s|%s.streamtex</code></td><td>The model-geometry and texture resources that live in the Stream archive.</td></tr>
+</table>
+
+<h2>Observed sizes (this build)</h2>
+<table>
+<tr><th>Level</th><th>Static.ark</th><th>Stream.ark</th></tr>
+<tr><td>nem_downtown</td><td>2.99 MB</td><td>65.5 MB</td></tr>
+<tr><td>nem_training</td><td>10.5 MB</td><td>94.8 MB</td></tr>
+<tr><td>Graveyard</td><td>47.5 MB</td><td>340 MB</td></tr>
+<tr><td>Powerplant</td><td>55.1 MB</td><td>309 MB</td></tr>
+<tr><td>docks</td><td>63.3 MB</td><td>423 MB</td></tr>
+<tr><td>Downtown</td><td>91.6 MB</td><td>564 MB</td></tr>
+</table>
+<p>20 archives total across the 10 shipping/test levels (Downtown, Graveyard, Powerplant,
+airport_test_03, docks, plus the five <code>nem_*</code> Nemesis-mode levels).</p>
+
+<h2>Open questions</h2>
+<ul>
+  <li><strong>Resolved: members are stored raw, not deflate-compressed</strong> — see
+      <a href="#full-extraction">Full extraction</a>. The EBOOT's <code>inflate 1.2.3</code> belongs to
+      Scaleform GFx / libpng, not the <code>.ark</code> pipeline. What remains is whether a stored-length
+      lives in the <code>02 00 00 08</code> payload header (the TOC <code>size</code> is rotated, so the
+      authoritative length is the offset delta).</li>
+  <li>Recover the <code>nameHash</code> function. The hash is <em>deterministic and stable across
+      levels</em> (so an entry→filename mapping <em>is</em> recoverable in principle), but naive
+      CRC32 / FNV-1 / FNV-1a over guessed names did not match — the real member-name strings and
+      their casing/separators (likely listed in the <code>.sectorInfo</code> tables) are needed to
+      pin it down.</li>
+  <li>Decode the per-member <code>02 00 00 08</code> chunk header and its "item type" enum
+      (the <code>00 00 00 NN</code> word after the tag, referenced by
+      <code>Unknown archive item type %d</code>).</li>
+  <li>Decode the Stream sub-resource framing (the <code>00 00 00 00 | innerSize | …</code> table) and
+      its <code>*.model.stream</code> / <code>*.streamtex</code> payloads.</li>
+</ul>
+
+<h2 id="full-extraction">Full extraction</h2>
+<p>
+A second tool, <code>_tools/ark_extract_full.py</code>, produces a <strong>complete, named,
+decompressed</strong> dump of a level's <code>.Static.ark</code> + <code>.Stream.ark</code> pair into a
+tidy tree (<code>level_extract/&lt;Level&gt;/{Static,Stream}/</code> plus a <code>manifest.json</code>).
+It folds together the two findings below.
+</p>
+
+<h3>"Decompression": members are stored raw</h3>
+<div class="note">
+<strong>Correction to the zlib note above.</strong> The EBOOT does link <code>inflate 1.2.3</code>, but
+that <code>zlib</code> is used only by <a href="format-gfx.html">Scaleform GFx</a> (compressed
+<code>CFX</code>/SWF) and libpng (PNG <code>IDAT</code>) — the only inflate call sites are
+<code>GFx_InflateWrapper</code>/<code>GFxLoader</code> and the <code>Invalid zlib … in IDAT</code> path.
+The <code>.ark</code> stream pipeline does <strong>not</strong> deflate-compress members. Evidence:
+a whole-file scan for <code>78 01 / 78 9C / 78 DA</code> headers found hundreds of byte-pairs but
+<em>none</em> inflate to a sensible payload; raw-deflate (<code>wbits=-15</code>) at every member /
+sub-frame offset yields zero hits; and the sum of member on-disk lengths equals the payload region to
+within one alignment pad (ratio 0.99–1.00), i.e. there is no room for any compression gain. Members are
+stored <strong>1:1</strong>.
+</div>
+<p>
+The only transform needed is therefore stripping the 12-byte Stream sub-resource <strong>frame</strong>
+(<code>00 00 00 00 | innerSize | 00 00 00 00 | …innerSize bytes…</code>); Static serialized objects and
+unframed GPU textures are copied verbatim. The extractor still attempts a genuine
+<code>zlib</code>/raw-deflate inflate first (so it stays correct if a member ever <em>is</em> compressed),
+then falls back to frame-strip, then to raw store. On <code>airport_test_03</code> the breakdown is
+<strong>121 frame-strip · 743 raw · 0 inflated</strong>, confirming the raw-store finding.
+The authoritative member length is the <strong>offset delta</strong> (distance to the next distinct
+<code>offset</code>, EOF for the last) — the TOC <code>size</code> column is rotated by one slot in hash
+order and must not be trusted per entry.
+</p>
+<div class="warn">
+<strong>Placeholder offsets are not boundaries.</strong> When computing the offset delta, only offsets
+of <em>live</em> members (TOC <code>size &gt; 0</code>) bound a member. A <code>size = 0</code>
+placeholder entry can sit at an offset that falls <em>inside</em> a live member's byte span; counting
+it as a boundary truncates that member. On <code>airport_test_03.Static</code> the lone placeholder
+(hash <code>0xF60</code>, offset <code>0x2BC056</code>) lands inside member <code>0x4EF7A1CF</code>
+(offset <code>0x29E714</code>): excluding it gives the correct length <code>0x22AAA</code> rather than
+the truncated <code>0x1D942</code>. Both the Python extractor and the Steward port filter the boundary
+set to <code>size &gt; 0</code> offsets for exactly this reason — with that fix the port's 864 written
+members are byte-for-byte identical to <code>ark_extract_full.py</code>.
+</div>
+
+<h3>Naming: nameHash is GF(2)-affine but not closed-form</h3>
+<p>
+The 32-bit <code>nameHash</code> was characterised but <em>not</em> fully cracked. It is a
+<strong>GF(2)-affine (linear)</strong> hash of a resource-ID string
+(<code>&lt;archiveTag&gt;|&lt;relpath&gt;</code>): provably linear within an archive (23/23 four-way
+XOR-zero relations hold), with a per-position contribution that is universal when indexed by
+<em>distance-from-end</em> of the string, and a within-byte bit recurrence that is a left-shift LFSR with
+polynomial <code>0xDB710641</code> (last-byte single-bit contributions
+<code>bit0=efc26b3e bit1=04f5d03d bit2=09eba07a bit3=13d740f4</code>). It is <strong>not</strong> any
+standard CRC/FNV/djb2/Murmur/lookup3 (ruled out by a full 2<sup>32</sup> polynomial+seed search); the
+inter-byte propagation is position-keyed and the 309-pair Rosetta corpus is too sparse to pin down the
+exact closed form. See <code>_tools/ark_namehash.py</code>.
+</p>
+<p>
+Because the hash cannot be computed from a guessed name, the extractor names a member only when its hash
+is found in a <strong>hash→name dictionary</strong> — the TEXS Rosetta corpus
+(<code>texs_rosetta_corpus.json</code>) plus any extra <code>--names</code> JSON. Those corpus hashes are
+UI/texture-pack hashes and do <em>not</em> overlap the level Sector member hashes, so for a Sector
+<code>.ark</code> pair members fall back to <code>&lt;hash8&gt;.&lt;ext&gt;</code>. The
+<code>.sectorInfo</code> does list this level's sector ids (<code>q000…q122</code> for
+<code>airport_test_03</code>), which are the inputs to <code>CityStatic|q&lt;n&gt;_rig…</code> /
+<code>CityStream|q&lt;n&gt;_rig…</code> — but mapping them to hashes still needs the closed-form hash.
+</p>
+
+<h3>Format detection &amp; output</h3>
+<p>
+Each member's type is detected by magic where one exists (<code>02 00 00 08</code> serialized object →
+<code>.sobj</code>; Havok, FSB, GFX/CFX, SWF, DDS, PNG, BIK), else by structural shape: a framed Stream
+member → <code>.geo</code> (vertex/index geometry stream), and an unframed non-serialized Stream blob →
+<code>.gputex</code> (PS3 swizzled/DXT texture). The detected extension drives both the filename and the
+manifest's type histogram.
+</p>
+<pre class="hex">python _tools/ark_extract_full.py \
+    "&lt;Level&gt;/Sectors/&lt;Level&gt;.Static.ark" \
+    "&lt;Level&gt;/Sectors/&lt;Level&gt;.Stream.ark" --level &lt;Level&gt;</pre>
+<div class="tip">
+<strong>Result — <code>airport_test_03</code> (full run).</strong> 866 TOC members (245 Static + 621
+Stream), <strong>864 written</strong> (2 are <code>size = 0</code> placeholders), 152&nbsp;MB extracted —
+matching the Stream payload region exactly.
+<ul>
+  <li><strong>Type histogram:</strong> 365 model (244 Static <code>.sobj</code> + 121 Stream
+      <code>.geo</code>) · 499 texture (<code>.gputex</code>) · 0 other.</li>
+  <li><strong>Decompression:</strong> 121 frame-strip · 743 raw · 0 zlib/deflate.</li>
+  <li><strong>Naming:</strong> 0 named / 864 hash-only (no corpus overlap for Sector hashes).</li>
+  <li><strong>Spot-checks (byte-exact vs raw archive):</strong> a <code>.sobj</code> opens on
+      <code>02 00 00 08</code>; a <code>.geo</code> has its 12-byte frame stripped and decodes as a
+      big-endian float vertex stream (first vertex ≈ <code>11.0, −346.2, 0.0</code>); a
+      <code>.gputex</code> of <code>0x55580</code> bytes is 16-byte (DXT-block) aligned. All three match
+      the source bytes exactly, and 119/121 <code>.geo</code> satisfy
+      <code>payload == on_disk − 12</code> (the other 2 carry trailing alignment padding handled via the
+      inner <code>innerSize</code>).</li>
+</ul>
+</div>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="engine-resources.html">Resources &amp; Streaming</a> — how sectors are pulled from <code>.Stream.ark</code> at runtime.</li>
+  <li><a href="format-sectors.html">Sectors (.sectorInfo)</a> — the partitioning that drives streaming.</li>
+  <li><a href="format-gfx.html">Scaleform UI (.gfx)</a> — UI assets that live in <code>Resident.ark</code> in retail.</li>
+  <li><a href="format-misc.html">Misc &amp; Raw</a> — the small loose container formats that sit alongside archives.</li>
+  <li><a href="build-layout.html">Build &amp; File Layout</a> — why this devkit build runs loose (<code>-noark</code>).</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

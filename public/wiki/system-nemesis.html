@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nemesis &amp; Helicopter Modes — Split/Second RE Wiki</title>
+<meta name="description" content="The Split/Second boss/Nemesis truck and helicopter revenge/survival modes, decoded from GameLogic/Nemesis/*.params and the nem_* levels of the NPXX00575 devkit build.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Nemesis &amp; Helicopter Modes" data-category="Game Systems">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Nemesis &amp; Helicopter Modes</h1>
+<p>Split/Second's "boss" content — the rampaging articulated <strong>Nemesis truck</strong> and the
+missile-firing <strong>attack helicopter</strong> — is implemented as a component-based AI entity called the
+<em>Nemesis</em>. The same component tree drives a ground truck, a demolition drone, or a flying chopper; a
+template file picks the <code>Type</code> and toggles which components run. This page documents that system
+from <code>GameLogic/Nemesis/*.params</code>, the <code>cNemesis*</code> classes in the eboot, and the five
+dedicated <code>nem_*</code> arenas, with real configured values.</p>
+
+<div class="infobox"><div class="ib-title">GameLogic/Nemesis</div><table>
+  <tr><th>Category</th><td>Boss-mode AI config</td></tr>
+  <tr><th>Format</th><td>plaintext <a href="data-params.html">.params</a></td></tr>
+  <tr><th>Files</th><td>9 <code>.params</code></td></tr>
+  <tr><th>Entity types</th><td><code>Truck</code> · <code>Helicopter</code> · <code>Demolition</code></td></tr>
+  <tr><th>Base class</th><td><code>cNemesisComponent</code></td></tr>
+  <tr><th>Truck model</th><td><code>NemesisTruck01</code></td></tr>
+  <tr><th>Chopper model</th><td><code>Helicopter_Bell206B_01</code></td></tr>
+  <tr><th>Arenas</th><td>5 × <code>nem_*</code></td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>The Nemesis component system</h2>
+<p>A Nemesis is an entity assembled from <code>cNemesis*</code> components, each tuned by a section of a template
+<code>.params</code> file. The eboot exposes the full class roster; the important ones are:</p>
+<table>
+<tr><th>Component</th><th>Role</th></tr>
+<tr><td><code>cNemesisAirEngineComponent</code></td><td>Helicopter flight model (velocity, wobble, wiggle, look/right-axis rotation).</td></tr>
+<tr><td><code>cNemesisCarEngineComponent</code></td><td>Ground drive model for truck/demolition drone.</td></tr>
+<tr><td><code>cNemesisKeyframedPhysicsComponent</code></td><td>Scripted/keyframed truck physics (<code>'Vehicle filename' = NemesisTruck01</code>).</td></tr>
+<tr><td><code>cNemesisHelicopterAIComponent</code></td><td>Chopper brain: states, target distances, hover height.</td></tr>
+<tr><td><code>cNemesisTruckAIComponent</code></td><td>Truck brain: lane, drive speed, coordination group.</td></tr>
+<tr><td><code>cNemesisDemolitionAIComponent</code></td><td>Demolition drone skill ramp.</td></tr>
+<tr><td><code>cNemesisThrowDebrisComponent</code></td><td>Barrel / missile launcher with pooled ordnance.</td></tr>
+<tr><td><code>cNemesisLevelComponent</code></td><td>Difficulty "level" that escalates the assault.</td></tr>
+<tr><td><code>cNemesisPlayerTriggerableComponent</code></td><td>Health and powerplay-damage values.</td></tr>
+<tr><td><code>cNemesisTargetPlayerComponent</code></td><td>Which player to chase, and at what range.</td></tr>
+<tr><td><code>cNemesisAggressionComponent</code></td><td>Truck lane-blocking aggression.</td></tr>
+<tr><td><code>cNemesisMissileTargetComponent</code></td><td>The lock-on reticle entity for chopper missiles.</td></tr>
+</table>
+<p>Other classes seen in the eboot fill in the events and queries:
+<code>cNemesisBattleAIComponent</code>, <code>cNemesisPowerplayComponent</code>,
+<code>cNemesisAudioComponent</code>, <code>cNemesisCarExplosionComponent</code>, plus event types like
+<code>cNemesisFrenzyEvent</code>, <code>cNemesisBlowUpEvent</code>,
+<code>cNemesisMissileHitHelicopterEvent</code> and a family of <code>cNemesisQuery*</code> events
+(<code>QueryHealth</code>, <code>QueryLevel</code>, <code>QueryWave</code>,
+<code>QueryMissileDamageChopperRatio</code>, …).</p>
+
+<h2>Template files</h2>
+<p>The directory tree ships four templates plus the live revenge/survival configs and a shared truck physics
+file:</p>
+<table>
+<tr><th>File</th><th>Size</th><th>Type</th><th>Purpose</th></tr>
+<tr><td><code>TruckTemplate.params</code></td><td>17,718</td><td><code>Truck</code></td><td>Master Nemesis-truck config (full component set).</td></tr>
+<tr><td><code>HelicopterTemplate.params</code></td><td>6,318</td><td><code>Helicopter</code></td><td>Master chopper config (flight + AI states).</td></tr>
+<tr><td><code>DemolitionTemplate.params</code></td><td>754</td><td><code>Demolition</code></td><td>Boss drone (<code>Musclecar_Drone</code>) for Demolition.</td></tr>
+<tr><td><code>TutorialTemplate.params</code></td><td>741</td><td><code>Demolition</code></td><td>Tutorial drone, skill pinned to 0.</td></tr>
+<tr><td><code>HelicopterRevenge.params</code></td><td>19,144</td><td><code>Helicopter</code></td><td>Live "Air Revenge" chopper instance.</td></tr>
+<tr><td><code>HelicopterSurvival.params</code></td><td>19,313</td><td><code>Helicopter</code></td><td>Live "Survival / Air Strike" chopper instance.</td></tr>
+<tr><td><code>TruckMultiplayer.params</code></td><td>18,020</td><td><code>Truck</code></td><td>Net-play truck wave config.</td></tr>
+<tr><td><code>TruckSplitScreen.params</code></td><td>17,931</td><td><code>Truck</code></td><td>Split-screen truck wave config.</td></tr>
+<tr><td><code>NemesisTruckPhysics.params</code></td><td>2,640</td><td>—</td><td>Hard rigid-body / suspension / trailer physics for the truck.</td></tr>
+</table>
+<p>The terminal section of each template sets the entity type, e.g.
+<code>/GameLogic/Nemesis/TruckTemplate → Type = Truck;</code> and
+<code>/GameLogic/Nemesis/HelicopterTemplate → Type = Helicopter;</code>. The boss
+<a href="system-gamemodes.html">game-mode files</a> reference these templates from their
+<code>/RaceSetup/Nemesis/Selection0…23</code> wave slots.</p>
+
+<h2>The Nemesis truck</h2>
+<p>The truck is the season's recurring articulated-lorry boss. Its handling comes from
+<code>cNemesisKeyframedPhysicsComponent</code> / <code>cNemesisCarEngineComponent</code>, while
+<code>NemesisTruckPhysics.params</code> defines the actual rigid bodies. Headline figures:</p>
+<pre>/GameLogic/Nemesis/NemesisTruckPhysics/BasicPhysics:
+	'000;Mass' = 1500.0 (1.0, 3000.0);
+	'001;TopSpeed(MPH)' = 120.0 (0.0, 200.0);
+	'002;Max steer angle(deg)' = 7.0 (0.0, 35.0);
+/GameLogic/Nemesis/NemesisTruckPhysics/Trailers/RigidBody:
+	'000;Length' = 6.80;  '001;Width' = 3.0;  '002;Height' = 2.30;
+	'003;Mass' = 50000.0 (0.0, 100000.0);
+	'004;LinearDamping' = 9.0;  '005;AngularDamping' = 4.5;</pre>
+<p>So the cab is a light, twitchy 1,500&nbsp;kg body limited to a 7° steer angle, dragging a
+<strong>50-tonne</strong> trailer — the mass ratio is what produces the menacing jack-knife swing. The
+trailer is joined at <code>Trailers/Pivots</code> (truck pivot Y = 1.35, trailer pivot Z = −5.64) and
+acceleration falls off with a 10-point curve (<code>AccelerationVsSpeed</code>) and a steer-angle penalty
+table (<code>AccelMultiplierVsSteerAngle</code>).</p>
+
+<h3>Truck AI &amp; aggression</h3>
+<pre>/GameLogic/Nemesis/TruckTemplate/cNemesisTruckAIComponent:
+	'Coordination group' = Truck;
+	'Drive Speed' = 50.0 (0.0, 200.0);
+	'Slowdown multiplier' = 0.8;  'Speedup multiplier' = 1.2;
+/GameLogic/Nemesis/TruckTemplate/cNemesisAggressionComponent:
+	Enabled = true;
+	'Max lane change cap' = 2.0;  'Min lane change cap' = 0.0;
+	'Per Level Blocking Increase' = 0.15;</pre>
+<p>Trucks belong to the <code>Truck</code> coordination group so multiple cabs cooperate; aggression (active
+lane-blocking) ramps up by 0.15 per difficulty level. The truck targets the player only inside a window
+(<code>cNemesisTargetPlayerComponent</code>: max range 150 m, 300 m in sudden death, "Backward Progress",
+"Closest player"), with a 70 m "No Target Zone" so it does not sit on top of you.</p>
+
+<h3>Throwing barrels &amp; missiles</h3>
+<p>The truck's ordnance lives in <code>cNemesisThrowDebrisComponent</code>, organised into pools. The two main
+pools are the blue "AoE" barrels and the red instant-kill barrels; two more activate in Sudden Death and a
+fifth handles homing missiles:</p>
+<table>
+<tr><th>Pool</th><th>Model</th><th>Initial → Max</th><th>Instant kill?</th><th>Powerplay FX</th></tr>
+<tr><td>1. AoE</td><td><code>truckbarrel_physics</code></td><td>2 → 5</td><td>no</td><td><code>Nemesis_BlueBarrel_Explosion_P</code></td></tr>
+<tr><td>2. Death</td><td><code>truckbarrel2_physics</code></td><td>1 → 4</td><td><b>yes</b></td><td><code>Nemesis_RedBarrel_Explosion_P</code></td></tr>
+<tr><td>3. SD&nbsp;AoE</td><td><code>truckbarrel_physics</code></td><td>0 → 0</td><td>no</td><td><code>Nemesis_BlueBarrel_Explosion_P</code></td></tr>
+<tr><td>4. SD&nbsp;Death</td><td><code>truckbarrel2_physics</code></td><td>6 → 12</td><td><b>yes</b></td><td><code>Nemesis_RedBarrel_Explosion_P</code></td></tr>
+<tr><td>5. Missile</td><td>—</td><td>0 → 0</td><td>no</td><td><em>(none set)</em></td></tr>
+</table>
+<p>Barrels drop from offset <code>(0, 3.125, −16.9)</code> behind the cab with a 3 s ± 1.5 s fuse; the active
+mechanic is <code>Sequential</code> (<code>cNemesisThrowDebrisComponent/Release Mechanics →
+'Active Release Mechanic' = Sequential</code>). The missile launcher
+(<code>ReleaseMechanicMissile</code>) lobs 6 (easiest) → 12 (hardest) projectiles, reaching hardest
+difficulty after 5 levels, with a 1.25 s aiming state and a 0.6 s lock — the same mechanic the chopper reuses.
+In <code>TruckTemplate.params</code> the missile pool itself ships dormant (<code>Initial → Max = 0 → 0</code>) and
+has no powerplay FX assigned; the <code>Nemesis_Missile_Explosion_P</code> / <code>Nemesis_Missile_Trail_P</code>
+effects are configured only on the live chopper instances (see <em>The attack helicopter</em> below).</p>
+
+<h2>The attack helicopter</h2>
+<p>The chopper is a Bell 206B
+(<code>'Visual model filename' = 'Generic\Models\Helicopter_Bell206B_01\Helicopter_Bell206B_01'</code>) flown
+by <code>cNemesisAirEngineComponent</code> + <code>cNemesisHelicopterAIComponent</code>. The flight model is
+deliberately wobbly:</p>
+<pre>/GameLogic/Nemesis/HelicopterTemplate/cNemesisAirEngineComponent/Movement/Velocity:
+	'Max Velocity' = 130.0 (10.0, 200.0);
+	'Time To Get To Target' = 0.4;  'Velocity Bias' = 2.90;
+/GameLogic/Nemesis/HelicopterTemplate/cNemesisAirEngineComponent/Movement/Wobble:
+	'Amplitude X' = 2.0;  'Amplitude Y' = 0.5;  Frequency = 5.0;
+/GameLogic/Nemesis/HelicopterTemplate/cNemesisAirEngineComponent/Movement/Acceleration:
+	'Max Acceleration' = 30.0 (0.0, 30.0);</pre>
+
+<h3>Helicopter AI states</h3>
+<p>The chopper brain is a small state machine; each state sets how far it tries to sit from its target and how
+cautiously it corners:</p>
+<table>
+<tr><th>State</th><th>Min → Max target dist</th><th>Cornering caution</th><th>Notes</th></tr>
+<tr><td>Find Race Leader</td><td>35 → 85 m</td><td>3.0</td><td>"Ahead Time" 4.0 s — flies to intercept the leader.</td></tr>
+<tr><td>Triggerable</td><td>40 → 70 m</td><td>1.5</td><td>Waiting to be set off by a powerplay; start height 60.</td></tr>
+<tr><td>Raining Death</td><td>75 → 100 m</td><td>3.0</td><td>Active bombardment of the lead pack.</td></tr>
+<tr><td>Fly Away</td><td>—</td><td>—</td><td>Retreat multiplier 30.</td></tr>
+<tr><td>Waiting</td><td>—</td><td>—</td><td>Re-engages once the player is within 100 m.</td></tr>
+</table>
+<p>Hover behaviour comes from the <code>Height</code> block: it holds <strong>20 m over the track</strong>,
+looks 60 m ahead to anticipate terrain, with a 100 m "Trigger Height". Barrel drops are gated on
+<code>Barrel Conditions</code> — drop 50 barrels, only when "At Target". The chopper uses the
+<code>Helicopter</code> release mechanic (vs. the truck's <code>Sequential</code>), confirmed in both live
+configs: <code>cNemesisThrowDebrisComponent/Release Mechanics → 'Active Release Mechanic' = Helicopter;</code></p>
+
+<h3>Helicopter health &amp; powerplay damage</h3>
+<p>Both live chopper files share the same vulnerability values from
+<code>cNemesisPlayerTriggerableComponent</code>:</p>
+<pre>/GameLogic/Nemesis/HelicopterRevenge/cNemesisPlayerTriggerableComponent:
+	DamageForLevelOnePowerplay = 1 (0, 128);
+	DamageForLevelTwoPowerplay = 4 (0, 128);
+	HelicopterLife = 16 (0, 128);</pre>
+<p>So the chopper has <strong>16 hit points</strong>: a Level-1 powerplay shaves 1, a Level-2 powerplay 4.
+Both Revenge and Survival enable a missile-target reticle
+(<code>cNemesisMissileTargetComponent</code>, <code>'Target model filename' =
+Generic\Models\Missile_Target\Missile_Target</code>) so the player can shoot back.</p>
+
+<h2>Revenge vs. Survival — the level escalation</h2>
+<p>The difference between the two helicopter modes is entirely in <code>cNemesisLevelComponent</code>, which
+decides what makes the assault harder. <code>0xDEADBEEF</code> (<code>-559038737</code>) appears as the
+uninitialised value for "Levels To Lose When Player Wrecked" in both — i.e. that sub-rule is unset.</p>
+<table>
+<tr><th>Level driver</th><th>HelicopterRevenge</th><th>HelicopterSurvival</th></tr>
+<tr><td><code>Nemesis Destroyed</code></td><td><b>Enabled</b> (+1 / kill)</td><td><b>Enabled</b> (+1 / kill)</td></tr>
+<tr><td><code>Nemesis Life</code></td><td><b>Enabled</b></td><td>disabled</td></tr>
+<tr><td><code>Time</code></td><td>disabled (10 s/level)</td><td><b>Enabled</b>, 9 s/level, ×0.95 per level</td></tr>
+<tr><td><code>LinearTime</code></td><td>disabled (max 20, 180 s)</td><td>disabled (max 20, 180 s)</td></tr>
+<tr><td><code>Helicopter Wave</code></td><td>disabled, 3 waves/level</td><td>disabled, 6 waves/level</td></tr>
+<tr><td><code>Trucks Overtake</code></td><td>disabled</td><td>disabled</td></tr>
+</table>
+<p>In short: <strong>Revenge</strong> escalates by killing choppers and tracks chopper life
+(a directed "boss fight"), while <strong>Survival</strong> escalates on a shrinking <strong>9-second
+timer</strong> that gets 5% shorter every level — an endless endurance run. Both end on the
+<a href="system-gamemodes.html">Lives</a> end condition with a 60 s initial countdown, and report scoring as
+<code>Chopper Revenge</code> / <code>Chopper Survival</code> respectively.</p>
+
+<div class="tip">The truck template's <code>cNemesisLevelComponent</code> instead enables
+<code>Trucks Overtake</code> (+1 level each time the player overtakes a truck) — the boss-truck mode escalates
+the more you push past the convoy.</div>
+
+<h2>Demolition &amp; Tutorial drones</h2>
+<p>The two tiny templates reuse the Nemesis system as ordinary <code>Demolition</code>-type drone cars built on
+<code>Musclecar_Drone</code>. The only difference is the skill ramp on
+<code>cNemesisDemolitionAIComponent</code>:</p>
+<table>
+<tr><th>Field</th><th>DemolitionTemplate</th><th>TutorialTemplate</th></tr>
+<tr><td><code>'Skill at start of game'</code></td><td>1.0</td><td>0.0</td></tr>
+<tr><td><code>'Skill at end of game'</code></td><td>1.0</td><td>0.0</td></tr>
+<tr><td><code>IsHandlingVunerableToAOE</code></td><td>false</td><td><b>true</b></td></tr>
+<tr><td>explosion powerplay</td><td colspan="2"><code>NemesisHelicopterBarrel_P</code></td></tr>
+</table>
+<p>The tutorial drone is a sitting duck (skill 0, vulnerable to AoE) so new players can practise pushing it
+into powerplays; the demolition drone is a maxed-out target.</p>
+
+<h2>The nem_* arenas</h2>
+<p>Boss modes run on five dedicated, looping arenas listed in <code>directory.txt</code> (distinct from the
+main campaign levels). Each has its own <code>Subtracks/*</code> set and is tagged
+<code>:nem_<i>name</i>_SUBTRACK</code> for the loader:</p>
+<table>
+<tr><th>Arena</th><th>Theme</th></tr>
+<tr><td><code>nem_downtown</code></td><td>City streets boss arena.</td></tr>
+<tr><td><code>nem_graveyard</code></td><td>Cemetery / industrial outskirts.</td></tr>
+<tr><td><code>nem_storm</code></td><td>Storm-drain / aqueduct arena.</td></tr>
+<tr><td><code>nem_warehouse</code></td><td>Warehouse district.</td></tr>
+<tr><td><code>nem_training</code></td><td>Training arena (tutorial/practice).</td></tr>
+</table>
+<p>The same section of <code>directory.txt</code> also lists the boss vehicles loaded for these modes:
+<code>NemesisTruck01</code> and <code>Truck_Demolition</code>. The
+<a href="system-tracks.html">Tracks &amp; Levels</a> page covers the subtrack/route pipeline these arenas use.</p>
+
+<h2>Debug menu</h2>
+<p>This devkit build keeps the Nemesis tuning live in the in-game debug menu under
+<code>GameLogic/Nemesis/Debug/</code>. Real menu paths from the eboot:</p>
+<pre>GameLogic/Nemesis/Debug/Debug Nemesis
+GameLogic/Nemesis/Debug/Display target player
+GameLogic/Nemesis/Debug/HelicopterAI/Render State
+GameLogic/Nemesis/Debug/HelicopterAI/Render Current Link
+GameLogic/Nemesis/Debug/Level/Render Level
+GameLogic/Nemesis/Debug/Level/Max Level
+GameLogic/Nemesis/Debug/Aggression/Always max blocking
+GameLogic/Nemesis/Debug/Aggression/Never any blocking
+GameLogic/Nemesis/Debug/TruckAIComponent/Display coordination state
+GameLogic/Nemesis/Debug/AOEOnTruckCollision/AOEImpulse
+GameLogic/Nemesis/Debug/ThrowDebrisComponent/Debris start position
+GameLogic/Nemesis/Debug/Powerplays/Fire All As Soon As Possible
+GameLogic/Nemesis/Debug/DemolitionAI/minRespotFromTruckDistance</pre>
+<p>The eboot also carries the QA log strings <code>Demolition: Vehicle Respot %f %f %f</code> and
+<code>Demolition: Respot Raycast didn't hit anything</code>, plus the <code>DemolitionPos*</code> action set
+(<code>DemolitionPosSetTarget</code>, <code>DemolitionPosSetState</code>, …) used to puppeteer the boss for
+cinematics.</p>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="system-gamemodes.html">Game Modes</a> — the race-setup files that invoke these templates</li>
+  <li><a href="system-powerplay.html">Powerplay System</a> — the powerplays that damage and trigger the boss</li>
+  <li><a href="system-ai.html">AI (SSAI)</a> — driving AI, difficulty profiles and the LDC tables</li>
+  <li><a href="system-vehicles.html">Vehicles</a> — the <code>NemesisTruck01</code> / <code>Musclecar_Drone</code> assets</li>
+  <li><a href="system-areaofeffects.html">Area of Effects</a> — the AoE forces barrels and explosions apply</li>
+  <li><a href="system-tracks.html">Tracks &amp; Levels</a> — the <code>nem_*</code> arena pipeline</li>
+  <li><a href="format-route.html">Route Data</a> — the racing line the boss respots relative to</li>
+  <li><a href="data-params.html">.params Tuning System</a> — the text format used by every file here</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

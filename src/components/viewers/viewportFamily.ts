@@ -13,8 +13,16 @@ export type ViewportFamily = 'texture' | 'mesh' | 'world' | 'config' | 'binary';
 
 /** Keys whose decoded model is rendered by TextureViewer. */
 export const TEXTURE_KEYS = new Set(['textures', 'streamtex']);
-/** Keys whose decoded model is rendered by MeshViewer. */
-export const MESH_KEYS = new Set(['model', 'skel', 'deform', 'mcl']);
+/**
+ * Keys whose decoded model is rendered by MeshViewer.
+ *
+ * `havok` is here so collision geometry visualizes: vehicle .mainColl/.phys
+ * convex hulls render as solid meshes, and level .hkColl renders its AABB box
+ * (its triangle buffers are SERIALIZE_IGNORED, absent from the file). The
+ * MeshViewer is tolerant of an empty meshes[] (it shows a graceful message), so
+ * the rare geometry-less packfile still renders without throwing.
+ */
+export const MESH_KEYS = new Set(['model', 'skel', 'deform', 'mcl', 'havok']);
 /** Shader sets — surfaced in the Config inspector's generic table. */
 export const SHADER_KEYS = new Set(['shaders', 'shaderinst', 'fxc']);
 

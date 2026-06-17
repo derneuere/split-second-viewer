@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Misc &amp; Raw — Split/Second RE Wiki</title>
+<meta name="description" content="Short notes on the small / raw container formats: .data .rdata .bin .dat .ker .bed .dct .controllerTemplate — particle blobs, handling configs, localisation dictionaries, font tables and audio recordings.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Misc &amp; Raw" data-category="Formats · Archive & Misc">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Misc &amp; Raw</h1>
+<p>
+A grab-bag of small or single-purpose container formats that don't warrant their own page. Most are
+thin big-endian "typed array" blobs (a count, a stride, then raw records); two carry their own ASCII
+magic. Each section below gives a one-line identification, the evidence behind it, and a real hex
+peek. Confidence is per-format.
+</p>
+
+<div class="infobox"><div class="ib-title">Covered here</div><table>
+  <tr><th><code>.data</code></th><td>Particle/timeline blob</td></tr>
+  <tr><th><code>.rdata</code></th><td>Vehicle handling config</td></tr>
+  <tr><th><code>.bin</code></th><td>Audio index / replay log</td></tr>
+  <tr><th><code>.dat</code></th><td>Powerplay-info table</td></tr>
+  <tr><th><code>.ker</code></th><td>Font kerning table</td></tr>
+  <tr><th><code>.bed</code></th><td>Font bitmap descriptor</td></tr>
+  <tr><th><code>.dct</code></th><td>Localisation dictionary</td></tr>
+  <tr><th><code>.controllerTemplate</code></th><td>FX controller template</td></tr>
+  <tr><th>Endianness</th><td>Big-endian, except <code>.dct</code> (LE) &amp; <code>.gfx</code></td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<h2><code>.data</code> — particle / timeline blob <span class="badge theory">Theory</span></h2>
+<p>
+Found throughout <code>Environments/Levels/&lt;Level&gt;/Particles/TimelineParticles/…</code> and
+<code>Subtracks/&lt;X&gt;/Particles/…</code> (91 files, 44&nbsp;B&nbsp;– 133&nbsp;KB). A big-endian
+typed-array container: a leading <code>count</code> and element <code>size</code>, then raw records
+(floats/zeros). The 44-byte <code>Flare.data</code> is byte-identical across 9 of the 10 levels — a
+constant template stub (the <code>airport_test_03</code> copy is a larger 624-byte variant) — while
+real per-track particle data reaches 130&nbsp;KB. Paired with the
+<a href="format-emitter.html">emitter</a> / <a href="data-catnip.html">Catnip timeline</a> system.
+</p>
+<pre class="hex">Flare.data (44 bytes):
+000000  00 00 00 01  00 00 00 10  00 00 00 00  00 00 00 00
+        └ count=1    └ stride=16  └──── record (zeros) ────
+000010  00 00 00 00  00 00 00 10  00 00 00 00  00 00 00 00
+000020  00 00 00 01  00 00 00 04  00 00 00 00</pre>
+
+<h2><code>.rdata</code> — vehicle handling config <span class="badge ok">Confirmed</span></h2>
+<p>
+42 files total. <strong>39</strong> live under <code>Vehicles/Handling/Configs/</code> named per car
+(<code>Musclecar_01.rdata</code>, <code>Supercar_…</code>, …) and are each <strong>56&nbsp;bytes</strong>;
+the other <strong>3</strong> are 204-byte files under <code>Vehicles/Bodies/</code> for the Nemesis
+truck and its trailers (<code>NemesisTruck01.rdata</code>, <code>NemTruck1Trai1/2.rdata</code>). The
+EBOOT builds the handling path with <code>%s%s.rdata</code>. The 56-byte handling body is a big-endian
+header (<code>count=1</code>, <code>n=4</code>) followed by twelve <code>float32</code> values that
+group into <strong>four mirrored vec3 points</strong> — the per-wheel contact/handling points.
+Symmetry (±X with matching Y/Z) is the tell. The 204-byte truck files share the leading
+<code>count=1</code> word but carry a larger second field (<code>n=10</code>) and many more floats
+(extra wheel/contact points for the multi-axle truck + trailers), so the structure scales by
+<code>n</code> rather than being a fixed 56 bytes.
+</p>
+<pre class="hex">Musclecar_01.rdata (56 bytes):
+000000  00 00 00 01  00 00 00 04  3f 5b bb 01  3e b1 f1 eb
+        └ count=1    └ n=4        └ 0.8583     └ 0.3475   (vec3 #0 x,y…)
+000010  3f a9 08 3f  bf 5b d6 5b  3e b1 eb 52  3f a9 06 9f
+                     └ -0.8587    (vec3 #1 — mirror of #0 in X)
+  → 4 points:  (+0.858, 0.347, 1.321)  (-0.859, 0.347, 1.321)
+               (+0.920, 0.369,-1.307)  (-0.922, 0.369,-1.307)   front/rear wheels</pre>
+<p>See <a href="format-phys.html">Vehicle Physics (.phys)</a> and
+<a href="system-vehicles.html">Vehicles</a> for how handling data is consumed.</p>
+
+<h2><code>.bin</code> — audio index &amp; replay log <span class="badge partial">Partial</span></h2>
+<p>Only 3 <code>.bin</code> files, all under <code>Audio/</code>, of two distinct kinds:</p>
+<ul>
+  <li><strong><code>Audio/Swooshes/Swooshes.bin</code></strong> (12&nbsp;B) — a tiny big-endian index
+      for the "swoosh" whoosh SFX (<code>UpdateSwooshes</code>, <code>SideChainSwooshes</code> in the
+      EBOOT; localised lists in <code>…_Audio_Swooshes.xml</code>).</li>
+  <li><strong><code>Audio/Replay/audio_commands_recording*.bin</code></strong> (5–6&nbsp;MB) — a
+      <strong>FourCC-tagged stream</strong> of recorded audio commands for replay/QA. A one-time
+      header (<code>vers</code>=3, <code>type</code>=0) is followed by a long run of records, each a
+      4-char ASCII tag (<code>time</code>, <code>cmd&nbsp;</code>, <code>dtime</code>) plus a
+      big-endian payload. The <code>cmd&nbsp;</code> tag appears <strong>21,034&times;</strong> across
+      this 5.0&nbsp;MB recording (12&times; in the first 4&nbsp;KB, 221&times; in the first 64&nbsp;KB)
+      — one per recorded audio command. The companion
+      <code>audio_commands_recording_finish.bin</code> is 5.9&nbsp;MB.</li>
+</ul>
+<pre class="hex">audio_commands_recording.bin (head):
+000000  76 65 72 73  00 00 00 03  74 79 70 65  00 00 00 00
+        └ 'vers'      =3          └ 'type'      =0
+000010  74 69 6d 65  00 00 05 e0  63 6d 64 20  00 00 00 08
+        └ 'time'      =0x5E0      └ 'cmd '      len=8
+000020  00 00 00 1f  82 08 84 64  74 69 6d 65  00 00 05 e1
+        └ command payload …       └ 'dtime' (delta-time) …
+Swooshes.bin (12 bytes):
+000000  00 00 00 01  00 00 00 02  00 00 00 00</pre>
+
+<h2><code>.dat</code> — powerplay info table <span class="badge partial">Partial</span></h2>
+<p>
+10 files, all <code>&lt;Level&gt;_powerplayInfo.dat</code> (EBOOT: <code>_powerplayInfo.dat</code>),
+a per-level table for the <a href="system-powerplay.html">powerplay</a> system. <strong>Size is not
+fixed.</strong> The file opens with a big-endian <code>uint32</code> record count, then that many
+records, each holding a hash, a length-prefixed <code>.cat</code> entity name (e.g.
+<code>pp12_road_explode_mpo.cat</code>, <code>pg17_silo_mpr.cat</code>) and a block of transform
+floats — i.e. the placed powerplay instances for the level. The five main race levels carry full
+tables (3.7&nbsp;KB&nbsp;– 7.8&nbsp;KB); four <code>nem_*</code> levels are empty 4-byte stubs
+(count&nbsp;=&nbsp;0) and <code>nem_training</code> is a small 166-byte table. Documented in full on
+its own page: <a href="format-powerplayinfo.html">Powerplay Info (.dat)</a>.
+</p>
+<pre class="hex">Downtown_powerplayInfo.dat (7,839 bytes) head:
+000000  00 00 00 58  80 73 33 3c  00 00 00 19  70 70 31 32
+        └ count=0x58 └ hash       └ nameLen=25 └ "pp12…"
+000010  5f 72 6f 61  64 5f 65 78  70 6c 6f 64  65 5f 6d 70   "_road_explode_mp"
+000020  6f 2e 63 61  74 …                                    "o.cat" + transform floats →
+
+nem_downtown_powerplayInfo.dat (4 bytes):
+000000  00 00 00 00     ← record count = 0 (empty stub)</pre>
+
+<h2 id="ker"><code>.ker</code> — font kerning table <span class="badge partial">Partial</span></h2>
+<p>
+A single file, <code>fonts/Debug.ker</code> (4,252&nbsp;B), the kerning data for the debug font. The
+EBOOT prints <code>KerningCount = %d</code> and references <code>kerning</code>, confirming the role.
+Big-endian header: a leading count (<code>0x40</code> = 64), a second count (<code>0x2A</code> = 42),
+then pairs of float32 kerning offsets, followed by a glyph-index map (the ascending byte run
+<code>00 01 02 03 …</code>).
+</p>
+<pre class="hex">Debug.ker (head):
+000000  00 00 00 40  2a 00 00 00  29 d0 cc 3b  29 d0 4c 3b
+        └ count=64   └ 42         └ float32 kerning offsets …
+000010  ab aa aa 3d  00 00 00 40  00 00 00 00  00 01 02 03
+                                               └ glyph index map →</pre>
+
+<h2><code>.bed</code> — font bitmap descriptor <span class="badge theory">Theory</span></h2>
+<p>
+A single file, <code>fonts/Debug.bed</code> (4,986&nbsp;B). It opens with a length-prefixed ASCII
+texture name, <code>debug.tga</code>, then per-glyph records (positions/advances). It is the bitmap
+glyph atlas descriptor that pairs the <code>.tga</code> font sheet with the
+<a href="#ker">.ker</a> kerning table — together they define the debug overlay font.
+</p>
+<pre class="hex">Debug.bed (head):
+000000  01 01 64 65  62 75 67 2e  74 67 61 00  00 01 80 00
+        └ ?  └ 'd''e''b''u''g''.''t''g''a' \0  └ glyph records →
+000010  be 00 04 00  00 00 00 00  2d 31 01 00  42 0f 00 00</pre>
+
+<h2><code>.dct</code> — localisation dictionary <span class="badge ok">Confirmed</span> (header)</h2>
+<p>
+16 files under <code>Dictionary/</code>, one pair per language/platform
+(<code>ENGLISH_PS3.dct</code>, <code>ENGLISH_XBOX360.dct</code>, <code>DUTCH_PS3.dct</code>, …). The
+EBOOT loads them with <code>%s/%s_%s.dct</code> and <code>LoadDictionary: %s</code>. These carry an
+explicit ASCII magic <strong><code>DICT</code></strong> and are <strong>little-endian</strong> (the
+one mis-endian format in this cluster besides <code>.gfx</code>): a version word (<code>0x2000</code>),
+a constant field (<code>19</code> in every file — likely a hash-bucket count or sub-version), an
+<strong>entry count</strong> at offset <code>0x10</code> that scales with content (142 for
+<code>ENGLISH_PS3</code>, 394 for <code>GERMAN_PS3</code>, 930 for <code>StringIDs_PS3</code>), a
+table of <code>{nameHash, stringOffset, reserved}</code> records, and a packed string blob at the
+tail (readable UI text — "NO AWARD", "3 laps of explosive racing!", "GIOTTO 512GT", … — all four
+verified present in the file).
+</p>
+<pre class="hex">ENGLISH_PS3.dct (head):
+000000  44 49 43 54  00 20 00 00  8f 77 e9 18  13 00 00 00
+        └ 'D''I''C''T' └ ver=0x2000 LE  └ hash?       └ 0x13=19 (constant)
+000010  8e 00 00 00  01 00 00 00  af 06 00 00  00 00 00 00
+        └ entryCount=0x8E (142)       └ stringOffset≈0x6AF └ reserved
+…
+TAIL: …NO AWARD.BACK.3 laps of explosive racing!.GREAT JUMP.…GIOTTO 512GT.…</pre>
+<div class="note">
+The entry count at <code>0x10</code> (142 here) is verified — it tracks the size of each dictionary,
+and the field at <code>0x0C</code> is a constant <code>19</code> across all 16 files. The record table
+reads as little-endian <code>{hash:4, offset:4, reserved:4}</code> and the readable string blob sits
+at the tail (region begins near <code>0x6C9</code> in this file). The exact record start offset and
+the base the <code>stringOffset</code> field is measured from did <strong>not</strong> resolve
+cleanly to string boundaries in testing, so hash-to-string resolution stays unverified. Exact
+hash-to-string resolution is not yet byte-verified, hence the header is Confirmed but the record
+math is Partial.
+</div>
+
+<h2><code>.controllerTemplate</code> — FX controller template <span class="badge theory">Theory</span></h2>
+<p>
+A single file, <code>Vehicles/Particles/Standard/VehicleParticles.controllerTemplate</code>
+(6,236&nbsp;B), addressed from the <a href="format-ark.html">Resident archive</a> in the EBOOT
+(<code>Resident|Vehicles/Particles/Standard/VehicleParticles.controllerTemplate</code>). Big-endian
+header (<code>count=5</code>, <code>len=0x16</code>) then fixed-width slots, each holding a numeric ID
+string and a named controller (e.g. <code>CollisionSparks</code>). It's a
+<a href="data-catnip.html">Catnip</a>-style template table that maps named particle controllers to
+their parameters for vehicle FX.
+</p>
+<pre class="hex">VehicleParticles.controllerTemplate (head):
+000000  00 00 00 05  00 00 00 16  31 32 35 30  30 37 33 37
+        └ count=5    └ len=0x16   └ "12500737…"  (controller ID string)
+000010  36 37 2e 34  38 39 32 36  36 37 34 32  00 00 00 00
+        … "67.489266742"\0
+000030  43 6f 6c 6c  69 73 69 6f  6e 53 70 61  72 6b 73 00
+        └ "CollisionSparks"\0   (named controller)</pre>
+
+<h2>Open questions</h2>
+<ul>
+  <li><code>.data</code>: decode the record stride/type tag and tie it to the emitter system; only
+      the count/stride header is solid.</li>
+  <li><code>.ker</code>/<code>.bed</code>: confirm the glyph-record stride and the float-pair
+      semantics (kerning in twips vs normalised units).</li>
+  <li><code>.dct</code>: verify the hash function and confirm the <code>offset</code> field resolves
+      against the string blob exactly.</li>
+  <li><code>.bin</code> replay: enumerate the full FourCC command vocabulary and payload widths.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-ark.html">Archives (.ark)</a> — the container that packs several of these in retail.</li>
+  <li><a href="format-gfx.html">Scaleform UI (.gfx)</a> — consumes <code>.dct</code> strings and the font tables.</li>
+  <li><a href="format-powerplayinfo.html">Powerplay Info (.dat)</a> — full page for the <code>.dat</code> scalar.</li>
+  <li><a href="format-emitter.html">Emitters (.emitter*)</a> &amp; <a href="data-catnip.html">Catnip Entity System</a> — the FX system behind <code>.data</code> / <code>.controllerTemplate</code>.</li>
+  <li><a href="format-phys.html">Vehicle Physics (.phys)</a> &amp; <a href="system-vehicles.html">Vehicles</a> — consumers of <code>.rdata</code> handling configs.</li>
+  <li><a href="engine-audio.html">Audio Engine</a> — context for the <code>.bin</code> swoosh index and replay logs.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

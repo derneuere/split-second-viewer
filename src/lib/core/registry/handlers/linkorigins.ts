@@ -10,7 +10,7 @@ export const linkOriginsHandler: ResourceHandler<ParsedLinkOrigins> = {
 	description:
 		'TrackLogic per-link arc-length origins: BE uint32 linkCount + count×float32 (metres along the spline). Size law 4 + count×4.',
 	category: 'World',
-	caps: { read: true, write: false },
+	caps: { read: true, write: true },
 	extensions: ['.linkorigins'],
 	wikiUrl: 'https://split-second.wiki/format-route.html',
 

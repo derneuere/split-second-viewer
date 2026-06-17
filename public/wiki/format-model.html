@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Model (.model) — Split/Second RE Wiki</title>
+<meta name="description" content="The .model format: Crayon2's mesh/renderable container — a typed node tree wrapping Havok hkxMesh vertex and index buffers.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Model (.model)" data-category="Formats · Geometry & Render">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Model (.model)</h1>
+<p>The <code>.model</code> file is Split/Second's renderable geometry container, produced by the
+Black Rock <a href="engine-rendering.html">Crayon2</a> renderer's <code>cRenderableFactory</code>.
+Every drawable thing — car bodies, level backdrops, skydomes, reflection-map props, lens-flare
+billboards — is one <code>.model</code>. It is <b>not</b> a Havok packfile; it is a Crayon2
+serialized <em>typed-node tree</em> whose leaf payloads are Havok <code>hkxMesh</code> vertex and
+index buffers cooked for the PS3 RSX.</p>
+
+<div class="infobox"><div class="ib-title">.model</div><table>
+  <tr><th>Category</th><td>Render geometry / mesh</td></tr>
+  <tr><th>Container</th><td>Crayon2 node tree</td></tr>
+  <tr><th>Mesh classes</th><td>Havok <code>hkxMesh</code> (graphics)</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Magic</th><td><code>02 00 00 08</code></td></tr>
+  <tr><th>Index data</th><td>16-bit tri-strips, <code>FFFF</code> restart</td></tr>
+  <tr><th>Streamed twin</th><td><code>.model.stream</code> (high-LOD)</td></tr>
+  <tr><th>Count</th><td>2 425 files (every renderable)</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<h2>Identification</h2>
+<p>The first four bytes are <code>02 00 00 08</code> and are <b>constant</b> across every sample
+inspected — vehicle bodies, level backdrops, and tiny reflection-map props alike. There is no ASCII
+signature and no Havok packfile magic (<code>57&nbsp;E0&nbsp;E0&nbsp;57</code>), so the file is
+parsed structurally rather than by tag. Treat <code>02&nbsp;00&nbsp;00&nbsp;08</code> as a
+format/version word: the high <code>02</code> is consistent with a Crayon2 "version 2" container and
+the low <code>08</code> appears to be a flags / alignment field.</p>
+
+<div class="note">The engine never opens <code>.model</code> by reading a string magic — the EBOOT
+loads geometry through <code>cRenderableFactory</code> / <code>cRenderableGeom</code>
+(<code>libs/Render/Support/Crayon2</code>). The on-disk class set is Havok's graphics export schema:
+the EBOOT string table lists <code>hkxMesh</code>, <code>hkxMeshSection</code>,
+<code>hkxVertexBuffer</code>, <code>hkxVertexFormat</code>, <code>hkxIndexBuffer</code>,
+<code>hkxMaterial</code> and the concrete vertex layouts <code>hkxVertexP4N4C1T2</code> …
+<code>hkxVertexP4N4T4B4W4I4Q4</code>. Crayon2 cooks those into the layout described below.</div>
+
+<h2>Top-level layout</h2>
+<p>After the 4-byte magic the file is a header section (a small typed-node tree of
+<em>(offset,&nbsp;type)</em> pairs), followed by per-section float metadata (transforms and bounding
+boxes), then the bulk vertex buffers, and finally one or more 16-bit index buffers. The header grows
+with mesh complexity: the <code>PointLight.model</code> probe (1 054 bytes, one section) has a
+~0x90-byte header; <code>Musclecar_01.model</code> (1.30 MB) and
+<code>Downtown_backdrop.model</code> (1.48 MB) carry long header trees describing dozens of
+sections.</p>
+
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x00</td><td>0x4</td><td>uint32_t</td><td>magic</td><td>Always <code>02 00 00 08</code> (version/flags). Constant across all samples.</td></tr>
+<tr><td>0x04</td><td>0x4</td><td>uint32_t</td><td>node_count</td><td>Top-level node/section count. <code>0x1C</code> (Musclecar), <code>0x09</code> (Backdrop), <code>0x01</code> (PointLight) — scales with mesh complexity. <span class="badge theory">Theory</span></td></tr>
+<tr><td>0x08</td><td>0x4</td><td>uint32_t</td><td>tree_size / first_offset</td><td>Offset just past the node-descriptor block (<code>0x20</code> / <code>0x28</code> / <code>0x14</code>). Points at where the typed property stream begins.</td></tr>
+<tr><td>0x0C</td><td>…</td><td>node[]</td><td>node descriptors</td><td>Stream of <em>(rel_offset:uint32, type_tag:uint32)</em> pairs forming a tree (see below).</td></tr>
+<tr><td>…</td><td>var</td><td>float32_t[]</td><td>section metadata</td><td>Per-section local transform (4×4 / quaternion) + AABB min/max corners.</td></tr>
+<tr><td>…</td><td>var</td><td>raw</td><td>vertex buffers</td><td>Interleaved vertex streams (RSX vertex format, see vertex layouts).</td></tr>
+<tr><td>…</td><td>var</td><td>uint16_t[]</td><td>index buffers</td><td>Triangle strips, <code>0xFFFF</code> = primitive-restart. Runs to EOF.</td></tr>
+</tbody>
+</table>
+
+<h3>The node-descriptor tree</h3>
+<p>The header is built from repeating 8-byte records: a small relative <b>offset</b> followed by a
+small <b>type tag</b>. The tags observed are a tight set — <code>0x04</code>, <code>0x05</code>,
+<code>0x06</code>, <code>0x0E</code>, <code>0x0F</code> — and the offsets are step values
+(<code>0x08, 0x10, 0x18, 0x20, 0x28, 0x2C</code>) that walk a node/child layout. This is the
+classic Crayon2 generic-serializer shape: a tree of typed properties whose leaves point at the float
+and buffer payloads. The exact tag→class mapping (which tag is <i>mesh</i> vs <i>material ref</i> vs
+<i>vertex buffer</i>) is not yet fully resolved, hence the <span class="badge partial">Partial</span>
+badge. <span class="badge theory">Theory</span></p>
+
+<pre class="hex">
+                                  magic   node_cnt  tree_off
+000000  02 00 00 08  00 00 00 1c  00 00 00 20  00 00 00 00   ← Musclecar_01 (28 nodes)
+000010  00 00 00 04  00 00 00 00  00 00 00 00  00 00 00 10
+000020  00 00 00 00  00 00 00 00  00 00 00 00  00 00 00 08   ┐
+000030  00 00 00 10  00 00 00 05  00 00 00 00  00 00 00 00   │ (offset,type) node
+000040  00 00 00 10  00 00 00 10  00 00 00 05  00 00 00 01   │ records — types
+000050  00 00 00 00  00 00 00 18  00 00 00 10  00 00 00 05   │ 0x05/0x0F/0x06…
+000060  00 00 00 02  00 00 00 1c  00 00 00 00  00 00 00 04   ┘
+</pre>
+<p class="cap">Annotated: <code>02000008</code> magic; <code>0000001c</code> = 28 top-level nodes;
+<code>00000020</code> = tree starts at 0x20; then the (offset,type) descriptor stream. The
+<code>05 / 0F / 06</code> type tags repeat as the tree is walked.</p>
+
+<h2>Section metadata: transforms and bounding boxes</h2>
+<p>In the single-section <code>PointLight.model</code> the header is short enough to read the float
+payload directly. Interpreting the region from ~0x90 as big-endian floats yields a transform plus a
+pair of AABB corners that repeat once per mesh section:</p>
+
+<pre class="hex">
+000090   0          0          0          0.70710677   ← quat .w = √2/2
+0000a0  -0.5       -0.49999994 -0.000241898 1          ← AABB min  (x,y,z, 1)
+0000b0   0.5        0.49999994  0.000241898 1          ← AABB max  (x,y,z, 1)
+…
+000110  -0.5       -0.49999994 -0.000241898 1          ← AABB min  (repeat / world)
+000120   0.5        0.49999994  0.000241898 1          ← AABB max
+000130   0          0          0          0.70710677   ← quat .w
+</pre>
+<p class="cap">The <code>0.70710677</code> (= √2/2) is a unit-quaternion component; the symmetric
+<code>±0.5</code> corner pairs are an axis-aligned bounding box used by
+<a href="system-tracks.html">sector culling</a>. The EBOOT exposes
+<code>Sectors/Culling/Cull Renderables</code> and <code>Cull Shadow Caster Renderables</code> debug
+toggles that consume these bounds.</p>
+
+<h2>Vertex buffers</h2>
+<p>The bulk of a large <code>.model</code> is interleaved vertex data laid out for the RSX. Vertex
+layout is selected per section from Havok's <code>hkxVertexFormat</code> family; the concrete formats
+present in the EBOOT name table are:</p>
+
+<table>
+<thead><tr><th>Vertex format</th><th>Decoded</th><th>Use</th></tr></thead>
+<tbody>
+<tr><td><code>hkxVertexP4N4C1T2</code></td><td>Pos4 · Normal4 · Colour1 · UV2</td><td>Static / unskinned mesh, vertex colour</td></tr>
+<tr><td><code>hkxVertexP4N4T4B4C1T2</code></td><td>Pos4 · N4 · Tangent4 · Bitangent4 · Col1 · UV2</td><td>Normal-mapped static mesh (TBN basis)</td></tr>
+<tr><td><code>hkxVertexP4N4W4I4C1Q2</code></td><td>Pos4 · N4 · Weights4 · BoneIdx4 · Col1 · UV2</td><td>Skinned (no tangents)</td></tr>
+<tr><td><code>hkxVertexP4N4T4B4W4I4C1Q2</code></td><td>+ Tangent/Bitangent + Weights/Indices</td><td>Skinned + normal-mapped</td></tr>
+<tr><td><code>hkxVertexP4N4T4B4W4I4Q4</code></td><td>Full TBN + 4 weights/indices</td><td>Heaviest skinned format</td></tr>
+</tbody>
+</table>
+<p>In Havok's naming, <code>P</code>=position, <code>N</code>=normal, <code>T</code>=tangent,
+<code>B</code>=bitangent (binormal), <code>W</code>=blend weights, <code>I</code>=bone indices,
+<code>C</code>=colour, <code>Q</code>/<code>T</code>=texcoord set; the digit is the component count.
+The presence of the <code>W4I4</code> (skinned) variants is consistent with the
+<a href="format-skel.html">.skel</a> skeletons used by animated powerplay props.</p>
+
+<h2>Index buffers</h2>
+<p>Every <code>.model</code> ends in one or more <b>16-bit triangle-strip</b> index buffers. The
+sentinel <code>0xFFFF</code> is the RSX primitive-restart marker that breaks one strip and starts the
+next. This is unambiguous in the tails of all three probes:</p>
+
+<pre class="hex">
+            Musclecar_01.model — tail (16-bit strip indices)
+13e1a0  3f 55 3f 5b 3f 44 3f 5c  3f 44 3f 5d 3f 44 3f 5e
+13e1b0  3f 45 ff ff 3f 5f 3f 60  3f 61 3f 62 3f 61 3f 63   ← ffff = restart
+13e1c0  3f 61 3f 64 3f 65 3f 66  3f 65 3f 67 3f 65 3f 68
+</pre>
+<p class="cap">Indices ascend monotonically (<code>0x3F55, 0x3F5B, 0x3F44…</code>) and are punctuated
+by <code>FFFF</code>. The Downtown backdrop runs strips up to index <code>0xEDB2</code> (≈60 850
+verts), confirming a single large mesh split into many strips. Strip topology (rather than triangle
+lists) keeps the index buffer small for RSX bandwidth.</p>
+
+<div class="tip">A quick "is this geometry present?" check: hexdump the last few KB and look for a
+dense run of ascending 16-bit values broken by <code>FF FF</code>. That is always the index buffer.</div>
+
+<h2>The <code>.model.stream</code> twin</h2>
+<p>The EBOOT format strings <code>%s(noassert)|%s/%s/%s.model.stream</code> and
+<code>%sMD.model.stream</code> show that high-detail geometry can live in a sibling
+<code>.model.stream</code> file loaded on demand by the
+<a href="engine-resources.html">streaming system</a>. This mirrors the
+<code>.low.textures</code> / <code>.textures</code> split used for
+<a href="format-textures.html">textures</a>. See
+<a href="format-streamtex.html">Streaming (.stream/.streamtex)</a> for the streaming envelope.</p>
+
+<p>Streamed samples <em>are</em> present on disk — 46 <code>.model.stream</code> files ship under
+<code>Vehicles/Frontend/Bodies/</code>. In that layout the resident <code>.model</code> is a tiny
+<b>stub</b> (e.g. <code>Frontend/Bodies/Musclecar_01/Musclecar_01.model</code> is only 6 312 bytes
+but still carries the <code>02 00 00 08</code> magic and a full node tree) and the bulk vertex/index
+payload lives in the paired <code>Musclecar_01.model.stream</code> (1.22 MB). Note this is the
+<em>Frontend</em> (car-select) copy; the in-race <code>Vehicles/Bodies/Musclecar_01/</code> folder
+instead ships the whole 1.30 MB <code>.model</code> with no stream.</p>
+
+<p>The <code>.model.stream</code> file does <b>not</b> repeat the <code>02 00 00 08</code> magic. It
+begins with a 12-byte header — <code>dword0 = 0</code>, <code>dword1 = (file size − 12)</code>
+(i.e. the byte length of the payload that follows), <code>dword2 = 0</code> — then from offset
+<code>0x0C</code> the raw interleaved vertex data, ending in the same <code>0xFFFF</code>-restart
+16-bit triangle strips as a base <code>.model</code>. The <code>filesize − 12</code> relationship was
+confirmed across all five Musclecar streams checked. <span class="badge partial">Partial</span></p>
+
+<pre class="hex">
+        dword0=0   dword1 = size-12  dword2=0 | vertex data from 0x0C →
+000000  00 00 00 00  00 12 ad ae  00 00 00 00  38 32 3a 6d   ← Musclecar_01.model.stream (1 224 122 B; 0x12adae = 1 224 110 = size−12)
+000010  bf bc 3c 00  33 63 1e fe  bb c9 35 58  38 36 3a 97   ← interleaved vertex stream (repeating ~16-byte stride)
+…
+12ad90  2e 92 2e 93  ff ff 2e 94  2e 95 2e 96  2e 97 2e 96   ← tail: 16-bit strips, ffff restart (same as base .model)
+</pre>
+
+<h2>Relationship to other vehicle files</h2>
+<p>A car body folder pairs the <code>.model</code> (visual mesh) with a parallel set of files:
+<code>.phys</code> (<a href="format-phys.html">Havok rigid body</a>),
+<code>.mainColl</code> (<a href="format-hkcoll.html">collision</a>),
+<code>.deform</code> (<a href="format-deform.html">damage mesh</a>),
+<code>.shaders</code>/<code>.shaderinst</code> (<a href="format-shaders.html">materials</a>),
+<code>.fxc</code> (<a href="format-fxc.html">compiled effects</a>) and
+<code>.textures</code>. The <code>.model</code> references materials and vertex formats but contains
+only geometry — shading lives in the shader files.</p>
+
+<div class="warn">Open questions: the node-tree type tags (<code>0x04/05/06/0E/0F</code>) are not yet
+mapped to specific Havok classes (mesh vs material-ref vs vertex-buffer); the boundary between the
+vertex-buffer region and the index-buffer region is currently located by scanning for the strip data
+rather than read from an explicit section-table field (a clean section table almost certainly lives
+inside the node tree); and per-section vertex-format selection / per-strip material binding are not
+yet read from the header. The 12-byte <code>.model.stream</code> header is decoded only as far as the
+<code>filesize − 12</code> payload-length field; how the stub <code>.model</code> points the loader at
+its stream (filename convention vs an embedded offset) is not yet pinned down.</div>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-skel.html">Skeletons (.skel)</a> — bone hierarchy for skinned/animated models</li>
+  <li><a href="format-havok.html">Havok Packfiles</a> — the Havok serialization Crayon2 builds on</li>
+  <li><a href="format-shaders.html">Shaders (.shaders/.shaderinst)</a> — materials applied to model sections</li>
+  <li><a href="format-textures.html">Textures (.textures)</a> — texture data + <code>.low</code> LOD variants</li>
+  <li><a href="format-streamtex.html">Streaming (.stream/.streamtex)</a> — the <code>.model.stream</code> high-LOD twin</li>
+  <li><a href="format-deform.html">Deformation (.deform)</a> — paired damage mesh</li>
+  <li><a href="engine-rendering.html">Rendering Pipeline</a> — Crayon2, deferred G-Buffer, culling</li>
+  <li><a href="system-vehicles.html">Vehicles</a> — how car bodies assemble their file set</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

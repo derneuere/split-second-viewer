@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tonic (.tonic / .tonic2) — Split/Second RE Wiki</title>
+<meta name="description" content="Tonic is Black Rock's custom granular engine-sound synthesizer. The .tonic/.tonic2 files are compiled per-vehicle grain tables driven by an RPM/load state engine.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Tonic (.tonic / .tonic2)" data-category="Formats · Audio & Video">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Tonic (.tonic / .tonic2)</h1>
+<p><strong>Tonic</strong> is Black Rock Studio's in-house <strong>granular engine-sound synthesizer</strong> — the system that builds each car's continuously-varying engine note in real time instead of crossfading pre-baked loops. The <code>.tonic</code> / <code>.tonic2</code> files are the <em>compiled grain tables</em>: a pool of raw audio samples plus an index that a per-vehicle "state engine" walks according to RPM, rate-of-change and engine load. There is one pair per car under <code>Deferred/Audio/Tonic/_OutputFiles/</code>.</p>
+
+<div class="infobox"><div class="ib-title">.tonic / .tonic2</div><table>
+  <tr><th>Category</th><td>Custom granular engine audio</td></tr>
+  <tr><th>Origin</th><td>Black Rock "Tonic" engine (not FMOD)</td></tr>
+  <tr><th>Endianness</th><td><b>Big-endian (PS3)</b></td></tr>
+  <tr><th>Magic</th><td>none — header is a fixed field block</td></tr>
+  <tr><th>Header word 0</th><td><code>0x00000007</code> (format version)</td></tr>
+  <tr><th>.tonic rate</th><td>44100 Hz (<code>0000AC44</code>)</td></tr>
+  <tr><th>.tonic2 rate</th><td>21000 Hz (<code>00005208</code>)</td></tr>
+  <tr><th>Source twin</th><td><code>_StateEngine/&lt;car&gt;.xml</code> bundle</td></tr>
+  <tr><th>Count</th><td>24 cars × 2 (<code>.tonic</code> + <code>.tonic2</code>)</td></tr>
+  <tr><th>Status</th><td><span class="badge theory">Theory</span> (header confirmed; grain payload opaque)</td></tr>
+</table></div>
+
+<h2>What Tonic is</h2>
+<p>Conventional racing games loop a handful of recorded engine RPM bands and crossfade between them. Tonic instead does <em>granular synthesis</em>: it stitches together tiny snippets ("grains") of recorded engine audio, choosing and pitch-shifting them on the fly. The eboot is unusually explicit about this. The debug-capture log emits, per playback:</p>
+<pre class="hex">Num Sweeps [%u]
+ - Sweep [%u] type[%s] smallestGrain[%u] largestGrain[%u]
+rpm [%.2f] rpm rate-of-change [%.2f] load [%.2f] targetNumSamples [%u]
+   - GrainJob: fadeStart[%.2f] fadeEnd[%.2f] isReversed[%s]
+      - SampleJob: gain [%.2f] numSamples[%u] numBytes[%u]
+>> Grain [%u] <<
+grainIndex [%d] startSample[%d] endSample[%d] size[%d] startValue[%.2f] endValue[%.2f]</pre>
+<p>So the runtime selects a <b>Sweep</b> (a set of grains of a given size range), picks a <b>Grain</b> by <code>grainIndex</code>, slices <code>startSample…endSample</code> out of the sample pool, optionally reverses it, applies a fade and gain, and mixes it. The driving inputs are <code>rpm</code>, <code>rpm rate-of-change</code> and <code>load</code> — i.e. it is a true physically-driven engine model, not a loop player. There is a dedicated <code>JobTonic</code> SPU job and a <code>TonicHeap</code> allocator.</p>
+
+<div class="note">Tonic feeds the <code>PlayerEngine</code> and <code>CPUEngine</code> mixer buses you can see in every <a href="format-fev.html">.fev</a>. The small <code>Tonic/Tonic.fsb</code> + <code>Tonic.fev</code> next to <code>_OutputFiles/</code> hold the FMOD-side wrapper event (<code>Tonic/Tonic/Engine</code>); the heavy lifting is the custom grain data documented here.</div>
+
+<h2>State-engine source (the XML twin)</h2>
+<p>Each compiled <code>.tonic</code> is generated from a small bundle XML in <code>_StateEngine/</code>. <code>Hypercar_03.xml</code> reads:</p>
+<pre class="hex">&lt;Root FileVersion="3.00"&gt;
+  &lt;Bundle&gt;
+    &lt;File1 Filename="../_CarTypeSpecific/Engine_States.xml"/&gt;
+    &lt;File2 Filename="../_CarTypeSpecific/Hypercar_States.xml"/&gt;
+    &lt;File3 Filename="../_CarSpecific/Hypercar_03_Specific.xml"/&gt;
+  &lt;/Bundle&gt;
+&lt;/Root&gt;</pre>
+<p>The model is layered: a global <code>Engine_States.xml</code>, a per-class file (<code>Hypercar_States.xml</code>, <code>Muscle_States.xml</code>, <code>Supercar_States.xml</code>, <code>Truck_States.xml</code>), and a per-car override. The <em>states</em> themselves are enumerated in the eboot as engine behaviours, each driving a different grain selection:</p>
+<table>
+<thead><tr><th>State</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>Steady</td><td>Constant-throttle cruise.</td></tr>
+<tr><td>OverRun</td><td>Throttle lifted, engine braking.</td></tr>
+<tr><td>GearChange</td><td>Mid-shift transient.</td></tr>
+<tr><td>UpGearEngage / UpGearExit</td><td>Upshift engage / settle.</td></tr>
+<tr><td>DownGearEngage / DownGearExit</td><td>Downshift engage / settle.</td></tr>
+<tr><td>Backfire</td><td>Exhaust pop on lift/downshift.</td></tr>
+<tr><td>EnterBoost / ExitBoost</td><td>Turbo/boost spool transitions.</td></tr>
+<tr><td>Thumper</td><td>Low-frequency idle/lope layer.</td></tr>
+</tbody>
+</table>
+
+<h2>Compiled file header</h2>
+<p>The <code>.tonic</code> header is a fixed block of big-endian 32-bit words (no ASCII magic). Comparing Hypercar_03, Muscle_22 and Truck_09 separates the constant fields from the per-car ones:</p>
+
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x00</td><td>0x4</td><td>uint32_t</td><td>version</td><td>Constant <code>7</code> — Tonic compiled-format version.</td></tr>
+<tr><td>0x04</td><td>0x4</td><td>uint32_t</td><td>field_04</td><td>Constant <code>1</code> (likely stream/channel count).</td></tr>
+<tr><td>0x08</td><td>0x4</td><td>uint32_t</td><td>numSweeps</td><td>Constant <code>4</code> across the cars sampled — number of grain "sweeps".</td></tr>
+<tr><td>0x0C</td><td>0x4</td><td>uint32_t</td><td>countA</td><td>Per-car: 0x12 (Hyper_03), 0x17 (Muscle_22), 0x13 (Truck_09) — a state/table count.</td></tr>
+<tr><td>0x10</td><td>0x4</td><td>uint32_t</td><td>sampleRate</td><td><code>44100</code> for <code>.tonic</code>; <code>21000</code> for <code>.tonic2</code>. This is the one field that distinguishes the two variants.</td></tr>
+<tr><td>0x14</td><td>0x4</td><td>uint32_t</td><td>field_14</td><td>Zero in all samples.</td></tr>
+<tr><td>0x18</td><td>0x4</td><td>uint32_t</td><td>numGrains</td><td>Per-car: 0x34d=845, 0x314=788, 0x2c7=711 — total grain count (largest per-car field).</td></tr>
+<tr><td>0x1C</td><td>0x4</td><td>uint32_t</td><td>field_1C</td><td>Constant <code>2</code> (sample stride / 16-bit depth indicator).</td></tr>
+<tr><td>0x20</td><td>0x4</td><td>uint32_t</td><td>field_20</td><td>Zero.</td></tr>
+<tr><td>0x24</td><td>0x4</td><td>uint32_t</td><td>field_24</td><td>Constant <code>2</code>.</td></tr>
+<tr><td>0x28</td><td>0x4</td><td>uint32_t</td><td>sizeA</td><td>Per-car size word (0x0d9c, 0x0785, 0x0a92).</td></tr>
+<tr><td>0x2C</td><td>0x4</td><td>uint32_t</td><td>sizeB</td><td>Per-car size word (0x07e0, 0x0460, 0x0620). Grain-index / sample-pool sub-sizes.</td></tr>
+</tbody>
+</table>
+<div class="tip">The <code>.tonic2</code> variant is byte-for-byte the same header <em>except</em> the sample-rate word (21000 vs 44100) and the per-car size/count words shrink roughly in half, and the file itself is about half the size (e.g. Hypercar_03: 2.76&nbsp;MB <code>.tonic</code> vs 1.37&nbsp;MB <code>.tonic2</code>). So <code>.tonic2</code> is a <strong>lower-rate LOD</strong> of the same grain set — used for distant/opponent cars or memory-constrained mixes, matching the separate <code>CPUEngine</code> bus.</div>
+
+<h2>Hex excerpt — header comparison</h2>
+<pre class="hex">Hypercar_03.tonic  (44.1 kHz)
+000000  00 00 00 07 00 00 00 01 00 00 00 04 00 00 00 12   ver7 | 1 | sweeps=4 | countA=0x12
+000010  00 00 ac 44 00 00 00 00 00 00 03 4d 00 00 00 02   rate=44100 | 0 | numGrains=845 | 2
+000020  00 00 00 00 00 00 00 02 00 00 0d 9c 00 00 07 e0   0 | 2 | sizeA=0x0d9c | sizeB=0x07e0
+
+Hypercar_03.tonic2 (21 kHz LOD)
+000000  00 00 00 07 00 00 00 01 00 00 00 04 00 00 00 12   ver7 | 1 | sweeps=4 | countA=0x12
+000010  00 00 52 08 00 00 00 00 00 00 03 4d 00 00 00 02   rate=21000 | 0 | numGrains=845 | 2
+000020  00 00 00 00 00 00 00 02 00 00 06 7b 00 00 03 c0   0 | 2 | sizeA=0x067b | sizeB=0x03c0</pre>
+<p>Same version/sweeps/grain-count, halved rate and sizes — direct evidence that <code>.tonic2</code> is a downsampled twin rather than a different format.</p>
+
+<h2>The grain payload</h2>
+<p>After the header the file is a dense block of packed audio. The hexdump shows long runs of high-nibble-biased bytes (<code>aa bb cc cb ba …</code>) interleaved with small chunk lengths (e.g. <code>00 2e 1e 90</code>) — the signature of a <strong>delta/ADPCM-style nibble-packed sample pool</strong> sliced into grains, preceded by a grain index table. This payload is opaque without the Tonic decoder: the grain index (<code>startSample</code>/<code>endSample</code>/<code>size</code> per grain) and the raw pool are both inside, but their exact packing is not yet decoded.</p>
+<pre class="hex">000030  3e 94 89 29 3e cb c1 98 3f 59 57 b3 00 00 25 21   …float sweep params… | chunk len 0x2521
+000040  70 77 c9 8b 31 91 8b 31 81 dd ab 38 47 12 80 10   packed grain samples (nibble-delta) →
+…
+000060  39 57 34 03 80 42 36 23 01 99 18 43 34 03 b9 9d   more packed grain data</pre>
+
+<h2>What is still open</h2>
+<div class="warn">Confirmed: this is a custom (non-FMOD) big-endian granular format; header field roles (version, sweeps, sample rate, grain count, per-car sizes) are pinned by cross-car diffing; <code>.tonic2</code> is a half-rate LOD; the system is RPM/load-driven granular synthesis per the eboot. Unconfirmed: the exact grain-index record layout, the sample-pool codec (looks ADPCM-like), the float "sweep parameters" at 0x30+, and how the four sweeps partition the grains. A decoder would need the <code>Tonic</code> class internals — only the debug-capture WAV/RAW path is documented in the eboot.</div>
+
+<h2>How we know</h2>
+<ul>
+  <li><b>It's granular synthesis:</b> eboot strings <code>Num Sweeps</code>, <code>smallestGrain/largestGrain</code>, <code>GrainJob fadeStart/fadeEnd isReversed</code>, <code>grainIndex startSample endSample size</code>, driven by <code>rpm / rate-of-change / load</code>.</li>
+  <li><b>It's per-vehicle &amp; custom:</b> files are named per car, live under <code>Audio/Tonic/_OutputFiles/</code>, compiled from <code>_StateEngine/&lt;car&gt;.xml</code>; the format is big-endian (unlike FMOD's little-endian FSB/FEV) and has its own <code>TonicHeap</code> / <code>JobTonic</code>.</li>
+  <li><b>Header roles:</b> diffing three cars isolates the constant fields (7,1,4,44100,2,2) from per-car counts/sizes; the grain-count field is the largest per-car value as expected.</li>
+  <li><b>.tonic2 = LOD:</b> identical header except the rate word (21000 vs 44100) and ~half file size with halved size words.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-fsb.html">FMOD Sound Banks (.fsb)</a> — the per-car FSBs and the small <code>Tonic.fsb</code> wrapper bank.</li>
+  <li><a href="format-fev.html">FMOD Events (.fev)</a> — defines the <code>PlayerEngine</code>/<code>CPUEngine</code> buses Tonic feeds.</li>
+  <li><a href="engine-audio.html">Audio Engine</a> — LLAudio2, DynamicMixer, where Tonic plugs in.</li>
+  <li><a href="system-vehicles.html">Vehicles</a> — the car roster these grain models are built for.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

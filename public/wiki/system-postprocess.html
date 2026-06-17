@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Post-Processing Database — Split/Second RE Wiki</title>
+<meta name="description" content="Split/Second's PostProcessDatabase.params: per-context colour grading (ColorCubes), tone mapping, bloom, motion blur, DoF, lens flare and vignette tied to the HDR pipeline.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Post-Processing Database" data-category="Game Systems">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Post-Processing Database</h1>
+<p>The <strong>PostProcessDatabase</strong> is Split/Second's library of full-screen "looks". Each named
+entry bundles a complete set of HDR post-process settings — tone mapping, bloom, colour-cube grading,
+motion blur, depth-of-field, lens/particle flare, gradient and vignette — that the engine blends in for a
+given game context (a crash cam, a Powerplay explosion, the pause menu, high-speed driving, the results
+screen, and so on). It is the data that gives each moment its distinct cinematic colour.</p>
+
+<div class="infobox"><div class="ib-title">PostProcessDatabase</div><table>
+  <tr><th>Category</th><td>Render config</td></tr>
+  <tr><th>Files</th><td><code>PostProcessDatabase.params</code><br><code>PostProcessDatabaseStatic.params</code></td></tr>
+  <tr><th>Format</th><td><a href="data-params.html">.params</a> plaintext</td></tr>
+  <tr><th>Dynamic entries</th><td>18 contexts</td></tr>
+  <tr><th>Controller</th><td><code>cPostProcessingController</code></td></tr>
+  <tr><th>Effects/entry</th><td>11 (ColorCube, ToneMapper, Bloom, MotionBlur, DoF, LensFlare, ParticleFlare, Gradient, Vignette, EdgeRender, LowRes)</td></tr>
+  <tr><th>Colour cubes</th><td><code>UI/Frontend/ColorCubes/*.textures</code></td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<div class="note">Unlike <a href="system-scoring.html">Scoring.params</a>, this file ships with
+<strong>real tuned values</strong> in this devkit build, so every number below is a genuine shipped
+setting read straight from <code>PostProcessDatabase/PostProcessDatabase.params</code> (5,143 lines).</div>
+
+<h2>How it fits the HDR pipeline</h2>
+<p>Split/Second's <a href="engine-rendering.html">deferred renderer</a> resolves the lit scene into an HDR
+buffer (<code>HDRPostProcessingInput</code> in the eboot's render-target list). The post-process chain then
+runs as a sequence of named effects — the eboot exposes them as
+<code>BloomEffect</code>, <code>SSMotionBlur</code>, <code>DepthOfFieldEffect</code>,
+<code>LensFlareEffect</code>, <code>ParticleFlareEffect</code> and <code>ColorCubeEffect</code>, all under a
+<code>Render_PostProcessing</code> pass that ends at <code>PostProcessFinish</code>. The
+<code>cPostProcessingController</code> picks <em>which database entry</em> is active each frame and
+cross-fades its parameters in/out. Tone mapping and colour grading are the last creative stage before the
+image is shown.</p>
+
+<div class="tip">The colour-cube grading shares its art with the <a href="system-cameras.html">camera
+director</a>: the eboot keys <code>Cameras/Data/&lt;cam&gt;/ColorCubeEnabled</code>,
+<code>…/ColorCubeBlending</code> and <code>…/ColorCubeInputBlending</code> mirror the database's
+<code>ColorCube</code> block, and <code>cColorCubeBehaviorData</code> loads per-camera grade behaviour.</div>
+
+<h2>Entry structure</h2>
+<p>Every entry is a directory <code>/PostProcessDatabase/&lt;Context&gt;</code> with one section per effect
+plus a root section of <em>overwrite</em> flags. The root section names the entry, sets its
+<code>Fade In Time</code> / <code>Fade Out Time</code> (seconds), and — crucially — declares which effect
+configurations this context is allowed to override on top of the level's base look. For example the
+<code>Area Of Effect</code> entry overwrites tone mapping, bloom, colour-cube, motion-blur and vignette,
+but leaves DoF, gradient and the flares to the level:</p>
+
+<pre>/PostProcessDatabase/Area Of Effect:
+	'a; Name' = 'Area Of Effect';
+	'b; Fade In Time' = 0.5 (0.0, 30.0);
+	'c; Fade Out Time' = 0.5 (0.0, 30.0);
+	'd; Overwrite Tone Mapping Configuration' = true;
+	'd; Overwrite Tone Mapping Saturation Configuration' = false;
+	'e; Overwrite Bloom Configuration' = true;
+	'e; Overwrite Color Cube Configuration' = true;
+	'f; Overwrite DOF Configuration' = false;
+	'g; Overwrite Motion Blur Configuration' = true;
+	'h; Overwrite Gradient Configuration' = false;
+	'i; Overwrite Vignette Configuration' = true;
+	'j; Overwrite Lens-Flare Configuration' = false;
+	'k; Overwrite Particle-Flare Configuration' = false;</pre>
+
+<p>The single-letter prefixes (<code>a;</code>, <code>b;</code> …) and <code>@</code> rows are the
+<a href="data-params.html">.params</a> editor's ordering/colour-swatch hints — e.g.
+<code>'@f; Tone' = ':f; Tone:color:'f; Tone_r' 'f; Tone_g' 'f; Tone_b' '</code> tells the debug UI to draw
+the three RGB floats as one colour picker.</p>
+
+<h3>The 11 effect blocks</h3>
+<table>
+<tr><th>Block</th><th>Key settings</th><th>Role</th></tr>
+<tr><td><code>SSToneMapper</code></td><td>White Luminance, Exposure Key/Speed/Scale, Min/Max Average Luminance, Average Luminance Blur Passes, Filmic Enabled/Toe/Shoulder</td><td>HDR&rarr;LDR exposure &amp; (optional filmic) tone curve</td></tr>
+<tr><td><code>ColorCube</code></td><td>Enabled, Blending, Input Blending, Texture0, Texture1</td><td>3D LUT colour grade (blends two cubes)</td></tr>
+<tr><td><code>SSBloom</code></td><td>Threshold, Tone (RGB), Blur Passes (1–6), Blur Amount, Curve, Exposure Scale</td><td>Screen-space HDR bloom</td></tr>
+<tr><td><code>SSMotionBlur</code></td><td>Velocity Multiplier (0–10), Blur Amount (0–3)</td><td>Per-pixel velocity motion blur</td></tr>
+<tr><td><code>DoF</code></td><td>Blur Amount, Focus Near / Mid 1 / Mid 2 / Far, Blend Amount</td><td>Depth of field (4-band focus)</td></tr>
+<tr><td><code>SSLensFlare</code></td><td>Config + Pass1/Pass2 chromatic offsets + Sun (Scale/Dist/Elevation/Rotation)</td><td>Anamorphic lens flare</td></tr>
+<tr><td><code>SSParticleFlare</code></td><td>same Pass structure as LensFlare, separate exposure</td><td>Flare from bright particles</td></tr>
+<tr><td><code>Gradient</code></td><td>Alpha, Height, Power, Colour (RGB)</td><td>Vertical screen gradient tint</td></tr>
+<tr><td><code>Vignette</code></td><td>Inner/Outer Distance, U/V Scale, Colour (RGB)</td><td>Edge darkening</td></tr>
+<tr><td><code>EdgeRender</code></td><td>Enabled, Color Scale, Width, Tone (RGB)</td><td>Edge/outline post FX (off by default)</td></tr>
+<tr><td><code>SSLowRes</code></td><td>Blur Amount, Threshold, Width</td><td>Low-resolution composite blur</td></tr>
+</table>
+
+<h2>The 18 contexts</h2>
+<p>The dynamic database (<code>PostProcessDatabase.params</code>) contains eighteen entries. These map
+1:1 to the gameplay/UI moments the engine can force — the eboot's debug menu even lists matching
+overrides (<code>/a; ForceCrashEffect</code>, <code>/j; ForceHighSpeedEffect</code>,
+<code>/k; ForceJumpEffect</code>, <code>/n1; ForcePowerPlayTakedown</code>, etc.).</p>
+
+<table>
+<tr><th>Context</th><th>When it's used</th></tr>
+<tr><td><code>Area Of Effect</code></td><td>Generic handling/area effect (see <a href="system-areaofeffects.html">Area of Effects</a>)</td></tr>
+<tr><td><code>Crash</code></td><td>Crash / wreck camera</td></tr>
+<tr><td><code>Custom_Triggers00</code></td><td>Bespoke level trigger look</td></tr>
+<tr><td><code>High_Speed</code></td><td>Sustained high-speed driving</td></tr>
+<tr><td><code>Hud Message</code></td><td>Behind a full-screen HUD message</td></tr>
+<tr><td><code>Jump</code></td><td>Big air / jump</td></tr>
+<tr><td><code>Pause Menu</code></td><td>In-game pause</td></tr>
+<tr><td><code>PowerPlay Triggered Large Explosion</code></td><td>Large Powerplay detonation</td></tr>
+<tr><td><code>PowerPlay Triggered Small Explosion</code></td><td>Small Powerplay detonation</td></tr>
+<tr><td><code>PowerPlay Triggered Non Explosive</code></td><td>Non-explosive Powerplay</td></tr>
+<tr><td><code>Powerplay Button Active</code></td><td>Power level charged / ready</td></tr>
+<tr><td><code>Powerplay Route Changer</code></td><td>Route-switch (Level 3) Powerplay</td></tr>
+<tr><td><code>Powerplay Takedown</code></td><td>Takedown of a rival via Powerplay</td></tr>
+<tr><td><code>Race Finished</code></td><td>Finish line crossed</td></tr>
+<tr><td><code>Respot</code></td><td>Car respotted onto track</td></tr>
+<tr><td><code>Results Screen</code></td><td>Post-race results</td></tr>
+<tr><td><code>Screen Wipe</code></td><td>Transition wipe</td></tr>
+<tr><td><code>Start Grid</code></td><td>Pre-race grid</td></tr>
+</table>
+
+<p>(Eighteen named contexts in all; each entry's effect sub-sections begin at line 3 of the file and the
+last context's root section, <code>Start Grid</code>, sits at line 5,122.) A separate
+<code>PostProcessDatabaseStatic.params</code> holds non-fading "static" looks — this build contains a
+single entry, <code>Elimation Danger</code> (sic — the misspelling is in the data), used for the
+<a href="system-gamemodes.html">Elimination</a> last-place warning.</p>
+
+<h2>Colour cubes (3D LUT grading)</h2>
+<p>The <code>ColorCube</code> block names two LUT textures and blends between them
+(<code>Color Cube Blending</code>) and against the ungraded image
+(<code>Color Cube Input Blending</code>). The cubes live as a <a href="format-textures.html">.textures</a>
+pack at <code>UI/Frontend/ColorCubes/ColorCubes.textures</code> (loaded by the
+<code>Resident(noassert)|UI/Frontend/ColorCubes/%s</code> path), and the database references them by name.
+The unique cubes referenced by the dynamic database are:</p>
+
+<table>
+<tr><th>Colour cube</th><th>Used by (verbatim from the file)</th></tr>
+<tr><td><code>color_cube_airport_test_03</code></td><td>Area Of Effect (T0), High_Speed (T0+T1), Powerplay Route Changer (T0), Race Finished (T0)</td></tr>
+<tr><td><code>color_cube_CRASHCAM_airport_test_03</code></td><td>Texture0 of Custom_Triggers00, Jump, all three PowerPlay Triggered contexts, Powerplay Button Active, Powerplay Takedown, Respot; also Texture1 of Area Of Effect and Screen Wipe</td></tr>
+<tr><td><code>color_cube_PPCAM_airport_test_03</code></td><td>Texture1 of Custom_Triggers00, Jump, all three PowerPlay Triggered contexts, Powerplay Button Active, Respot</td></tr>
+<tr><td><code>color_cube_CRASHCAM_airport_02</code></td><td>Hud Message (T0+T1), Screen Wipe (T0)</td></tr>
+<tr><td><code>color_cube_CrashCam_v03</code></td><td>Crash (T0+T1)</td></tr>
+<tr><td><code>color_cube_TakedownCam_v01</code></td><td>Powerplay Takedown (T1)</td></tr>
+<tr><td><code>color_cube_StartGrid_v01</code></td><td>Powerplay Route Changer (T1)</td></tr>
+<tr><td><code>color_cube_PauseCam</code></td><td>Race Finished (T1)</td></tr>
+<tr><td><code>color_cube_results_01</code></td><td>Pause Menu (T0+T1)</td></tr>
+<tr><td><code>color_cube_EndOfRace_mode_01</code></td><td>Results Screen (T0+T1), Start Grid (T0+T1)</td></tr>
+</table>
+
+<pre>/PostProcessDatabase/Crash/ColorCube:
+	'a; Enabled' = true;
+	'b; Color Cube Blending' = 1.0 (0.0, 1.0);
+	'c; Color Cube Input Blending' = 1.0 (0.0, 1.0);
+	'c; Color Cube Texture0' = color_cube_CrashCam_v03;
+	'c; Color Cube Texture1' = color_cube_CrashCam_v03;</pre>
+
+<p>The <code>ColorCubes.textures</code> pack uses the engine's standard <code>TEXS</code> texture container
+(magic <code>54 45 58 53</code>, "TEXS"); the in-game frontend "Decals/ColorCubes" viewer reads the same
+data. A debug override exists at <code>PostProcessDatabase/Debug/ColorCubeOverride</code>
+(Enabled + Texture0/Texture1) plus a <code>Reload Color Cubes</code> command, which is how artists hot-swap
+grades in the QA build.</p>
+
+<h2>Worked example: tone mapping &amp; bloom</h2>
+<p>The two most visually decisive blocks are the tone mapper and bloom. Comparing the gentle
+<code>Area Of Effect</code> look with the punchy <code>Crash</code> look shows how the same fields are
+re-tuned per context:</p>
+
+<table>
+<tr><th>SSToneMapper field</th><th>Area Of Effect</th><th>Crash</th></tr>
+<tr><td><code>White Luminance</code></td><td>0.887</td><td>2.398</td></tr>
+<tr><td><code>Exposure Key</code></td><td>0.379</td><td>0.551</td></tr>
+<tr><td><code>Exposure Speed</code></td><td>0.05</td><td>0.074</td></tr>
+<tr><td><code>Min / Max Average Luminance</code></td><td>0.2 / 5.0</td><td>0.2 / 5.0</td></tr>
+<tr><td><code>Average Luminance Blur Passes</code></td><td>4</td><td>4</td></tr>
+<tr><td><code>Filmic Enabled</code></td><td>false</td><td>false</td></tr>
+</table>
+
+<table>
+<tr><th>SSBloom field</th><th>Area Of Effect</th><th>Crash</th></tr>
+<tr><td><code>Threshold</code></td><td>0.941</td><td>2.465</td></tr>
+<tr><td><code>Tone (R,G,B)</code></td><td>2.353, 2.581, 3.0</td><td>1.075, 2.0, 1.684</td></tr>
+<tr><td><code>Blur Passes</code></td><td>1</td><td>1</td></tr>
+<tr><td><code>Blur Amount</code></td><td>4.0</td><td>4.0</td></tr>
+</table>
+
+<p>The crash look raises the white point (less clipping of the fireball), lifts the bloom threshold (only
+the brightest highlights bloom) and warms the bloom tone, while keeping the same blur cost. Auto-exposure
+runs over a 4-pass-blurred average luminance clamped to [0.2, 5.0] in both.</p>
+
+<div class="warn"><strong>Filmic toe/shoulder are present but off.</strong> Every entry carries
+<code>Filmic Enabled = false</code> with a Reinhard-style toe/shoulder ready
+(<code>Filmic Toe = 1.5</code>, <code>Filmic Shoulder = 0.3</code>). So the shipped game uses the simple
+exposure tone curve, not the filmic path — treat the filmic branch as
+<span class="badge partial">Partial</span> (data exists, unused here).</div>
+
+<h2>Triggered by gameplay</h2>
+<p>The controller exposes a handful of timing knobs in the eboot, e.g.
+<code>PostProcessDatabase/High Speed Post Process Effect: Velocity vs Intensity</code> (a Velocity&rarr;Intensity
+curve), and the landing window <code>PostProcessDatabase/Min&nbsp;/&nbsp;Max Time For Landing to apply High
+Air Post Process Effect</code> that gates the <code>Jump</code> look on touch-down. A global
+<code>PostProcessDatabase/Disable Game Event Post Processes</code> switch turns the whole event-driven layer
+off for debugging. Powerplay-driven looks are fired by the <a href="system-powerplay.html">Powerplay
+system</a> via <code>cPostProcessTrigger</code>.</p>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="engine-rendering.html">Rendering Pipeline</a> — the deferred G-Buffer + HDR chain these effects run on</li>
+<li><a href="format-textures.html">Textures (.textures)</a> — the <code>TEXS</code> container holding the colour cubes</li>
+<li><a href="format-fxc.html">FX Compiled (.fxc)</a> · <a href="format-shaders.html">Shaders</a> — the compiled effects that implement each pass</li>
+<li><a href="system-cameras.html">Cameras &amp; Director</a> — per-camera colour-cube behaviour (<code>cColorCubeBehaviorData</code>)</li>
+<li><a href="system-powerplay.html">Powerplay System</a> — fires the explosion / takedown / route-changer looks</li>
+<li><a href="data-params.html">.params Tuning System</a> — the text format and editor hints (<code>@</code>/colour rows)</li>
+<li><a href="system-hud.html">HUD &amp; Frontend</a> — the <code>Hud Message</code> / <code>Results Screen</code> contexts</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

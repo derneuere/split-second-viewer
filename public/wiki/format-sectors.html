@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sectors (.sectorInfo) — Split/Second RE Wiki</title>
+<meta name="description" content="The per-level track sector partition: a spatial database of streaming/visibility chunks used for geometry & texture streaming, occlusion culling and AI 'loaded sector' checks.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Sectors (.sectorInfo)" data-category="Formats · Track & Route">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Sectors <small>(.sectorInfo)</small></h1>
+<p>Each level ships exactly one <code>&lt;Level&gt;.sectorInfo</code> under
+<code>Environments/Levels/&lt;Level&gt;/Sectors/</code>. It is the level's <b>sector database</b>: the spatial
+partition that the engine uses to stream geometry and textures, cull renderables, run occlusion queries and answer
+gameplay questions like "is the victim in a loaded sector?". It is the data behind the EBOOT's
+<code>Sector Streaming</code>, <code>Sector Visibility Update</code> and <code>Streaming Sector Render</code> systems.</p>
+
+<div class="infobox"><div class="ib-title">.sectorInfo</div><table>
+  <tr><th>Category</th><td>Streaming / visibility partition</td></tr>
+  <tr><th>Location</th><td><code>…/Levels/&lt;Level&gt;/Sectors/</code></td></tr>
+  <tr><th>Count</th><td>1 per level (10 present: 4 race levels, 5 <code>nem_</code> boss arenas, 1 test)</td></tr>
+  <tr><th>Size</th><td>~12 KB – 101 KB (scales with sector count)</td></tr>
+  <tr><th>Endianness</th><td>Big-endian floats/ints; <b>UTF-16LE</b> strings</td></tr>
+  <tr><th>Chunk tag</th><td><code>q000</code>, <code>q001</code>, … (ASCII)</td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<div class="note">Do not confuse the <b>sector</b> partition (streaming/rendering, this page) with the
+<a href="format-route.html">route <b>section</b></a> (a run of AI links). They are independent partitions of the same
+level — sectors are volumetric and used by the renderer/streamer; sections are 1-D and used by lap timing and the AI.</div>
+
+<h2>What a sector is</h2>
+<p>The Sectors subsystem (EBOOT page <code>Sector Debug Page</code>, tweakables under
+<code>Sectors/Streaming/*</code>, <code>Sectors/Culling/*</code>, <code>Sectors/Occlusion/*</code>,
+<code>Sectors/Visibility/*</code>) treats the world as a grid/graph of <b>sectors</b>, each with
+<b>sub-sectors</b>. The runtime keeps a <i>visibility map</i> (<code>Sector From</code> → <code>Sector To</code>
+adjacency) so that standing in one sector it knows which others can be seen and must be resident. Key tunables that
+this file feeds:</p>
+<ul>
+<li><code>Sectors/Streaming/e; Max Sector Stream Dist</code> — how far ahead sectors are pulled in.</li>
+<li><code>Sectors/Streaming/i; Look Ahead Dist</code> / <code>j; Look Ahead Damp</code> — predictive streaming along the route.</li>
+<li><code>Sectors/Culling/Cull Renderables</code> + <code>Cull Shadow Caster Renderables</code> — per-sector cull lists.</li>
+<li><code>Sectors/Occlusion/Use Occlusion Queries</code> — per-sector occluder geometry.</li>
+<li><code>CameraDirector/.../Use Victim Is In Loaded Sector Condition</code> — gameplay reads sector residency.</li>
+</ul>
+<p>The runtime log line <code>Sector %d %s subsectors visible %d invisible %d</code> confirms the
+sector → sub-sector hierarchy and the visible/invisible bookkeeping.</p>
+
+<h2>File layout</h2>
+<p><span class="badge partial">Partial</span> The file opens with a small fixed header, an embedded source-asset
+path, then a long run of <code>q###</code>-tagged chunks (one per sector). Strings are stored as
+<b>UTF-16LE</b> (little-endian, unusual for this big-endian title), while geometry/counts are big-endian. The leading
+header carries two constants shared by every level (<code>1.9200</code>, <code>300.0</code>) followed by a
+big-endian <b>sector count</b> that — verified across five levels — equals the number of <code>q###</code> tags in the
+file (the one solidly-pinned header field).</p>
+
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>0x4</td><td>float32_t</td><td>const_a</td><td><code>3f f5 c2 8f</code> = 1.9200 — constant across all levels. Likely a global LOD/stream bias.</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>float32_t</td><td>const_b</td><td><code>43 96 00 00</code> = 300.0 — constant. Plausibly the default sector stream/visibility distance.</td></tr>
+<tr><td>0x8</td><td>0x4</td><td>uint32_t</td><td>sectorCount</td><td><span class="badge ok">Confirmed</span> Number of sectors. Equals the count of <code>q###</code> tags in the file on every level checked: Downtown <code>0x80</code>=128, docks <code>0x94</code>=148, Graveyard <code>0xD5</code>=213, Powerplant <code>0x14A</code>=330, nem_storm <code>0x2B</code>=43.</td></tr>
+<tr><td>0xC</td><td>0x4</td><td>char[4]</td><td>chunkTag0</td><td>ASCII <code>"q000"</code> — first sector chunk id.</td></tr>
+<tr><td>0x10</td><td>var</td><td>utf16le</td><td>srcPath</td><td>NUL-terminated UTF-16LE source path, e.g. <code>\proj_1\ws_0\Data\SplitSecond</code>.</td></tr>
+<tr><td>…</td><td>var</td><td>chunk[]</td><td>sectors</td><td>One <code>q###</code>-tagged record per sector (bounds + index lists). See below.</td></tr>
+</table>
+
+<pre class="hex">$ od -A d -t x1z Downtown.sectorInfo | head -6
+0000000 3f f5 c2 8f 43 96 00 00 00 00 00 80 71 30 30 30  >?...C.......q000<
+        └ 1.920f ┘ └ 300.0f ┘ └count=128┘ └"q000"┘
+0000016 00 00 5c 00 70 00 72 00 6f 00 6a 00 5f 00 31 00  >..\.p.r.o.j._.1.<
+              └ UTF-16LE  "\ p r o j _ 1 …"  (\proj_1\ws_0\Data\SplitSecond) ┘
+0000080 00 00 00 00 00 00 00 00 c4 ae 49 97 43 14 cf ee  >..........I.C...<
+                                └ -1394.3 ┘└ 148.81 ┘  bounding-box / extents
+0000096 c4 c6 f6 5f 43 69 f8 6a ...                      >..._Ci.j...<
+        └ -1591.7 ┘└ 233.97 ┘  (big-endian float32)</pre>
+
+<h2>Sector chunks (<code>q###</code>)</h2>
+<p><span class="badge theory">Theory</span> Sector records are introduced by an ASCII tag <code>q000</code>,
+<code>q001</code>, … (Downtown contains exactly <b>128</b> such tags — matching the header
+<code>sectorCount</code> — though the numeric ids are <b>not contiguous</b>: they run up to <code>q132</code>, so a few
+indices are skipped). Between tags each record carries:
+a block of big-endian floats that read as an axis-aligned <b>bounding box / extents</b> (the values
+<code>-1394.3, 148.8, -1591.7 …</code> are world-space and within the level's coordinate range seen in
+<a href="format-route.html">Track.debug.txt</a>), several small big-endian integer counts
+(<code>00 00 00 04</code>, <code>00 00 00 01</code> …) and a UTF-16LE name fragment. The integer arrays are almost
+certainly the per-sector <b>renderable / occluder / adjacency index lists</b> referenced by the culling tunables. The
+exact field order inside a chunk is not yet fully resolved.</p>
+
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>+0x0</td><td>0x4</td><td>char[4]</td><td>tag</td><td><code>"q###"</code> sector id (3-digit, ids may be sparse — Downtown's 128 sectors run q000…q132).</td></tr>
+<tr><td>+0x4</td><td>0x18</td><td>float32_t[6]</td><td>aabb</td><td>min.xyz / max.xyz bounds of the sector (big-endian). <span class="badge theory">Theory</span></td></tr>
+<tr><td>+…</td><td>var</td><td>uint32_t</td><td>counts</td><td>One or more index-list counts (renderables, sub-sectors, neighbours).</td></tr>
+<tr><td>+…</td><td>var</td><td>uint32_t[]</td><td>indices</td><td>Per-list index arrays (asset/renderable ids, neighbour sector ids).</td></tr>
+<tr><td>+…</td><td>var</td><td>utf16le</td><td>name</td><td>Optional sector/source name fragment.</td></tr>
+</table>
+
+<div class="warn">The UTF-16LE name runs sometimes read "scrambled" in an 8-bit hex dump (e.g.
+<code>q001 \0 \0 \ p r …</code> with high bytes interleaved). That is just the little-endian 16-bit text inside an
+otherwise big-endian container — decode the string columns as UTF-16LE and they resolve cleanly.</div>
+
+<h2>Related streaming data</h2>
+<p>Sectors are the consumer side of the streaming pipeline; the asset side lives in the
+<a href="format-streamtex.html">.stream / .streamtex</a> files and is described under
+<a href="engine-resources.html">Resources &amp; Streaming</a>. A separate top-level <code>sectordata.dat</code> /
+<code>sector_scenarios_overlay.dat</code> pair (EBOOT <code>GenerateSectorScenarios</code>) is used by the
+<a href="data-catnip.html">Megabowles</a> powerplay-test harness to drive scenarios "per sector" — that is test
+tooling, not the per-level <code>.sectorInfo</code> documented here.</p>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="engine-resources.html">Resources &amp; Streaming</a> — residency, loaders, look-ahead streaming.</li>
+<li><a href="format-streamtex.html">Streaming (.stream/.streamtex)</a> — the streamed assets themselves.</li>
+<li><a href="format-route.html">Route Data</a> — the AI route the streamer looks ahead along.</li>
+<li><a href="engine-rendering.html">Rendering Pipeline</a> — occlusion culling, sector pre-Z.</li>
+<li><a href="system-tracks.html">Tracks &amp; Levels</a> — level pipeline and content layout.</li>
+<li><a href="format-names.html">Name Tables</a> — the small string/lookup tables that sit beside level data.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

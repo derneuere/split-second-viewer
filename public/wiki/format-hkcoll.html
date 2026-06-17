@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Collision (.hkColl / .mainColl) — Split/Second RE Wiki</title>
+<meta name="description" content="Level and vehicle collision meshes stored as Havok 5.5 packfiles: MOPP triangle soup for the world, convex hulls for cars.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Collision (.hkColl / .mainColl)" data-category="Formats · Physics (Havok)">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Collision (.hkColl / .mainColl)</h1>
+<p>
+  Split/Second stores all of its physics collision geometry as <a href="format-havok.html">Havok 5.5
+  packfiles</a>. <code>.hkColl</code> holds <strong>static level collision</strong> (the drivable
+  world, walls, terrain) and <code>.mainColl</code> holds <strong>per-vehicle collision</strong>
+  (the car bodies that bounce, scrape and take damage). Both share the identical Havok container
+  header — they differ only in which Havok <em>shape</em> classes the data section instantiates.
+</p>
+
+<div class="infobox"><div class="ib-title">.hkColl / .mainColl</div><table>
+  <tr><th>Category</th><td>Collision geometry</td></tr>
+  <tr><th>Container</th><td><a href="format-havok.html">Havok 5.5 packfile</a></td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3)</td></tr>
+  <tr><th>Magic</th><td><code>57 E0 E0 57</code></td></tr>
+  <tr><th>Version</th><td><code>Havok-5.5.0-r1</code></td></tr>
+  <tr><th>XML twin</th><td><code>.hkCollXml</code> (levels only)</td></tr>
+  <tr><th>World shape</th><td><code>hkpMoppBvTreeShape</code> + <code>hkpExtendedMeshShape</code></td></tr>
+  <tr><th>Vehicle shape</th><td><code>hkpConvexVerticesShape</code></td></tr>
+  <tr><th>Count</th><td>32 <code>.hkColl</code>, 39 <code>.mainColl</code></td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<div class="note">
+  Both formats are <strong>standard Havok packfiles</strong> — see <a href="format-havok.html">Havok
+  Packfiles</a> for the full container header breakdown. This page focuses on what is
+  <em>specific</em> to collision: the shape class hierarchy and how level vs. vehicle data differ.
+  The two extensions are just file-naming conventions used by the loader; their bytes are produced by
+  the same Havok serializer.
+</div>
+
+<h2>Where the files live</h2>
+<p>
+  The engine loads these by string templates found in the EBOOT (<code>eboot_strings.txt</code>):
+</p>
+<table class="struct">
+  <tr><th>Path template (EBOOT)</th><th>Extension</th><th>Role</th></tr>
+  <tr><td><code>environment|Physics/%s.hkColl</code></td><td>.hkColl</td><td>Whole-level static collision</td></tr>
+  <tr><td><code>environment|Subtracks/%s/tl.hkColl</code></td><td>.hkColl</td><td>Per-subtrack collision ("track-local")</td></tr>
+  <tr><td><code>Resident|Vehicles/Bodies/%s/%s.mainColl</code></td><td>.mainColl</td><td>Per-vehicle collision (always resident)</td></tr>
+</table>
+<p>
+  A third variant, <code>cl.hkColl</code> ("common"), sits in <code>Levels/&lt;name&gt;/Common/</code>.
+  In the samples examined its data section is an <strong>empty</strong> <code>hkpPhysicsData</code>
+  (<code>worldCinfo = null</code>, <code>systems = 0</code>) — a placeholder container, with the real
+  geometry living in the <code>Physics/&lt;name&gt;.hkColl</code> and <code>Subtracks/*/tl.hkColl</code>
+  files. The <code>Resident|…mainColl</code> prefix tells the streaming system the car collision is
+  never paged out (see <a href="engine-resources.html">Resources &amp; Streaming</a>).
+</p>
+
+<h2>Container header (shared)</h2>
+<p>
+  Every sample begins with the canonical Havok packfile header. The fields below are
+  <span class="badge ok">Confirmed</span> by comparing a 4&nbsp;KB vehicle hull, a 132&nbsp;KB subtrack
+  and a 6.9&nbsp;MB level file — the layout bytes are identical; only the <em>user-tag</em> and the
+  per-section offsets change.
+</p>
+
+<pre class="hex">000000  57 e0 e0 57 10 c0 c0 10 00 00 00 1a 00 00 00 05   W..W............   level (Downtown.hkColl)
+000010  04 00 01 01 00 00 00 03 00 00 00 02 00 00 00 00   ................
+000020  00 00 00 00 00 00 03 71 48 61 76 6f 6b 2d 35 2e   .......q Havok-5.
+000030  35 2e 30 2d 72 31 00 ff ff ff ff ff ff ff ff ff   5.0-r1..........
+
+000000  57 e0 e0 57 10 c0 c0 10 00 00 00 01 00 00 00 05   W..W............   vehicle (Musclecar_01.mainColl)
+000010  04 00 01 01 00 00 00 03 00 00 00 02 00 00 00 00   ................
+000020  00 00 00 00 00 00 00 4b 48 61 76 6f 6b 2d 35 2e   .......K Havok-5.</pre>
+
+<table class="struct">
+  <tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+  <tr><td>0x00</td><td>0x4</td><td>char[4]</td><td>magic</td><td><code>57 E0 E0 57</code> — Havok packfile signature (constant).</td></tr>
+  <tr><td>0x04</td><td>0x4</td><td>char[4]</td><td>magic2</td><td><code>10 C0 C0 10</code> — second signature word (constant).</td></tr>
+  <tr><td>0x08</td><td>0x4</td><td>uint32_t</td><td>userTag</td><td>Content tag. <code>0x1A</code> on level files, <code>0x01</code> on vehicle hulls — the one per-content header field.</td></tr>
+  <tr><td>0x0C</td><td>0x4</td><td>uint32_t</td><td>fileVersion</td><td><code>5</code> — packfile class version (matches <code>classversion="5"</code> in the XML twin).</td></tr>
+  <tr><td>0x10</td><td>0x4</td><td>uint8[4]</td><td>layoutRules</td><td><code>04 00 01 01</code> = bytesInPointer 4, <strong>big-endian</strong> (byte 1 = 0), reuse-padding + empty-base-class opts on.</td></tr>
+  <tr><td>0x14</td><td>0x4</td><td>uint32_t</td><td>numSections</td><td><code>3</code> — the three fixed sections below.</td></tr>
+  <tr><td>0x18</td><td>0x4</td><td>uint32_t</td><td>contentsSectionIndex</td><td><code>2</code> → the <code>__data__</code> section holds the root object.</td></tr>
+  <tr><td>0x1C</td><td>0x4</td><td>uint32_t</td><td>contentsSectionOffset</td><td><code>0</code> → root object at the start of <code>__data__</code>.</td></tr>
+  <tr><td>0x20</td><td>0x4</td><td>uint32_t</td><td>contentsClassNameIndex</td><td><code>0</code> → root class name resolved via <code>__classnames__</code>.</td></tr>
+  <tr><td>0x24</td><td>0x4</td><td>uint32_t</td><td>contentsClassNameOffset</td><td>Byte offset of the root class name string (varies: <code>0x201</code>/<code>0x4B</code>/<code>0x371</code>).</td></tr>
+  <tr><td>0x28</td><td>0x10</td><td>char[16]</td><td>contentsVersion</td><td><code>"Havok-5.5.0-r1\0"</code> null-padded to 16 bytes.</td></tr>
+  <tr><td>0x38</td><td>0x8</td><td>uint8[8]</td><td>(pad/flags)</td><td><code>FF</code> filler up to the first section header at <code>0x40</code>.</td></tr>
+</table>
+
+<h3>Section table</h3>
+<p>
+  Three section headers follow at <code>0x40</code>, each a 16-byte tag plus a run of big-endian
+  uint32 offsets (data start + fixup/boundary offsets). The tags are always, in order,
+  <code>__classnames__</code>, <code>__types__</code>, <code>__data__</code>:
+</p>
+<pre class="hex">000040  5f 5f 63 6c 61 73 73 6e 61 6d 65 73 5f 5f 00 00   __classnames__..
+000050  00 00 00 ff 00 00 00 d0 00 00 01 50 ...            data@0xD0  end@0x150
+000070  5f 5f 74 79 70 65 73 5f 5f 00 00 00 00 00 00 00   __types__.......
+000080  00 00 00 ff 00 00 02 20 ...                        data@0x220
+0000a0  5f 5f 64 61 74 61 5f 5f 00 00 00 00 00 00 00 00   __data__........
+0000b0  00 00 00 ff 00 00 0b 70 ...                        data@0xB70</pre>
+<div class="warn">
+  The internal field split of each section header (absolute-data-start vs. the local / global /
+  virtual fixup offsets and the exports/imports table) is the generic Havok packfile layout — it is
+  documented on the <a href="format-havok.html">Havok Packfiles</a> page and marked
+  <span class="badge partial">Partial</span> there. Nothing about it is collision-specific.
+</div>
+
+<h2>Level collision — <code>.hkColl</code></h2>
+<p>
+  The <code>__data__</code> root is an <code>hkRootLevelContainer</code>. For levels it carries a
+  <code>hkpPhysicsData</code> plus a baked <strong>material table</strong>: one
+  <code>HavokMaterialExportContainer</code> holding several
+  <code>HavokMaterialExport</code> → <code>cHavokMeshMaterial</code> pairs (Black Rock's custom
+  per-surface material/friction table stored alongside the geometry). This table appears in
+  <em>both</em> the whole-level <code>Physics/&lt;name&gt;.hkColl</code> and the per-subtrack
+  <code>tl.hkColl</code> twins — it is not subtrack-only. The collision body chain is:
+</p>
+<table class="struct">
+  <tr><th>Class</th><th>Role</th></tr>
+  <tr><td><code>hkpPhysicsData</code></td><td>Top container; holds the physics systems.</td></tr>
+  <tr><td><code>hkpPhysicsSystem</code></td><td>Named <code>"EnvironmentCollision"</code>; one rigid body.</td></tr>
+  <tr><td><code>hkpRigidBody</code></td><td>Named <code>"environment_collision"</code>, <code>MOTION_FIXED</code> (static). Material friction 0.5, restitution 0.4.</td></tr>
+  <tr><td><code>hkpMoppBvTreeShape</code></td><td>MOPP bounding-volume tree wrapping the mesh for fast broadphase queries.</td></tr>
+  <tr><td><code>hkpMoppCode</code></td><td>The compiled MOPP byte-code (a large <code>uint8</code> array, e.g. 32768 entries) + a quantisation offset vector.</td></tr>
+  <tr><td><code>hkpExtendedMeshShape</code></td><td>The actual triangle soup, organised into <code>hkpExtendedMeshShapeTrianglesSubpart</code> blocks (vertex + index buffers).</td></tr>
+</table>
+<p>
+  This <em>MOPP&nbsp;BV-tree over an extended triangle mesh</em> is the textbook Havok pattern for
+  large static worlds: the mesh stores the polygons, the MOPP code is a precomputed spatial index so
+  the car-vs-world ray/shape casts stay cheap. I verified the hierarchy by reading the
+  <code>__data__</code> section of <code>Downtown/Subtracks/A/tl.hkCollXml</code>, where
+  <code>#0070 hkRootLevelContainer → #0071 hkpPhysicsData → #0079 hkpPhysicsSystem →
+  #0080 hkpRigidBody → #0081 hkpMoppBvTreeShape → #0082 hkpMoppCode</code> +
+  <code>#0083 hkpExtendedMeshShape</code> appear in exactly that order. The big
+  <code>Downtown.hkColl</code> (6.97&nbsp;MB) uses the same six collision classes — confirmed by
+  enumerating its XML twin — plus the same baked material table
+  (<code>HavokMaterialExportContainer</code> + 12&nbsp;<code>HavokMaterialExport</code>/
+  <code>cHavokMeshMaterial</code> pairs, vs. 6 in subtrack&nbsp;A).
+</p>
+
+<h3>Sample: the MOPP code array</h3>
+<p>
+  The MOPP byte-code is the bulk of a level file. From <code>tl.hkCollXml</code> (the human-readable
+  twin of the same bytes):
+</p>
+<pre class="hex">&lt;hkobject name="#0082" class="hkpMoppCode" signature="0x72ee59f8"&gt;
+  &lt;hkparam name="info"&gt;
+    &lt;hkparam name="offset"&gt;(-1630.96 -19.82 -323.69 9270.97)&lt;/hkparam&gt;  &lt;-- quantisation origin + scale
+  &lt;/hkparam&gt;
+  &lt;hkparam name="data" numelements="32768"&gt;
+    40 0 182 39 0 8 38 0 255 16 143 153 3 12 0 63 ...               &lt;-- MOPP opcodes (binary in .hkColl)
+  &lt;/hkparam&gt;
+&lt;/hkobject&gt;</pre>
+<p>
+  In the binary <code>.hkColl</code> this same array is a raw run of bytes inside <code>__data__</code>;
+  the <code>.hkCollXml</code> twin is the serializer's debug dump of it. The trailing <code>205</code>
+  (<code>0xCD</code>) bytes seen at the end of the dump are uninitialised-fill padding from the
+  exporter, not opcodes.
+</p>
+
+<h2>Vehicle collision — <code>.mainColl</code></h2>
+<p>
+  Vehicle bodies do <strong>not</strong> use a triangle mesh — they use a small set of
+  <code>hkpConvexVerticesShape</code> hulls. Unlike the level files, a <code>.mainColl</code> contains
+  <strong>no</strong> <code>hkpPhysicsData</code>, <code>hkpPhysicsSystem</code> or
+  <code>hkpRigidBody</code>: its <code>__data__</code> root is a bare
+  <code>hkRootLevelContainer</code> holding a list of
+  <code>hkRootLevelContainerNamedVariant</code> entries, each naming one convex hull. The rigid body,
+  mass and handling that animate these shapes live separately in the
+  <a href="format-phys.html">.phys</a> file. There is <strong>no XML twin</strong> for vehicles — only
+  the level <code>.hkColl</code> files ship a <code>.hkCollXml</code>.
+</p>
+<p>
+  Every vehicle examined (Musclecar / Supercar / Truck / Unique, plus the Drone) carries exactly
+  <strong>four named convex hulls</strong>, with these literal names embedded in <code>__data__</code>:
+</p>
+<table class="struct">
+  <tr><th>Hull name</th><th>Shape</th><th>Apparent role (Theory)</th></tr>
+  <tr><td><code>Vs_Environment</code></td><td><code>hkpConvexVerticesShape</code></td><td>Hull used when colliding against the static world (<code>.hkColl</code>).</td></tr>
+  <tr><td><code>Vs_Object</code></td><td><code>hkpConvexVerticesShape</code></td><td>Hull used against dynamic props / powerplay objects.</td></tr>
+  <tr><td><code>Vs_Vehicle</code></td><td><code>hkpConvexVerticesShape</code></td><td>Hull used in car-vs-car contacts.</td></tr>
+  <tr><td><code>Core</code></td><td><code>hkpConvexVerticesShape</code></td><td>A central / inner hull (likely the chassis core volume).</td></tr>
+</table>
+<p>
+  The <code>Vs_</code> prefix and the per-target naming strongly suggest these hulls are selected by
+  <em>collision target</em> (a per-pair filter), not by damage zone. The classname table also lists the
+  supporting <code>hkpConvexShape</code>, <code>hkpSphereRepShape</code>,
+  <code>hkpConvexVerticesConnectivity</code> and <code>hkpConvexVerticesShapeFourVectors</code>
+  (SIMD-packed vertices) used to build each hull.
+</p>
+<div class="warn">
+  <strong>Correction.</strong> An earlier draft of this page stated each vehicle has "8" convex hulls.
+  That number was the raw count of the string <code>hkpConvexVerticesShape</code> across the whole
+  file, which also counts the <code>__classnames__</code> and <code>__types__</code> reflection
+  entries (and the substring inside <code>hkpConvexVerticesShapeFourVectors</code>). The
+  <code>__data__</code> section holds <strong>four</strong> actual hull instances — verified by
+  counting <code>hkpConvexVerticesShape</code> occurrences past the <code>__data__</code> offset
+  (<code>0xB70</code>) in Musclecar / Supercar / Truck / Unique samples.
+</div>
+<pre class="hex">0000d0  38 77 1f 8e 09 68 6b 43 6c 61 73 73 00 ...        hkClass
+        ...
+000130  63 d3 8e 9c 09 68 6b 70 43 6f 6e 76 65 78 56 65   ....hkpConvexVe
+000140  72 74 69 63 65 73 43 6f 6e 6e 65 63 74 69 76 69   rticesConnecti..
+0001a0  ff 20 d2 09 68 6b 70 43 6f 6e 76 65 78 56 65 72   . ..hkpConvexVer
+0001b0  74 69 63 65 73 53 68 61 70 65 00 ...               ticesShape</pre>
+<p>
+  Each <code>__classnames__</code> entry is <code>{ uint32 signature; uint8 tag(0x09); char[] name '\0' }</code>;
+  the <code>09</code> byte before every name is the Havok classname tag. The convex-hull choice is the
+  classic Havok approach for moving rigid bodies: cheap to collide and to compute inertia, unlike the
+  static world's triangle mesh. The four target-named hulls feed the
+  <a href="format-phys.html">Vehicle Physics (.phys)</a> rigid body (mass, inertia, handling) and the
+  <a href="format-deform.html">Deformation (.deform)</a> model that turns impacts into visual damage.
+</p>
+
+<div class="tip">
+  Quick way to tell the two apart without parsing: grep the file for class names. If you see
+  <code>hkpMoppBvTreeShape</code> / <code>hkpExtendedMeshShape</code> it is a level
+  <code>.hkColl</code>; if you see <code>hkpConvexVerticesShape</code> it is a vehicle
+  <code>.mainColl</code>.
+</div>
+
+<h2>Confidence</h2>
+<p>
+  <span class="badge ok">Confirmed</span> — the container header, section table, version string, the
+  level collision chain (<code>hkpPhysicsData</code> → <code>hkpRigidBody</code> "environment_collision"
+  → MOPP BV-tree + extended mesh, friction 0.5 / restitution 0.4, MOTION_FIXED) and the baked
+  <code>HavokMaterialExport</code> table are all directly verified against the binary and the
+  <code>.hkCollXml</code> twins, across small and large samples.
+</p>
+<p>
+  <span class="badge partial">Partial</span> — the vehicle <code>.mainColl</code> hull <em>count</em>
+  (four) and their literal names (<code>Vs_Environment</code>, <code>Vs_Object</code>,
+  <code>Vs_Vehicle</code>, <code>Core</code>) are verified from the binary, but vehicles have
+  <strong>no XML twin</strong>, so the per-hull <em>role</em> is inferred from the names
+  (<span class="badge theory">Theory</span>). The byte-exact split of each section header's
+  fixup-offset run is generic Havok and is covered on the
+  <a href="format-havok.html">Havok Packfiles</a> page.
+</p>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-havok.html">Havok Packfiles</a> — the shared container header and fixup tables.</li>
+  <li><a href="format-phys.html">Vehicle Physics (.phys)</a> — the rigid body / handling that owns the <code>.mainColl</code> collidable.</li>
+  <li><a href="format-deform.html">Deformation (.deform)</a> — damage/deformation driven by collision impacts.</li>
+  <li><a href="format-hkpps.html">Physics Packs (.hkPPs)</a> and <a href="format-hkrbs.html">Rigid Bodies (.hkRBs)</a> — sibling Havok packfile formats.</li>
+  <li><a href="format-mcl.html">Material Clips (.mcl)</a> — despite the "collision-ish" name, an unrelated material-override format.</li>
+  <li><a href="engine-middleware.html">Middleware Stack</a> — Havok 5.5 in the engine.</li>
+  <li><a href="engine-resources.html">Resources &amp; Streaming</a> — the <code>Resident|</code> / <code>environment|</code> load prefixes.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

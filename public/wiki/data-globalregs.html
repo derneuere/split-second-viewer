@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Global Registry — Split/Second RE Wiki</title>
+<meta name="description" content="default.global_regs — the binary master register-block database (magic FREG) that declares every named shader global/sampler the Crayon2 renderer can bind.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Global Registry" data-category="Data &amp; Config">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Global Registry (<code>default.global_regs</code>)</h1>
+<p>
+<code>default.global_regs</code> is the renderer's <strong>master register-block database</strong>: a single
+binary file at the root of <code>Deferred/</code> that declares every named shader global and texture sampler
+the <a href="engine-rendering.html">Crayon2</a> renderer is allowed to bind, together with each one's default
+slot. The eboot loads it at render-init with the message <code>Loading register block sets from %s.</code> and
+the data path <code>data|default.global_regs</code>, sitting amongst <code>cShaderManager</code>,
+<code>cGlobalShaderContextManager</code> and <code>cMaterialComboManagers</code>. Despite the "registry" name
+this is firmly a <strong>graphics</strong> file, not a gameplay config &mdash; it is the dictionary that maps
+shader uniform names to engine-side slots.
+</p>
+
+<div class="infobox"><div class="ib-title">default.global_regs</div><table>
+  <tr><th>Category</th><td>Shader register database</td></tr>
+  <tr><th>Container</th><td>Custom binary (<code>FREG</code>)</td></tr>
+  <tr><th>Endianness</th><td>Big-endian (PS3 PowerPC)</td></tr>
+  <tr><th>Magic</th><td><code>46 52 45 47</code> = <code>FREG</code></td></tr>
+  <tr><th>Block</th><td><code>GLBB</code> … <code>GLBE</code></td></tr>
+  <tr><th>Size</th><td>65,354 bytes</td></tr>
+  <tr><th>Entries</th><td>~1,500 records (1,503 counted)</td></tr>
+  <tr><th>Structure</th><td>vocabulary repeated across 5 register-set blocks</td></tr>
+  <tr><th>Loaded by</th><td><code>cGlobalShaderContextManager</code></td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<h2>Role in the engine</h2>
+<p>
+Split/Second is a <a href="engine-rendering.html">deferred renderer</a> whose shaders are assembled at runtime
+from the 2.4&nbsp;MB <code>global_shader_combos.fxc</code> übershader database and patched live by
+<code>cShaderPatcher</code>. Every shader that wants to read a camera matrix, a light parameter, a bloom
+threshold or a G-buffer texture refers to it <em>by name</em>. <code>default.global_regs</code> is the
+authoritative list of those names &mdash; the "global register block set" &mdash; so the runtime can resolve a
+name to a hardware constant/sampler slot and supply a default. Think of it as the symbol table that binds the
+shader übershader to the engine's per-frame globals.
+</p>
+<div class="note">
+There is exactly <strong>one</strong> <code>.global_regs</code> file in the build:
+<code>Deferred/default.global_regs</code> (65,354 bytes). The <code>default.</code> prefix and the
+<code>FREG</code> magic (File-REGisters) imply the format could carry alternate named sets, but only the
+default is shipped. Inside, the same register vocabulary is repeated across <strong>five</strong> record
+blocks (the name <code>light_ambient</code> recurs five times, at <code>0x18</code>, <code>0x384a</code>,
+<code>0x546c</code>, <code>0x8c9e</code> and <code>0xe6be</code>) &mdash; presumably one set per shader
+stage / material-combo context. Summed across the five blocks the file holds <strong>~1,500</strong>
+records (1,503 <code>FFFFFFFF</code> slot markers), not the ~1,000 a single block suggests.
+</div>
+
+<h2>Binary layout</h2>
+<p>
+The file is big-endian and walkable. A 20-byte preamble (8-byte <code>FREG</code>+version, the
+<code>GLBB</code> tag, then two count/size dwords) is followed by a run of variable-length records, then a
+<code>GLBE</code> footer. Reading the head with <code>od -A x -t x1z</code> shows the magic, version, the
+<code>GLBB</code> ("Globals Block Begin") tag and the first three register entries:
+</p>
+<pre class="hex">000000 46 52 45 47 00 00 00 01 47 4c 42 42 00 00 02 00  >FREG....GLBB....<
+000010 00 00 05 dc 00 00 00 0e 6c 69 67 68 74 5f 61 6d  >........light_am<
+000020 62 69 65 6e 74 00 00 00 ff ff ff ff 00 00 00 01  >bient...........<
+000030 00 00 00 0e 6c 69 67 68 74 5f 64 69 66 66 75 73  >....light_diffus<
+000040 65 00 00 00 ff ff ff ff 00 00 00 01 00 00 00 0f  >e...............<
+000050 6c 69 67 68 74 5f 73 70 65 63 75 6c 61 72 00 00  >light_specular..<</pre>
+
+<h3>Header</h3>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>0x0</td><td>0x4</td><td>char[4]</td><td>magic</td><td><code>FREG</code> (0x46524547) &mdash; constant</td></tr>
+<tr><td>0x4</td><td>0x4</td><td>uint32_t</td><td>version</td><td><code>0x00000001</code></td></tr>
+<tr><td>0x8</td><td>0x4</td><td>char[4]</td><td>blockTag</td><td><code>GLBB</code> &mdash; Globals Block Begin</td></tr>
+<tr><td>0xC</td><td>0x4</td><td>uint32_t</td><td>fieldA</td><td><code>0x00000200</code> = 512 <span class="badge theory">Theory</span> &mdash; bucket / capacity hint</td></tr>
+<tr><td>0x10</td><td>0x4</td><td>uint32_t</td><td>fieldB</td><td><code>0x000005DC</code> = 1500 <span class="badge partial">Partial</span> &mdash; total record count (1,503 markers found)</td></tr>
+<tr><td>0x14</td><td>…</td><td>Record[]</td><td>entries</td><td>variable-length register records until the <code>GLBE</code> footer tag</td></tr>
+</table>
+<div class="warn">
+The second header dword, <strong>1500</strong> (<code>0x5DC</code>), is almost certainly the
+<strong>total record count</strong>: walking the file turns up <strong>1,503</strong> <code>FFFFFFFF</code>
+slot markers, i.e. 1,503 records, which rounds to the stated 1,500. (This corrects the earlier guess that the
+file holds only ~1,000 entries &mdash; that figure counts a single block; the vocabulary repeats five times.)
+The first dword, <strong>512</strong> (<code>0x200</code>), is still <span class="badge theory">Theory</span>
+&mdash; it does not match any count we measured, so it reads as a hash-table bucket count or per-block capacity
+hint. Note the same <code>00 00 02 00 / 00 00 05 dc</code> pair recurs mid-file at <code>0x5460</code>, so it
+behaves more like a sub-block header than a one-time file preamble.
+</div>
+
+<h3>Register record</h3>
+<p>
+Each entry is a length-prefixed, NUL-terminated name followed by two dwords. <code>light_ambient</code> at 0x14
+is <code>00 00 00 0e</code> (nameLen 14) + the 13 ASCII bytes <code>"light_ambient"</code> + its NUL terminator
+(13 + 1 = 14) + NUL padding so the following dword is 4-byte-aligned + <code>ff ff ff ff</code> +
+<code>00 00 00 01</code>:
+</p>
+<table class="struct">
+<tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr>
+<tr><td>+0x0</td><td>0x4</td><td>uint32_t</td><td>nameLen</td><td>name length <em>including</em> the NUL terminator (e.g. 14 for the 13-char <code>"light_ambient"</code>)</td></tr>
+<tr><td>+0x4</td><td>nameLen</td><td>char[]</td><td>name</td><td>ASCII register name + NUL, then padded with NULs so the next dword is 4-byte-aligned</td></tr>
+<tr><td>…</td><td>0x4</td><td>int32_t</td><td>defaultSlot</td><td><code>0xFFFFFFFF</code> (&minus;1) = "unbound / use default" on every shipped record</td></tr>
+<tr><td>…</td><td>0x4</td><td>uint32_t</td><td>regCount</td><td>number of float4 constant registers the global occupies <span class="badge partial">Partial</span></td></tr>
+</table>
+<div class="warn">
+The trailing dword is <strong>not</strong> a two-valued type tag. An earlier reading called it "1 for
+scalars/vectors, 4 for matrices", but walking one full block (340 records) turns up many values:
+<code>1</code> (291&times;, e.g. <code>light_ambient</code>), <code>2</code>, <code>3</code> (e.g.
+<code>NormalTrans</code>), <code>4</code> (30&times;, e.g. <code>Trans</code>/<code>View</code>/<code>Proj</code>),
+<code>8</code>, <code>12</code>, <code>13</code>, <code>32</code>, <code>35</code> (e.g.
+<code>bonebind_BindToJointMatrices</code>), <code>64</code> and <code>105</code> (e.g.
+<code>bonebind_JointToModelMatrices</code>).
+</div>
+<p>
+The values line up with how many <strong>float4 constant registers</strong> each global needs: a scalar or
+single vector is <code>1</code>; a 4&times;4 matrix (<code>Trans</code>, <code>View</code>, <code>Proj</code>,
+<code>ViewProj</code>) is <code>4</code> rows; <code>NormalTrans</code> is <code>3</code> rows; and arrays of
+N vectors/matrices (sample-offset tables, bone-bind matrix palettes) carry the larger counts (8, 16, 32, 64,
+105, …). So this field is best read as a <strong>register/vec4 count</strong>, not a discrete type enum &mdash;
+hence still <span class="badge partial">Partial</span> until the array vs single-matrix cases are fully
+mapped. (Note: <code>NormalTrans</code> ends in <code>00 00 00 03</code>, not <code>…04</code> as previously
+stated.)
+</p>
+
+<h3>Footer</h3>
+<p>
+The block closes with <code>GLBE</code> ("Globals Block End") immediately followed by the ASCII marker
+<code>END</code>:
+</p>
+<pre class="hex">00ff30 00 00 ff ff ff ff 00 00 00 01 00 00 00 00 00 00  >................<
+00ff40 00 00 47 4c 42 45 00 45 4e 44                    >..GLBE.END<</pre>
+
+<h2>What the registry holds</h2>
+<p>
+Walking the names gives a near-complete map of the deferred pipeline, because the registers are grouped by the
+shader/pass that owns them &mdash; the prefix before the first underscore is the pass name. The largest groups
+in the file:
+</p>
+<table>
+<tr><th>Prefix / pass</th><th>Registers</th><th>What it is</th></tr>
+<tr><td><code>light</code> / <code>Light</code> / <code>Light_Deferred_*</code></td><td>60+</td><td>Deferred lighting &mdash; point/spot light banks (<code>Light_Deferred_Point8_diffuse0..7</code>), depth &amp; mask textures</td></tr>
+<tr><td><code>StandardParticle</code></td><td>48</td><td>Particle/emitter shader inputs</td></tr>
+<tr><td><code>SSMask</code> / <code>ss</code> / <code>sslighting</code></td><td>100+</td><td>Screen-space lighting &amp; mask passes (SSAO-related)</td></tr>
+<tr><td><code>ShadowMap</code> / <code>DRSMap</code> / <code>shadowheightmap</code> / <code>cloudshadow</code></td><td>40+</td><td>Shadow rendering &mdash; depth-range shadow maps, height-map &amp; cloud shadows</td></tr>
+<tr><td><code>Bloom*</code> / <code>ToneMapper</code> / <code>ExpLuminance</code> / <code>colourgrad</code></td><td>40+</td><td>HDR post: bloom bright-pass, eye-adaptation luminance, tone-mapping, colour grading</td></tr>
+<tr><td><code>dof</code> / <code>motionblur</code> / <code>ScrVelBlur</code> / <code>SimpleMotionBlur</code></td><td>50+</td><td>Depth-of-field and motion-blur passes</td></tr>
+<tr><td><code>LensFlare</code> / <code>lightscattering</code> / <code>LightShafts*</code> / <code>TwinVignette</code></td><td>40+</td><td>Lens flares, light shafts/god-rays, scattering, vignette</td></tr>
+<tr><td><code>EdgeExtract</code></td><td>4</td><td>Deferred edge-detect post pass (<code>EdgeExtract_EdgeTint/Scale/Width</code>)</td></tr>
+<tr><td><code>StreamWater</code> / <code>FoamWater</code> / <code>water</code></td><td>30+</td><td>Water surface shaders</td></tr>
+<tr><td><code>VeggieFaceme</code> / <code>VehiclePaint01</code> / <code>atv</code></td><td>70+</td><td>Foliage face-me cards, vehicle paint, misc engine globals</td></tr>
+</table>
+<p>
+A second class of entries are the always-present <strong>frame globals</strong> bound for every draw: the
+camera/world matrices <code>Trans</code>, <code>View</code>, <code>Proj</code>, <code>ViewProj</code>,
+<code>TransViewProj</code>, <code>NormalTrans</code>; the camera/light vectors <code>WorldCameraPos/Right/Front/Up</code>,
+<code>ObjectCameraPos/Right/Front/Up</code>, <code>WorldLightDir</code>, <code>ObjectLightDir</code>; and the base
+material lights <code>light_ambient</code>, <code>light_diffuse</code>, <code>light_specular</code>. These appear
+first in the file, before the per-pass groups.
+</p>
+<div class="tip">
+The pass prefixes here line up one-to-one with the deferred-pipeline stages documented on
+<a href="engine-rendering.html">Rendering Pipeline</a> &mdash; G-buffer &rarr; screen-space mask/SSAO &rarr;
+deferred lighting &rarr; shadows &rarr; HDR bloom/tone-map &rarr; DOF/motion-blur &rarr; edge post. The
+registry is effectively a parts list for that pipeline.
+</div>
+
+<h2>Relationship to other render data</h2>
+<p>
+<code>default.global_regs</code> declares the <em>names and slots</em>; the actual shader byte-code lives in the
+<a href="format-fxc.html">.fxc</a> compiled effects and the global übershader combo DB, instanced through
+<a href="format-shaders.html">.shaders / .shaderinst</a> and the texture sets in
+<a href="format-textures.html">.textures</a>. At runtime <code>cShaderPatcher</code> stitches these together
+using this registry as the binding dictionary. Because every <code>defaultSlot</code> in the shipped file is
+&minus;1, the engine assigns slots dynamically &mdash; the file fixes the <em>vocabulary</em>, not the layout.
+</p>
+
+<h2>Open questions</h2>
+<ul>
+<li>Why the register vocabulary is repeated across <strong>five</strong> blocks &mdash; per shader stage, per
+material-combo context, or per render path? The block sizes differ (340 / 172 / 340 / 565 / 86 records), so
+they are not identical copies.</li>
+<li>Meaning of the first header dword, <strong>512</strong> (<code>0x200</code>). It matches no measured count,
+so it is taken as a bucket/capacity hint &mdash; unproven. (The second dword, 1500, is now read as the total
+record count: 1,503 markers were found.)</li>
+<li>The exact semantics of the <code>regCount</code> dword for the array cases (8 / 16 / 32 / 64 / 105 …) and
+whether texture samplers are encoded distinctly from constants at all.</li>
+<li>Whether <code>defaultSlot</code> is ever non-&minus;1 &mdash; in this build it is uniformly &minus;1, so the
+"default" semantics can only be inferred.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="engine-rendering.html">Rendering Pipeline</a> &mdash; the deferred stages these registers feed</li>
+<li><a href="format-fxc.html">FX Compiled (.fxc)</a> and <a href="format-shaders.html">Shaders</a> &mdash; the shader byte-code that references these names</li>
+<li><a href="format-textures.html">Textures (.textures)</a> &mdash; the sampler targets bound by the texture registers</li>
+<li><a href="data-params.html">.params Tuning System</a> &mdash; the unrelated <em>text</em> config layer (do not confuse)</li>
+<li><a href="engine-overview.html">Engine Architecture</a> and <a href="glossary.html">Glossary &amp; Codenames</a> &mdash; Crayon2 and shader-patching background</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

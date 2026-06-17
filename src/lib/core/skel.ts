@@ -44,6 +44,15 @@ export type SkelBone = {
 	name: string;
 };
 
+/** A bone exposed for skeleton line-segment drawing. */
+export type SkelDrawBone = {
+	index: number;
+	parent: number;
+	name: string;
+	/** World-space bone origin [x,y,z]. */
+	pos: [number, number, number];
+};
+
 export type ParsedSkel = {
 	version: number;
 	stride: number;
@@ -51,6 +60,11 @@ export type ParsedSkel = {
 	/** The 8 absolute offsets from the header table. */
 	offsetTable: number[];
 	bones: SkelBone[];
+	/**
+	 * Draw-ready bones (world-space origin + parent index) for the skeleton
+	 * line-segment overlay in MeshViewer. Populated by parseSkel.
+	 */
+	skeleton: SkelDrawBone[];
 };
 
 function read16(r: BinReader, off: number, count: number): number[] {
@@ -119,10 +133,50 @@ export function parseSkel(raw: Uint8Array): ParsedSkel {
 		};
 	}
 
-	return { version, stride, boneCount, offsetTable, bones };
+	const parsed: ParsedSkel = { version, stride, boneCount, offsetTable, bones, skeleton: [] };
+	parsed.skeleton = skeletonDrawBones(parsed);
+	return parsed;
 }
 
 /** Index of the root bone (parent === -1), or -1 if none. */
 export function rootBoneIndex(s: ParsedSkel): number {
 	return s.bones.findIndex((b) => b.parent === -1);
+}
+
+/** Local translation from a row-major 4x4 (translation in the last row). */
+function rowTranslation(m: number[]): [number, number, number] {
+	return [m[12], m[13], m[14]];
+}
+
+/**
+ * Build draw-ready bones: each bone's WORLD origin computed by accumulating the
+ * per-bone local translation (matrixA, row-major) along its parent chain. The
+ * Black Rock rigs store rotation-free local offsets in practice (verified: the
+ * matrixA last-row translation carries the joint offset, matrixB the negated
+ * inverse-bind translation), so an additive accumulation reproduces the
+ * bind-pose skeleton accurately enough to draw as line segments.
+ */
+export function skeletonDrawBones(s: ParsedSkel): SkelDrawBone[] {
+	const world: [number, number, number][] = new Array(s.boneCount);
+	// Bones are stored parent-before-child in practice; resolve defensively by
+	// walking the chain so order doesn't matter.
+	const resolve = (i: number, guard: number): [number, number, number] => {
+		if (world[i]) return world[i];
+		if (guard <= 0) return rowTranslation(s.bones[i].matrixA);
+		const b = s.bones[i];
+		const local = rowTranslation(b.matrixA);
+		if (b.parent < 0 || b.parent >= s.boneCount || b.parent === i) {
+			world[i] = local;
+		} else {
+			const p = resolve(b.parent, guard - 1);
+			world[i] = [p[0] + local[0], p[1] + local[1], p[2] + local[2]];
+		}
+		return world[i];
+	};
+	const out: SkelDrawBone[] = new Array(s.boneCount);
+	for (let i = 0; i < s.boneCount; i++) {
+		const pos = resolve(i, s.boneCount);
+		out[i] = { index: i, parent: s.bones[i].parent, name: s.bones[i].name, pos };
+	}
+	return out;
 }

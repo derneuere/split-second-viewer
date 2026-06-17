@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rendering Pipeline — Split/Second RE Wiki</title>
+<meta name="description" content="Split/Second's deferred renderer: G-Buffer MRT channels, SSAO, SPU lighting (SPULight), HDR tonemapping, bloom, motion blur, edge post, powerplay passes and RSX ZCull.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Rendering Pipeline" data-category="Engine &amp; Tech">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Rendering Pipeline</h1>
+<p>Split/Second runs a <strong>deferred renderer</strong> built on Black Rock Studio's
+in-house render layer, codenamed <a href="glossary.html">Crayon2</a>
+(<code>libs/Render/Support/Crayon2</code>). Geometry is rasterised once into a multi-channel
+<strong>G-Buffer</strong>, screen-space ambient occlusion and shadow masks are generated,
+<strong>lighting is accumulated on the PS3's SPUs</strong> ("SPULight" jobs), and the result is
+tone-mapped through an HDR post chain (bloom, motion blur, edge, colour-cube, lens flare). Every
+fact and value on this page is taken directly from the loose data files and the
+<code>EBOOT.BIN</code> strings of the QA debug build (NPXX00575), built
+<code>Jan 30 2010</code> at <code>02:33:01</code>.</p>
+
+<div class="infobox"><div class="ib-title">Renderer</div><table>
+  <tr><th>Codename</th><td>Crayon2 (<code>cRenderManager</code>)</td></tr>
+  <tr><th>Type</th><td>Deferred shading, MRT G-Buffer</td></tr>
+  <tr><th>GPU</th><td>RSX (Cell GCM), big-endian</td></tr>
+  <tr><th>G-Buffer</th><td>3 colour MRTs + depth (<code>g_color_0/1/2</code>)</td></tr>
+  <tr><th>Lighting</th><td>On SPUs — <code>SPULight</code> jobs</td></tr>
+  <tr><th>AA</th><td>MSAA 2× Quincunx / 2× Accuview / 4×</td></tr>
+  <tr><th>HDR</th><td><code>RenderHDRToHDR</code> → tonemap → LDR</td></tr>
+  <tr><th>Übershader</th><td><code>global_shader_combos.fxc</code> (2.27&nbsp;MB)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>Frame structure</h2>
+<p>The per-frame render is bracketed by the <code>FrameBegin</code> / <code>Update</code> /
+<code>FrameEnd</code> phases (<a href="engine-jobstream.html">driven from the main thread</a>),
+with the GPU command list closed at <code>C2:EndScene</code> and the CPU waiting at
+<code>C2:Wait</code>. The EBOOT's profiler timer table enumerates the render passes in execution
+order; the major ones are:</p>
+
+<table>
+<tr><th>Stage</th><th>Profiler markers (from EBOOT)</th><th>What it does</th></tr>
+<tr><td>Opaque G-Buffer fill</td><td><code>Opaque Begin Render</code>, <code>Opaque Env Sector Render</code>, <code>Opaque Vehicle Render</code>, <code>Opaque Powerplay Render</code>, <code>Opaque Skydome Render</code>, <code>Decals Render</code></td><td>Writes albedo / unlit / normal / motion / specular into the MRTs (<code>Deferred - GBuffer - Opaque</code>)</td></tr>
+<tr><td>G-Buffer finalise</td><td><code>GBuffer End MRT</code>, <code>GBuffer SSAO</code>, <code>GBuffer Blur</code>, <code>GBuffer Depth Restore</code>, <code>GBuffer ZCull Restore</code></td><td>Resolve MRTs, build SSAO, restore depth + RSX ZCull</td></tr>
+<tr><td>Screen-space masks</td><td><code>SSMask Expand Edge</code>, <code>SSMask 1st/2nd Depth Shadow</code>, <code>SSMask Particle Shadow</code></td><td>Edge mask + shadow masks used by lighting</td></tr>
+<tr><td>Lighting</td><td><code>Lighting Global</code>, <code>Lighting Qtr Res</code>, <code>Lighting Full Res</code>, <code>SPULight Build Jobs</code>, <code>SPULight Copy Depth</code>, <code>SPULight Window of opportunity</code></td><td>Global directional light + local lights, accumulated on SPUs</td></tr>
+<tr><td>Forward / alpha</td><td><code>AlphaBlend Env/Vehicle/Player/Powerplay/Entities Render</code>, <code>AlphaBlend Tyre Tracks Render</code>, <code>Water Surface Render</code>, <code>Corona Render</code></td><td>Transparencies composited over the lit scene</td></tr>
+<tr><td>HUD &amp; powerplay</td><td><code>HUD Render</code>, <code>Powerplay highlight render</code></td><td><a href="system-hud.html">HUD</a> + powerplay highlight overlay</td></tr>
+<tr><td>Post-process</td><td><code>Post Processing Bloom/Motion Blur/Edge/DepthOfField/ColorCube/Lens Flare Render</code></td><td>HDR tonemap and screen-space post FX</td></tr>
+</table>
+
+<div class="note">The render runs entirely in big-endian on the RSX through Sony's <strong>Cell GCM</strong>
+low-level driver (<code>cGPUCallbackManager</code>, <code>cRenderSynchronizer</code>). The debug build
+reports the display through a <code>Monitor info</code> dump and supports
+<code>Display Resolution: %d x %d</code> with 4:3 / 16:9 aspect detection.</div>
+
+<h2>The G-Buffer</h2>
+<p>The geometry pass writes into a packed set of render targets. The EBOOT exposes the channel
+layout both as named targets (<code>g_color_0</code>, <code>g_color_1</code>, <code>g_color_2</code>,
+<code>g_depth</code>) and as a debug menu that can disable each MRT write individually
+(<code>Lighting/Debug/GBuffer/a…e</code>). Cross-referencing those gives the channel assignment:</p>
+
+<table>
+<tr><th>MRT</th><th>Contents</th><th>Debug toggle</th><th>Fullscreen visualiser</th></tr>
+<tr><td><code>g_color_0</code></td><td>Albedo (base colour)</td><td><code>GBuffer/a; Disable albedo writes</code></td><td><code>Fullscreen - Albedo</code></td></tr>
+<tr><td><code>g_color_1</code></td><td>"Unlit" (emissive / un-lit colour)</td><td><code>GBuffer/b; Disable unlit writes</code></td><td><code>Fullscreen - Unlit</code></td></tr>
+<tr><td><code>g_color_2</code></td><td>Normals (+ packed data)</td><td><code>GBuffer/c; Disable normal writes</code></td><td><code>Fullscreen - Normals</code></td></tr>
+<tr><td>(packed)</td><td>Motion-blur velocity IDs (<code>gbuffer_MotionID</code>, <code>MotionBlurID</code>)</td><td><code>GBuffer/d; Disable motion blur writes</code></td><td><code>Fullscreen - Motion Vector IDs</code> / <code>Motion Vectors</code></td></tr>
+<tr><td>(packed)</td><td>Specular intensity &amp; power</td><td><code>GBuffer/e; Disable specular writes</code></td><td><code>Fullscreen - Specular Intensity</code> / <code>Specular Power</code></td></tr>
+<tr><td><code>g_depth</code></td><td>Scene depth</td><td>—</td><td><code>Fullscreen - Depth</code></td></tr>
+</table>
+
+<p>This matches the five canonical channels the brief expected: <em>albedo, unlit, normal,
+motion-blur, specular</em>. The screen-space masks add three more visualisers
+(<code>Fullscreen - SSMask0/1/2</code>) — the depth-shadow and particle-shadow masks. The GPU
+also keeps a <code>GBuffer_RT</code> resolve target and a separate
+<code>ss_deferred_gbuffer_globalFace</code> pass for the global directional contribution.</p>
+
+<div class="warn">The G-Buffer lives in RSX <strong>tiled memory</strong> (<code>cTiledMemoryManager</code>,
+"<code>Tiled: %d</code>"). Because the deferred lighting reads depth, the engine explicitly
+<strong>restores depth and ZCull</strong> after the MRT resolve (<code>GBuffer Depth Restore</code>,
+<code>GBuffer ZCull Restore</code>, plus a <code>Z-Cull Reload Helper</code> renderable) — ZCull
+state is destroyed by the resolve and must be rebuilt for the later forward passes.</div>
+
+<h2>SSAO</h2>
+<p>Screen-space ambient occlusion is generated immediately after the MRT resolve
+(<code>GBuffer SSAO</code> → <code>GBuffer Blur</code>, shaders <code>GenerateSSAO</code> and
+<code>BlurSSAO</code>). The QA "lighting/SSAO" debug page exposes the full tuning set:</p>
+
+<table>
+<tr><th>Debug parameter</th><th>Purpose</th></tr>
+<tr><td><code>lighting/SSAO/a; Depth Adjust</code></td><td>Depth bias to avoid self-occlusion</td></tr>
+<tr><td><code>lighting/SSAO/b; Near Distance</code> / <code>c; Far Distance</code></td><td>Distance range over which AO applies</td></tr>
+<tr><td><code>lighting/SSAO/d; Sample Radius XY</code> / <code>e; Sample Radius Z</code></td><td>Screen-space and depth sample radius</td></tr>
+<tr><td><code>lighting/SSAO/f; Visibility Multiplier</code> / <code>g; Visibility Limit</code></td><td>AO strength and clamp</td></tr>
+<tr><td><code>lighting/SSAO/h; Maximum Distance</code></td><td>Far cut-off for the effect</td></tr>
+</table>
+
+<h2>SPU lighting (SPULight)</h2>
+<p>The headline feature of the renderer: <strong>local lights are culled, batched and accumulated
+on the SPUs</strong> rather than on the RSX. The deferred lighting stage splits lights into three
+buckets and reports the split each frame:</p>
+<pre>Light LODs viewport %d, num lights %d, combined %d, full %d, qtr %d, spu %d</pre>
+<p>So a viewport's lights are partitioned into <em>combined</em>, <em>full-res</em>,
+<em>quarter-res</em> and <em>SPU</em> sets. The SPU path is gated behind
+<code>Lighting/LocalLights/SPULight/Enabled</code> and is timed by these markers:</p>
+
+<table>
+<tr><th>SPULight marker</th><th>Meaning</th></tr>
+<tr><td><code>SPULight Build Jobs</code></td><td>Main thread assembles the light <a href="engine-jobstream.html">job chain</a></td></tr>
+<tr><td><code>SPULight Copy Depth</code></td><td>Copies the depth buffer to LS-friendly source (<code>spu_input_depth</code>)</td></tr>
+<tr><td><code>SPULight Stall Kick Jobs</code></td><td>Kicks the SPU job chain</td></tr>
+<tr><td><code>SPULight Stall Global Light</code></td><td>Main thread blocks on the global-light result</td></tr>
+<tr><td><code>SPULight Window of opportunity</code></td><td>Time budget during which SPUs run lighting while the PPU does other work</td></tr>
+</table>
+
+<p>The SPU jobs themselves are named <code>JobLight0…JobLight16</code> (spot/combined lights) and
+<code>JobPointLight1…JobPointLight16</code> (point lights) — i.e. up to 16 of each per chain. Their
+inputs/outputs are the LS buffers <code>spu_input_depth</code>, <code>spu_input_normal</code>,
+<code>spu_output</code> and <code>spu_output_blank</code>. Whatever the SPUs cannot take is rendered
+on the RSX as full- or quarter-res light volumes, using the geometry shaders
+<code>PointLight</code> / <code>PointLight_Low_LOD</code>, <code>SpotLight</code> /
+<code>SpotLight_Low_LOD</code> and the vehicle headlight shader <code>VehicleLight</code> /
+<code>VehicleLight_Low_LOD</code> (with a projected <code>vehicle_light_gobo_tex</code>).</p>
+
+<div class="tip">The combined-light shaders are <em>generated per light count</em>:
+<code>CombinedLight_%dSpot_%dPoint</code> (and <code>…_QtrResLocal</code> / <code>…_Frag1</code>
+variants). This is classic Crayon2 <a href="format-shaders.html">shader patching</a> — the engine
+builds the exact permutation it needs at runtime from the <a href="format-fxc.html">übershader DB</a>
+instead of shipping thousands of pre-compiled programs.</div>
+
+<h3>Lighting register inputs</h3>
+<p>Deferred lighting is driven by a fixed set of shader constants (visible as the
+<code>deferred_lighting_*</code> register names), including
+<code>deferred_lighting_light_pos_range</code>, <code>deferred_lighting_light_dir_angle</code>,
+<code>deferred_lighting_light_specular</code>, <code>deferred_lighting_light_falloffScale</code>,
+<code>deferred_lighting_shadow_fade</code>, <code>deferred_lighting_InvViewProj</code> and the three
+G-Buffer samplers <code>deferred_lighting_Target0/1/2TexPS3</code>. Defaults for the global
+registers live in <a href="data-globalregs.html"><code>default.global_regs</code></a> (e.g.
+<code>light_ambient</code>, <code>light_diffuse</code>, <code>light_specular</code>).</p>
+
+<h2>Shadows &amp; light scattering</h2>
+<p>Shadows use <strong>Cascaded Shadow Maps</strong> (the QA <code>Lighting/CSM</code> page exposes
+"Visualise splits", "Stable projection", "Last split is fixed projection", a "Quality level" and
+per-split frustum-test counters such as <code>Split: %d - %d/%d - Dist: %.1f m</code>). They are
+projected through the screen-space mask passes (<code>SSMask 1st/2nd Depth Shadow</code>,
+<code>shadow_projection</code>, <code>shadow_edge</code>). Volumetric atmospherics are a separate
+deferred pass: <code>DeferredLightScattering_Extinction</code> /
+<code>_Inscattering</code> (and ATV variants) driven by
+<code>lightscattering_inscattering_color_from/to</code>, <code>…_per_metre</code>,
+<code>lightscattering_extinction_per_metre</code> and <code>lightscattering_vLightDir</code>.</p>
+
+<h2>HDR &amp; post-processing</h2>
+<p>The lit scene is rendered in HDR (<code>RenderHDRToHDR</code>; the front-end uses
+<code>RenderHDRToDefault</code>) and resolved down through a tone-mapper and a stack of
+screen-space effects. The order of the post passes (from the profiler timers) is
+<strong>Bloom → Motion Blur → Edge → Depth of Field → ColorCube → Low Res → Lens Flare →
+Particle Flare</strong>. Each effect is data-driven from
+<a href="system-postprocess.html">PostProcessDatabase</a> and the global
+<code>Generic/Params/PostProcess.params</code>. Real default values from those files:</p>
+
+<h3>Tone mapping (HDR)</h3>
+<p>The screen-space tone-mapper (<code>SSToneMapper</code>) does auto-exposure with a configurable
+key and luminance clamp. From the <code>Area Of Effect</code> preset in
+<code>PostProcessDatabase.params</code>:</p>
+<pre>/PostProcessDatabase/Area Of Effect/SSToneMapper:
+    'a; Enabled' = true;
+    'b; White Luminance' = 0.8867188 (0.0, 5.0);
+    'c; Exposure Key' = 0.3789063 (0.0, 5.0);
+    'd; Exposure Speed' = 0.05 (0.0, 1.0);
+    'f; Min Average Luminance' = 0.2 (0.0, 5.0);
+    'g; Max Average Luminance' = 5.0 (0.0, 5.0);
+    'h; Average Luminance Blur Passes' = 4 (0, 10);
+    'i; Filmic Enabled' = false;
+    'j; Filmic Toe' = 1.5  'k; Filmic Shoulder' = 0.3;</pre>
+<p>Auto-exposure measures average scene luminance by repeatedly blurring it down
+(<code>Average Luminance Blur Passes = 4</code>); a <strong>filmic</strong> tone curve (Toe /
+Shoulder) is available but off by default in this preset. The crash/takedown camera preset pushes
+white luminance up to <code>2.3984375</code> and the exposure key to <code>0.5507813</code> for its
+overexposed look.</p>
+
+<h3>Bloom</h3>
+<p>Bloom (<code>SSBloom</code>) is a thresholded bright-pass blurred and added back
+(<code>SSBloomBrightPassExp</code> → <code>SSBloomAdd</code> → <code>Render_BloomWithToneMapping</code>):</p>
+<pre>/PostProcessDatabase/Area Of Effect/SSBloom:
+    'a; Enabled' = true;
+    'b; Threshold' = 0.941406 (0.0, 5.0);
+    'c; Tone_r/g/b' = 2.353 / 2.581 / 3.0 (0.0, 500.0);
+    'd; Blur Passes' = 1 (1, 6);
+    'e; Blur Amount' = 4.0 (1.0, 10.0);
+    'f; Curve' = 1.0 (0.5, 10.0);</pre>
+
+<h3>Motion blur</h3>
+<p>Per-object/camera motion blur (<code>SSMotionBlur</code>) reads the motion-ID channel and a
+camera matrix (<code>ss_deferred_motion_blur_matMotionPS3</code>). Default tuning:</p>
+<pre>/PostProcess/SSMotionBlur:        (global default)
+    'a; Enabled' = true;
+    'b; Velocity Multiplier' = 8.0 (0.0, 10.0);
+    'c; Blur Amount' = 0.5 (0.0, 3.0);</pre>
+<p>The in-game <code>Area Of Effect</code> preset raises the blur amount to <code>1.25</code> for a
+stronger sense of speed.</p>
+
+<h3>Edge post &amp; colour grading</h3>
+<p>The <strong>edge</strong> pass (<code>Post Processing Edge Render</code>) is the stylised ink
+outline. It is <em>on by default</em> in the global chain but <em>off</em> in most per-area presets:</p>
+<pre>/PostProcess/EdgeRender:           (global default)
+    'a; Edge Render Enabled' = true;
+    'b; Edge Render Color Scale' = 4.5 (0.0, 10.0);
+    'c; Edge Render Width' = 0.0023399 (0.0, 1.0);
+    'f; Edge Render Tone' = (0.133, 0.133, 1.0);</pre>
+<p>Colour grading is a 3D LUT lookup (<code>ColorCube</code>, <code>ColorCubeRenderTarget</code>,
+shader <code>Blend_ColorCubes</code>) that blends between two cube textures, e.g.
+<code>color_cube_airport_test_03</code> blended with <code>color_cube_CRASHCAM_airport_test_03</code>.
+The chain finishes with <code>Vignette</code>, a screen <code>Gradient</code>, depth-of-field
+(<code>DoF</code>, focus near/mid/far planes) and the <code>SSLensFlare</code> / <code>SSParticleFlare</code>
+sun and particle flares. A per-area "<code>Overwrite … Configuration</code>" flag set decides which
+effects an area-of-effect trigger overrides versus inherits from the global default.</p>
+
+<div class="note">Each effect can be authored per-camera as a <em>behaviour</em> with start/end keys
+for cinematic transitions: <code>cBloomBehaviorData</code> / <code>cBloomLinearBehaviorData</code>,
+<code>cSSMotionBlurBehaviorData</code>, <code>cDOFBehaviorData</code> /
+<code>cDOFLinearBehaviorData</code>, <code>cColorCubeBehaviorData</code>, all loaded under
+<code>Cameras/Data/%s/…</code>. See <a href="system-cameras.html">Cameras &amp; Director</a>.</div>
+
+<h2>Anti-aliasing</h2>
+<p>The final resolve supports several RSX multisampling modes, selectable in the
+<code>Lighting/Debug</code> menu and named in the shader DB:</p>
+<table>
+<tr><th>Mode</th><th>Shader</th></tr>
+<tr><td>2× Quincunx</td><td><code>MultiSampledAntiAliasing2X_Quincunx</code> (+ alt / colour-only)</td></tr>
+<tr><td>2× Accuview</td><td><code>MultiSampledAntiAliasing2X_Accuview</code></td></tr>
+<tr><td>4×</td><td><code>MultiSampledAntiAliasing4X</code> (+ <code>_offsetMSAA</code>)</td></tr>
+</table>
+<p>The deferred path resolves the MSAA fragments individually
+(<code>Lighting/Debug/e;MSAA Fragment 0</code>, <code>f;MSAA Fragment 1</code>,
+<code>PerformDeferred_fragment_%d</code>, <code>GlobalLightPass_Frag0/1</code>) and projects shadows
+over the second fragment (<code>MSAA Project shadows over Frag 1</code>). MSAA sample offsets are
+tunable via <code>Renderer/MSAAOffset</code> and <code>Renderer/MSAAResolveOffset</code>.</p>
+
+<h2>Crayon2 &amp; the übershader</h2>
+<p>All materials are resolved against a single compiled effect database,
+<code>global_shader_combos.fxc</code> (<strong>2,382,848 bytes ≈ 2.27&nbsp;MB</strong>) with an index
+<code>global_shader_combos.shaders</code> (<strong>194,958 bytes</strong>), both loaded from
+<code>data|global_shader_combos/…</code>. At runtime the <code>cShaderPatcher</code> patches register
+blocks into the right combo (<code>Crayon2_Init</code> → <code>cMaterialComboManagers</code> /
+<code>cMaterialComboFactory</code>); a missing material is logged as
+"<code>Can't find material combo with CRC 0x%08x.. replacing with error combo!</code>". Shader
+patching is itself offloaded to an SPU job (see
+<a href="engine-jobstream.html">Threading &amp; JobStream</a>). See
+<a href="format-fxc.html">FX Compiled (.fxc)</a> and
+<a href="format-shaders.html">Shaders</a> for the on-disk layout.</p>
+
+<blockquote>Source-path evidence: <code>c:/Projects/proj_1/ws_0/Code/libs/Render/Support/Crayon2/Crayon2/Shader/PS3/ShaderPatching.cpp</code>.
+All render strings are plaintext in <code>EBOOT.BIN</code>, so the pipeline structure is
+<span class="badge ok">Confirmed</span>; exact bit-packing of the G-Buffer MRTs is
+<span class="badge theory">Theory</span> (inferred from channel names, not byte-verified).</blockquote>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="engine-jobstream.html">Threading &amp; JobStream</a> — the SPU job system SPULight and shader-patch run on</li>
+  <li><a href="engine-overview.html">Engine Architecture</a> — where the renderer sits in the stack</li>
+  <li><a href="system-postprocess.html">Post-Processing DB</a> — per-area colour grading &amp; post FX</li>
+  <li><a href="system-cameras.html">Cameras &amp; Director</a> — per-camera post-FX behaviours</li>
+  <li><a href="format-fxc.html">FX Compiled (.fxc)</a> &middot; <a href="format-shaders.html">Shaders (.shaders/.shaderinst)</a> &middot; <a href="format-textures.html">Textures</a> &middot; <a href="format-model.html">Model</a></li>
+  <li><a href="data-globalregs.html">Global Registry (.global_regs)</a> — default shader register block</li>
+  <li><a href="format-lights.html">Lights (.lights)</a> — light placement consumed by the lighting passes</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

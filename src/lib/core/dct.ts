@@ -49,6 +49,13 @@ export type ParsedDct = {
 	 * now: header + table are Confirmed, the offset base is Partial.
 	 */
 	stringsResolved: boolean;
+	/**
+	 * Verbatim original bytes. The string-offset base is unverified so the model
+	 * is not a full structural representation; the writer reproduces the file from
+	 * these bytes (byte-exact passthrough). A copy, independent of the caller's
+	 * buffer.
+	 */
+	raw: Uint8Array;
 };
 
 export function parseDct(raw: Uint8Array): ParsedDct {
@@ -91,7 +98,19 @@ export function parseDct(raw: Uint8Array): ParsedDct {
 		stringBlobOffset,
 		strings,
 		stringsResolved: false,
+		raw: raw.slice(), // independent verbatim copy for the byte-exact writer
 	};
+}
+
+/**
+ * Byte-exact passthrough writer. hash→string resolution (the stringOffset base)
+ * is unverified, so we do not rebuild the string blob; instead we reproduce the
+ * verbatim source bytes captured at parse time. writeRaw(parse(b)) === b for any
+ * input. (Editing dictionary strings is out of scope until the offset base is
+ * pinned down.)
+ */
+export function writeDct(model: ParsedDct): Uint8Array {
+	return model.raw.slice();
 }
 
 /**

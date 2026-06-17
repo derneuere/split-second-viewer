@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scoring &amp; Progression — Split/Second RE Wiki</title>
+<meta name="description" content="How Split/Second scores drifting, jumps, overtakes and Powerplays, and how the 24-episode Season campaign, DCB difficulty ramp and car unlocks are driven by data.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="Scoring &amp; Progression" data-category="Game Systems">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>Scoring &amp; Progression</h1>
+<p>Split/Second wraps two related data-driven systems: a moment-to-moment <strong>scoring</strong>
+model (the <code>Prototype/Scoring</code> tuning group, served from <code>Scoring/Scoring.params</code>) that
+converts drifting, jumps, overtakes and high-speed driving into points and Powerplay charge, and a
+campaign <strong>progression</strong> system (the <code>Season</code> XML files) that lays out the 24-episode
+career, its difficulty ramp and the car-unlock economy. Both are plaintext on this devkit build, so the
+structure is fully readable; only the live tuning values in <code>Scoring.params</code> have been zeroed.</p>
+
+<div class="infobox"><div class="ib-title">Scoring &amp; Season</div><table>
+  <tr><th>Category</th><td>Game system / config</td></tr>
+  <tr><th>Tuning group</th><td><code>/Prototype/Scoring</code></td></tr>
+  <tr><th>Score file</th><td><code>Scoring/Scoring.params</code></td></tr>
+  <tr><th>Campaign files</th><td><code>Season/Season.xml</code>, <code>Season/UnlockCriteria.xml</code></td></tr>
+  <tr><th>Engine classes</th><td><code>cScoringManager</code>, <code>cScoring</code></td></tr>
+  <tr><th>Episodes</th><td>24</td></tr>
+  <tr><th>Score to unlock finale</th><td>16 (all episodes)</td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<div class="note">All paths and values on this page were read directly from the loose text files in
+<code>USRDIR/Deferred/</code> and cross-checked against <a href="glossary.html">eboot strings</a>
+(<code>GGU::Scoring</code>, <code>cScoringManagerInput/Output</code>, <code>cScoring::mScore</code>,
+<code>cScoring::NetUpload()</code>). Where a number is load-bearing it is quoted verbatim.</div>
+
+<h2>The scoring model</h2>
+<p>Scoring is owned by <code>cScoringManager</code> (with paired <code>cScoringManagerInput</code> /
+<code>cScoringManagerOutput</code> structures visible in the eboot). The runtime reads its tuning from
+<code>Scoring/Scoring.params</code>, whose header declares the directory <code>/Prototype/Scoring</code>.
+There are three sub-groups — <code>Overtake</code>, <code>Speeding</code> and the root <code>Scoring</code>
+group — plus per-vehicle drift/jump behaviour that lives in the <a href="system-ai.html">AI LDC tables</a>.</p>
+
+<div class="warn"><strong>Devkit caveat.</strong> Every right-hand value in this build's
+<code>Scoring.params</code> is <code>0.0</code>; only the <code>(min, max)</code> slider ranges survive.
+That is normal for a QA build whose live tuning ships compiled into the global registry / save data.
+The <em>fields and their ranges</em> are therefore <span class="badge ok">Confirmed</span>; the shipped
+<em>values</em> are <span class="badge raw">Opaque</span> here.</p>
+
+<h3>Root scoring group</h3>
+<p>The root <code>/Prototype/Scoring</code> group sets the per-second rates for the two skill events
+(drift and jump), the combo system, and the conversion between raw score and Powerplay charge. The
+"best score" and "default … to beat" entries are the per-event targets a player races against (the HUD
+shows <code>BEST JUMP!</code> / <code>BEST DRIFT!</code> when these are exceeded — see
+<a href="system-hud.html">HUD &amp; Frontend</a>).</p>
+
+<table>
+<tr><th>Key</th><th>Range (min, max)</th><th>Meaning</th></tr>
+<tr><td><code>Drift points per second</code></td><td>0.0 – 1000.0</td><td>Score accrued while drifting, per second</td></tr>
+<tr><td><code>Jump points per second</code></td><td>0.0 – 1000.0</td><td>Score accrued while airborne, per second</td></tr>
+<tr><td><code>Best Drift Score</code></td><td>0.0 – 10000.0</td><td>Current best single drift this session</td></tr>
+<tr><td><code>Best Jump Score</code></td><td>0.0 – 10000.0</td><td>Current best single jump this session</td></tr>
+<tr><td><code>Default best-drift score to beat</code></td><td>0.0 – 10000.0</td><td>Seed target before any drift is set</td></tr>
+<tr><td><code>Default best-jump score to beat</code></td><td>0.0 – 10000.0</td><td>Seed target before any jump is set</td></tr>
+<tr><td><code>Combo post-multiplier</code></td><td>0.0 – 10.0</td><td>Multiplier applied to a completed combo</td></tr>
+<tr><td><code>Combo timeout</code></td><td>0.0 – 10.0</td><td>Seconds before an in-progress combo lapses</td></tr>
+<tr><td><code>Points per Powerplay</code></td><td>0.0 – 10000.0</td><td>Score granted for triggering a Powerplay</td></tr>
+<tr><td><code>Score required for powerplay</code></td><td>0.0 – 10000.0</td><td>Threshold to charge one power level</td></tr>
+<tr><td><code>Default power to score ratio</code></td><td>0.0 – 1.0</td><td>Conversion of power-bar fill into score</td></tr>
+<tr><td><code>Rate of increase</code></td><td>0.0 – 1000.0</td><td>Generic accrual rate (combo build-up)</td></tr>
+</table>
+
+<pre>!directory: /Prototype/Scoring
+
+/Prototype/Scoring:
+	'Best Drift Score' = 0.0 (0.0, 10000.0);
+	'Best Jump Score' = 0.0 (0.0, 10000.0);
+	'Combo post-multiplier' = 0.0 (0.0, 10.0);
+	'Combo timeout' = 0.0 (0.0, 10.0);
+	'Drift points per second' = 0.0 (0.0, 1000.0);
+	'Jump points per second' = 0.0 (0.0, 1000.0);
+	'Points per Powerplay' = 0.0 (0.0, 10000.0);
+	'Score required for powerplay' = 0.0 (0.0, 10000.0);
+	'Default power to score ratio' = 0.0 (0.0, 1.0);</pre>
+
+<h3>Overtake scoring</h3>
+<p>The <code>/Prototype/Scoring/Overtake</code> group scores positions taken from rivals. The base award
+(<code>Score awarded for overtaking</code>, 0–1000) is scaled by <em>which place you took</em> — there are
+seven per-position scales, <code>Score scale for taking 1st</code> … <code>7th</code> (each 0.0–1.0), so a
+pass for 1st place can be worth a different amount than a pass for 7th. A <code>Combo multiplier</code>
+(0.0–2.0) stacks rapid overtakes, and a <code>Delay time before next award</code> (0.0–10.0 s) rate-limits
+the bonus. The matching debug-menu paths exist in the eboot
+(<code>Prototype/Scoring/Overtake/Score scale for taking 1st</code> … <code>7th</code>).</p>
+
+<table>
+<tr><th>Key</th><th>Range</th><th>Notes</th></tr>
+<tr><td><code>Score awarded for overtaking</code></td><td>0.0 – 1000.0</td><td>Base points per pass</td></tr>
+<tr><td><code>Score scale for taking 1st … 7th</code></td><td>0.0 – 1.0 each</td><td>Per-target-position multiplier (7 entries)</td></tr>
+<tr><td><code>Combo multiplier</code></td><td>0.0 – 2.0</td><td>Stacks consecutive overtakes</td></tr>
+<tr><td><code>Delay time before next award</code></td><td>0.0 – 10.0</td><td>Cooldown between awards (seconds)</td></tr>
+</table>
+
+<h3>Speeding (high-speed) scoring</h3>
+<p>A tiny <code>/Prototype/Scoring/Speeding</code> group rewards sustained speed: above a
+<code>Min car speed required</code> (0.0–500.0, in the game's speed units) the player earns
+<code>Score awarded per second</code> (0.0–1000.0). This is the points side of the same "driving fast"
+behaviour that also charges the <a href="system-ai.html">AI power bar</a> and triggers the
+<a href="system-postprocess.html">High_Speed post-process</a>.</p>
+
+<div class="tip">The eboot also exposes <code>RaceSetup/Scoring/Disable Drifting Hud Events</code> and
+<code>RaceSetup/Scoring/PilotEpisode/PilotEpisodeScore</code>, and a
+<code>CameraDirector/CameraConditions/Use Drifting Or Jumping Condition</code> hook — drifting/jumping
+state feeds the <a href="system-cameras.html">camera director</a> as well as the score.</div>
+
+<h2>Score &rarr; Powerplay charge</h2>
+<p>Score is the currency that fills the power bar. The root group's <code>Score required for powerplay</code>
+sets the per-level threshold, <code>Points per Powerplay</code> the reward for spending it, and
+<code>Default power to score ratio</code> the baseline conversion. The actual bar mechanics, danger zones
+and trigger logic live in the <a href="system-powerplay.html">Powerplay System</a>; scoring just supplies
+the fuel. The HUD's power bar (driven by <code>DialsPower.gfx</code>) renders this charge — see
+<a href="system-hud.html">HUD &amp; Frontend</a>.</p>
+
+<h2>Season campaign (Season.xml)</h2>
+<p><code>Season/Season.xml</code> defines the single-player career as a flat list of
+<code>&lt;Episode&gt;</code> elements (the in-game "season" framed as a reality-TV show). This build
+contains <strong>24 episodes</strong>, each with four or five <code>&lt;Event&gt;</code> entries and one
+<code>&lt;UnlockableCar&gt;</code>. Episodes 1–24 form the spine of the
+<a href="system-tracks.html">track</a> rotation.</p>
+
+<h3>Episode attributes</h3>
+<table class="struct">
+<tr><th>Attribute</th><th>Type</th><th>Example</th><th>Description</th></tr>
+<tr><td><code>Number</code></td><td>int</td><td>1 … 24</td><td>Episode index / career order</td></tr>
+<tr><td><code>ScoreToUnlockFinale</code></td><td>int</td><td>16</td><td>Star/score total needed to open the episode finale (constant 16 across all episodes here)</td></tr>
+<tr><td><code>VehicleSkillLimit</code></td><td>float</td><td>0.2 → 1.0</td><td>Caps how high-performance a car the player may bring; ramps with progress</td></tr>
+</table>
+
+<p>Each <code>&lt;Event&gt;</code> carries <code>GameMode</code>, <code>Track</code>, <code>SubTrack</code>
+(A–D), <code>Variation</code> (1 or 2) and a <code>DCBModifier</code>. The <strong>DCB modifier</strong>
+("Dynamic Catch-up / Balance") is the per-event difficulty knob — it climbs almost monotonically from
+<code>0.5</code> in Episode 1 to <code>1.0</code> by the late episodes, which is how the campaign tightens
+the <a href="system-difficulty.html">rubber-band AI</a> as you progress. The
+<code>VehicleSkillLimit</code> steps in lockstep: <code>0.2</code> (eps 1–3), <code>0.4</code> (4–8),
+<code>0.6</code> (9–14), <code>0.8</code> (15–19) and <code>1.0</code> (20–24).</p>
+
+<pre>&lt;Episode Number="1" ScoreToUnlockFinale="16" VehicleSkillLimit="0.2"&gt;
+  &lt;Event GameMode="QuickRace"  Track="Downtown"        SubTrack="A" Variation="2" DCBModifier="0.5"/&gt;
+  &lt;Event GameMode="QuickRace"  Track="airport_test_03" SubTrack="A" Variation="2" DCBModifier="0.5"/&gt;
+  &lt;Event GameMode="TimeTrial"  Track="Downtown"        SubTrack="C" Variation="1" DCBModifier="0.5"/&gt;
+  &lt;Event GameMode="QuickRace"  Track="docks"           SubTrack="B" Variation="2" DCBModifier="0.5"/&gt;
+  &lt;UnlockableCar Name="musclecar_03" /&gt;
+&lt;/Episode&gt;</pre>
+
+<p>The game modes referenced across the season are <code>QuickRace</code>, <code>TimeTrial</code>,
+<code>Elimination</code>, <code>Demolition</code>, <code>Nemesis</code>, <code>HelicopterSurvival</code> and
+<code>HelicopterRevenge</code> — exactly the modes documented on <a href="system-gamemodes.html">Game Modes</a>
+and <a href="system-nemesis.html">Nemesis &amp; Heli Modes</a>. Tracks used are <code>Downtown</code>,
+<code>docks</code>, <code>airport_test_03</code>, <code>Graveyard</code>, <code>Powerplant</code> and the
+Nemesis variants <code>nem_graveyard</code>, <code>nem_warehouse</code>, <code>nem_downtown</code> and
+<code>nem_storm</code> (see <a href="system-tracks.html">Tracks &amp; Levels</a>).</p>
+
+<div class="note"><code>Season.xml</code>'s header comment documents three ways to restrict cars per
+episode: an exact <code>&lt;Car Name="Musclecar_01" /&gt;</code>, a class filter
+<code>&lt;Car Type="Musclecar" /&gt;</code> (any car whose name starts with the type), or omit car entries
+entirely to allow <em>all unlocked vehicles</em>. The shipped episodes use the third form.</div>
+
+<h3>UnlockableCar per episode</h3>
+<p>Finishing an episode awards the car named in its <code>&lt;UnlockableCar&gt;</code>. The full
+per-episode reward chain (verbatim from the file):</p>
+
+<table>
+<tr><th>Ep</th><th>Skill limit</th><th>DCB</th><th>UnlockableCar</th></tr>
+<tr><td>1</td><td>0.2</td><td>0.5</td><td><code>musclecar_03</code></td></tr>
+<tr><td>2</td><td>0.2</td><td>0.53</td><td><code>supercar_03</code></td></tr>
+<tr><td>3</td><td>0.2</td><td>0.56</td><td><code>musclecar_04</code></td></tr>
+<tr><td>4</td><td>0.4</td><td>0.58</td><td><code>truck_04</code></td></tr>
+<tr><td>5</td><td>0.4</td><td>0.6</td><td><code>supercar_06</code></td></tr>
+<tr><td>6</td><td>0.4</td><td>0.63</td><td><code>musclecar_02</code></td></tr>
+<tr><td>7</td><td>0.4</td><td>0.66</td><td><code>supercar_02</code></td></tr>
+<tr><td>8</td><td>0.4</td><td>0.68</td><td><code>musclecar_08</code></td></tr>
+<tr><td>9</td><td>0.6</td><td>0.7</td><td><code>supercar_09</code></td></tr>
+<tr><td>10</td><td>0.6</td><td>0.73</td><td><code>musclecar_05</code></td></tr>
+<tr><td>11</td><td>0.6</td><td>0.76</td><td><code>truck_02</code></td></tr>
+<tr><td>12</td><td>0.6</td><td>0.78</td><td><code>musclecar_07</code></td></tr>
+<tr><td>13</td><td>0.6</td><td>0.80</td><td><code>supercar_07</code></td></tr>
+<tr><td>14</td><td>0.6</td><td>0.83</td><td><code>musclecar_10</code></td></tr>
+<tr><td>15</td><td>0.8</td><td>0.86</td><td><code>supercar_05</code></td></tr>
+<tr><td>16</td><td>0.8</td><td>0.88</td><td><code>musclecar_06</code></td></tr>
+<tr><td>17</td><td>0.8</td><td>0.9</td><td><code>supercar_01</code></td></tr>
+<tr><td>18</td><td>0.8</td><td>0.93</td><td><code>truck_01</code></td></tr>
+<tr><td>19</td><td>0.8</td><td>0.96</td><td><code>supercar_08</code></td></tr>
+<tr><td>20</td><td>1.0</td><td>0.98</td><td><code>musclecar_09</code></td></tr>
+<tr><td>21</td><td>1.0</td><td>1.0</td><td><code>unique_02</code></td></tr>
+<tr><td>22</td><td>1.0</td><td>1.0</td><td><code>unique_03</code></td></tr>
+<tr><td>23</td><td>1.0</td><td>1.0</td><td><code>unique_01</code></td></tr>
+<tr><td>24</td><td>1.0</td><td>1.0</td><td><code>unique_04</code></td></tr>
+</table>
+
+<p>The four <code>unique_0x</code> cars are reserved for the final four episodes — these are the special
+<a href="system-vehicles.html">Unique-class</a> vehicles. Note the season uses lower-case car ids
+(<code>musclecar_03</code>) while <code>UnlockCriteria.xml</code> uses capitalised ids
+(<code>Musclecar_01</code>); the lookup is case-insensitive.</p>
+
+<h3>Starting garage &amp; leaderboard points</h3>
+<p>Two tail blocks in <code>Season.xml</code> finish the economy:</p>
+<ul>
+<li><strong><code>&lt;InitialCars&gt;</code></strong> — the garage you start the career with:
+<code>Musclecar_01</code>, <code>Supercar_04</code>, <code>Truck_03</code> (one of each main road class).</li>
+<li><strong><code>&lt;Points&gt;</code></strong> — the finishing-position points table used to rank a field
+of eight. This is the season's points-per-place award:</li>
+</ul>
+
+<table>
+<tr><th>Position</th><th>1st</th><th>2nd</th><th>3rd</th><th>4th</th><th>5th</th><th>6th</th><th>7th</th><th>8th</th></tr>
+<tr><td><strong>Points</strong></td><td>10</td><td>8</td><td>6</td><td>5</td><td>4</td><td>3</td><td>2</td><td>1</td></tr>
+</table>
+
+<h2>Unlock criteria (UnlockCriteria.xml)</h2>
+<p><code>Season/UnlockCriteria.xml</code> is the second half of the car economy: it groups vehicles by
+<em>how</em> they are obtained, independent of the per-episode reward list above.</p>
+
+<table>
+<tr><th>Group</th><th>Entries</th><th>Meaning</th></tr>
+<tr><td><code>&lt;Free&gt;</code></td><td><code>Musclecar_01</code>, <code>Supercar_01</code>, <code>Supercar_04</code>, <code>Musclecar_04</code>, <code>Musclecar_06</code></td><td>Cars available with no requirement</td></tr>
+<tr><td><code>&lt;WinEvents&gt;</code></td><td><code>criteria="1"</code>, <code>"4"</code>, <code>"7"</code>, <code>"10"</code></td><td>Cars unlocked after winning N events; a file comment notes the player may <em>choose</em> which car to unlock at each milestone</td></tr>
+<tr><td><code>&lt;Upgrades&gt;</code></td><td><code>Supercar_01</code> (<code>criteria="3"</code>), <code>Musclecar_04</code> (<code>"3"</code>), <code>Musclecar_02</code> (<code>"3"</code>)</td><td>Upgraded variants gated behind a criteria threshold</td></tr>
+</table>
+
+<pre>&lt;UnlockCriteria&gt;
+  &lt;Free&gt;
+    &lt;Car name="Musclecar_01" /&gt;
+    &lt;Car name="Supercar_01" /&gt;
+    &lt;Car name="Supercar_04" /&gt;
+    &lt;Car name="Musclecar_04" /&gt;
+    &lt;Car name="Musclecar_06" /&gt;
+  &lt;/Free&gt;
+  &lt;WinEvents&gt;
+    &lt;Car criteria="1" /&gt;  &lt;Car criteria="4" /&gt;
+    &lt;Car criteria="7" /&gt;  &lt;Car criteria="10" /&gt;
+  &lt;/WinEvents&gt;
+  &lt;Upgrades&gt;
+    &lt;Car name="Supercar_01" criteria="3" /&gt;
+    &lt;Car name="Musclecar_04" criteria="3" /&gt;
+    &lt;Car name="Musclecar_02" criteria="3" /&gt;
+  &lt;/Upgrades&gt;
+&lt;/UnlockCriteria&gt;</pre>
+
+<div class="warn">The <code>&lt;Free&gt;</code> list and <code>&lt;InitialCars&gt;</code> in
+<code>Season.xml</code> do <em>not</em> match exactly (Free adds <code>Supercar_01</code> /
+<code>Musclecar_04</code> / <code>Musclecar_06</code> and drops <code>Truck_03</code>). This is a devkit/QA
+tuning state — the two files are edited independently — so treat the precise free-roster as
+<span class="badge theory">Theory</span> for the shipped game.</div>
+
+<h2>Online score upload</h2>
+<p>Scores also feed the online leaderboards. The eboot string
+<code>cScoring::NetUpload() - Player %d sending new score = %d</code> shows each player's
+<code>cScoring::mScore</code> is pushed over the <a href="engine-networking.html">Quazal/ATVNet</a>
+duplicated-object layer; the frontend leaderboard movies (<code>FE_leaderboards_*.gfx</code>) then read
+it back. See <a href="system-hud.html">HUD &amp; Frontend</a> for those Scaleform assets.</p>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="data-params.html">.params Tuning System</a> — the text key/value format with slider ranges used by <code>Scoring.params</code></li>
+<li><a href="system-powerplay.html">Powerplay System</a> — what the score charges and how it is spent</li>
+<li><a href="system-difficulty.html">Difficulty &amp; Race Director</a> — the DCB / catch-up system the season ramps</li>
+<li><a href="system-ai.html">AI (SSAI)</a> — drift/jump/draft behaviour and the AI power bar</li>
+<li><a href="system-vehicles.html">Vehicles</a> — the car classes and roster the unlocks reference</li>
+<li><a href="system-gamemodes.html">Game Modes</a> · <a href="system-tracks.html">Tracks &amp; Levels</a> — the modes/tracks each episode schedules</li>
+<li><a href="system-hud.html">HUD &amp; Frontend</a> — score/combo HUD elements and leaderboard UI</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

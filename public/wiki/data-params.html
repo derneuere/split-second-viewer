@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>.params Tuning System — Split/Second RE Wiki</title>
+<meta name="description" content="The plaintext .params key/value tuning format: !directory header, /section groups, 'NNN;desc' = value (min,max) tuning-slider lines, and how it drives the QA tweak menus.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title=".params Tuning System" data-category="Data &amp; Config">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>.params Tuning System</h1>
+<p>
+<code>.params</code> is Split/Second's universal <strong>plaintext tuning format</strong>. Almost every
+game system &mdash; AI, scoring, catch-up, cameras, area-of-effect explosions, game modes &mdash; is
+configured by one or more <code>.params</code> files rather than by hard-coded constants. Each file is a
+flat, human-readable list of named values with a min/max range attached, which lets the in-game
+<a href="build-layout.html">QA debug build</a> expose every value as a live tweak slider. Because the
+files are ASCII, the values quoted on this page are read directly from the shipped data &mdash; this is the
+single most legible format in the whole game.
+</p>
+
+<div class="infobox"><div class="ib-title">.params</div><table>
+  <tr><th>Category</th><td>Text tuning / config</td></tr>
+  <tr><th>Encoding</th><td>ASCII text, LF line ends</td></tr>
+  <tr><th>Header</th><td><code>!directory:</code> line</td></tr>
+  <tr><th>Group marker</th><td><code>/path/section:</code></td></tr>
+  <tr><th>Value form</th><td><code>'key' = val (min, max);</code></td></tr>
+  <tr><th>Count in build</th><td>727 <code>.params</code> files under <code>Deferred/</code></td></tr>
+  <tr><th>Loader strings</th><td><code>Load Params</code>, <code>Load Tweaks</code>, <code>Tweakvars</code></td></tr>
+  <tr><th>Status</th><td><span class="badge ok">Confirmed</span></td></tr>
+</table></div>
+
+<h2>Why a text format</h2>
+<p>
+This is a <strong>devkit / QA debug build</strong> (title id NPXX00575) with <code>qa_menus=true</code>, so the
+data ships loose and un-compiled. Designers edited these files and the runtime parsed them on load; the
+eboot exposes the loader through strings such as <code>Load Params</code> / <code>Load Tweaks</code>,
+<code>Tweakvars</code> and the map-maker variant (<code>Map maker: Loading tweaks…</code> /
+<code>mapmaker.params</code>). A retail disc build would normally bake these into a binary blob, but here you
+can read &mdash; and in the QA menus, edit &mdash; every value.
+</p>
+<div class="note">
+There are <strong>727</strong> <code>.params</code> files under <code>Deferred/</code> in this build. They
+range from a 224-byte stub (<code>GameLogic/Catchup.params</code>) to 50&nbsp;KB+ per-game-mode setups, and
+appear everywhere from <code>SSAI/</code> driving tables to per-camera behaviour files.
+</div>
+
+<h2>File anatomy</h2>
+<p>
+Every file opens with a <code>!directory:</code> header that names the logical tree the file populates, then
+one or more <strong>section groups</strong>. A group is a path ending in a colon, followed by tab-indented
+<strong>value lines</strong>. The complete <code>GameLogic/GameplayParameters.params</code> file shows the
+whole grammar in one screen:
+</p>
+<pre>!directory: /GameplayParameters
+
+/GameplayParameters/AI Powerbar/Drafting:
+	'000;Minimum distance from player to start gaining powerbar' = 5.0 (1.0, 10.0);
+	'001;Maximum angle difference with player to start gaining powerbar' = 5.0 (0.0, 90.0);
+	'002;Units gained per second' = 4.0 (0.0, 100.0);
+
+/GameplayParameters/AI Powerbar/Drifting:
+	'000;Units gained per second' = 14.0 (0.0, 100.0);
+
+/GameplayParameters/LDC:
+	'000;Speed Intervals' = 60.0 (1.0, 300.0);
+	'001;Initial Speed' = 60.0 (1.0, 300.0);
+	'002;Final Speed' = 180.0 (1.0, 300.0);
+
+/GameplayParameters/Powerplays/Dynamic Trigger:
+	'000;Use the new dynamic trigger system implementation' = true;
+	'001;Extra extent to add on the danger zones' = 0.0 (0.0, 50.0);
+
+/GameplayParameters/Teleporting:
+	'000;Teleport distance behind the player' = 100.0 (0.0, 5000.0);
+	'001;Teleport distance ahead the player' = 200.0 (0.0, 5000.0);</pre>
+
+<h3>The <code>!directory:</code> header</h3>
+<p>
+The first non-blank line is always <code>!directory: /SomePath</code>. The path is a <em>virtual</em>
+location in the unified tweak tree &mdash; it does not have to match the file's location on disk. For example
+<code>GameLogic/Catchup.params</code> declares <code>!directory: /Prototype/Catchup</code>, and a
+per-game-mode file such as <code>GameLogic/GameModes/Elimination.params</code> declares
+<code>!directory: /RaceSetup</code>. Several different files can therefore contribute to the same
+<code>/RaceSetup</code> namespace, which is how a single game mode is assembled from a base file plus
+overrides.
+</p>
+
+<h3>Section groups</h3>
+<p>
+Each <code>/path/section:</code> line begins a group; everything indented under it belongs to that group
+until the next group line. Groups nest by slash, e.g.
+<code>/RaceSetup/Logic/Respot/TrackCurvature:</code>, so the namespace can be arbitrarily deep. A group whose
+path is the bare directory root (e.g. <code>/AI/LDC/AISupercar_LDC:</code>) holds the "top level" values for
+that file.
+</p>
+
+<h2>Value forms</h2>
+<p>
+A value line is <code>key = value;</code>, optionally followed by a <code>(min, max)</code> tuning range. The
+key is either a quoted human label or a bare identifier. Across the 727 files the following value forms
+appear &mdash; all verified against shipped data.
+</p>
+
+<table>
+<tr><th>Form</th><th>Example (real)</th><th>Meaning</th></tr>
+<tr><td>Float + range</td><td><code>'002;Units gained per second' = 4.0 (0.0, 100.0);</code></td><td>Scalar float, slider clamped to [min,max]</td></tr>
+<tr><td>Integer + range</td><td><code>'Round time up to nearest' = 5 (0, 20);</code></td><td>Integer value, slider range</td></tr>
+<tr><td>Boolean</td><td><code>'000;Use the new dynamic trigger system implementation' = true;</code></td><td><code>true</code>/<code>false</code> toggle, no range</td></tr>
+<tr><td>Enum / string</td><td><code>'Rank By' = 'Distance Raced';</code> &nbsp; <code>'Difficulty parameters file' = Elimination;</code></td><td>Named choice; quoted if it contains spaces</td></tr>
+<tr><td>Vector / array</td><td><code>CurvatureVsSpeed = [ 30.0 27.0 23.0 19.0 13.0 9.0 6.0 4.0 3.0 3.0 ] (0.0, 150.0);</code></td><td>Whitespace-separated list in square brackets</td></tr>
+<tr><td>Action button</td><td><code>'@Force All To Finish' = ':Force All To Finish:action:'Force All To Finish' ';</code></td><td>A clickable QA-menu command, keyed with <code>@</code></td></tr>
+<tr><td>Sentinel "unset"</td><td><code>Timeout = -2147483648 (0, 300);</code></td><td><code>INT_MIN</code> used as a "not configured" marker</td></tr>
+</table>
+
+<h3>The <code>'NNN;label'</code> key convention</h3>
+<p>
+Many keys are quoted strings of the form <code>'NNN;Human description'</code>, where <code>NNN</code> is a
+zero-padded ordinal and the text after the semicolon is the designer-facing label. The ordinal is what the
+<em>code</em> reads (it is a positional index into a struct), while the description is purely for the tweak
+UI. This is the same grammar the eboot's debug menus use &mdash; e.g.
+<code>Lighting/Debug/GBuffer/a;Disable albedo writes</code> or
+<code>TrackDamage/Debug/i; Intensity</code> &mdash; just with a numeric ordinal instead of a hotkey letter.
+Other files skip the ordinal entirely and use the full label as the key (e.g.
+<code>'Max torque gain' = 0.0 (0.0, 1.0);</code> in <code>Catchup.params</code>), or use bare identifiers
+with no quotes (<code>HudMessageTime = 2.5 (0.0, 10.0);</code>).
+</p>
+<div class="tip">
+The <code>(min, max)</code> pair is <strong>tooling metadata</strong>, not gameplay data &mdash; it only bounds
+the QA slider. Floats are written in plain decimal and frequently show the artefacts of 32-bit storage, e.g.
+<code>1.5700001</code> (&pi;/2), <code>0.6133329</code>, <code>1.2999999</code>. Treat those as the
+designer's round number rounded by float precision.
+</div>
+
+<h2>Worked example: an SSAI LDC table</h2>
+<p>
+The clearest demonstration of the format driving a real system is a <strong>Low-level Driving Config</strong>
+(LDC). <code>SSAI/AISupercar_LDC.params</code> declares <code>!directory: /AI/LDC/AISupercar_LDC</code> and
+contains one group per speed band &mdash; <code>Speed 60.000000</code>, <code>Speed 120.00000</code>,
+<code>Speed 180.00000</code> &mdash; each with the same 20 indexed variables. The values below are the real
+ones for the supercar class; note how steering aggressiveness rises with speed (variable 001, "Turn angle to
+start braking", falls from 0.61 at 60 to 0.107 at 180):
+</p>
+<table>
+<tr><th>Idx</th><th>Label</th><th>Speed 60</th><th>Speed 120</th><th>Speed 180</th></tr>
+<tr><td>000</td><td>Max angle for steering set to 1</td><td>0.75</td><td>0.3</td><td>0.2</td></tr>
+<tr><td>001</td><td>Turn angle to start braking</td><td>0.61</td><td>0.416667</td><td>0.107</td></tr>
+<tr><td>002</td><td>Multiplier to throttle when accelerating</td><td>0.3499999</td><td>1.0</td><td>1.0</td></tr>
+<tr><td>003</td><td>Multiplier to brake when slowing down</td><td>0.9499999</td><td>0.1</td><td>1.0</td></tr>
+<tr><td>004</td><td>Distance to look ahead on the track for steering</td><td>30.0</td><td>36.617188</td><td>44.558594</td></tr>
+<tr><td>008</td><td>Drift: Look ahead</td><td>30.0</td><td>95.058594</td><td>121.22656</td></tr>
+<tr><td>019</td><td>Lap Time</td><td>0.0</td><td>0.0</td><td>0.0</td></tr>
+</table>
+<p>
+The speed bands themselves come from <code>GameplayParameters.params</code> &rarr; <code>/GameplayParameters/LDC</code>:
+<code>Initial Speed = 60</code>, <code>Final Speed = 180</code>, <code>Speed Intervals = 60</code>. See
+<a href="system-ai.html">AI (SSAI)</a> for how the LDC tables are sampled at runtime.
+</p>
+
+<h2>How it drives the QA tweak menus</h2>
+<p>
+On load the runtime parses each <code>.params</code> file and grafts its <code>!directory:</code> tree into a
+global tweak hierarchy ("Tweakvars"). Every value line becomes a node: the key supplies the label, the value
+supplies the current setting, and <code>(min,max)</code> supplies the slider bounds. Booleans become
+checkboxes; enums become drop-downs; <code>@</code>-keyed entries become buttons that fire the encoded
+<code>:Label:action:'…'</code> command. The same machinery backs the in-eboot debug menus, whose paths share
+the identical grammar:
+</p>
+<pre>CameraDirector/Debug/GameEventSequences/Intro
+Lighting/Debug/GBuffer/a;Disable albedo writes
+TrackDamage/Debug/g; Damage Radius</pre>
+<p>
+The QA menu is reachable through the <code>Cheats/qa_menus</code> path seen in the eboot. Because the tree is
+rebuilt from the files, designers could change a value, save, and reload &mdash; the loader strings
+<code>Load Params</code> / <code>Load Tweaks</code> sit right next to the <code>cPowerplayManager (load)</code>
+init code.
+</p>
+
+<h2>Where .params files live</h2>
+<table>
+<tr><th>Area</th><th>Representative files</th><th>System</th></tr>
+<tr><td><code>GameLogic/</code></td><td><code>GameplayParameters.params</code>, <code>Catchup.params</code>, <code>RaceSetupStatic.params</code>, <code>GameModes/*.params</code></td><td><a href="system-gamemodes.html">Game Modes</a>, <a href="system-difficulty.html">Difficulty</a></td></tr>
+<tr><td><code>SSAI/</code></td><td><code>AI*car_*_LDC.params</code>, <code>Default_LDC.params</code>, <code>EvolutionConfig.params</code></td><td><a href="system-ai.html">AI (SSAI)</a></td></tr>
+<tr><td><code>Scoring/</code></td><td><code>Scoring.params</code></td><td><a href="system-scoring.html">Scoring &amp; Progression</a></td></tr>
+<tr><td><code>AreaOfEffects/</code></td><td><code>EffectParams.params</code>, <code>GlobalParams.params</code>, <code>HandlingEffects.params</code></td><td><a href="system-areaofeffects.html">Area of Effects</a></td></tr>
+<tr><td><code>Cameras/</code></td><td><code>Params/*.params</code> plus thousands of <code>NNNN.params</code> behaviour leaves</td><td><a href="system-cameras.html">Cameras &amp; Director</a></td></tr>
+<tr><td><code>Vehicles/Compositing/</code></td><td><code>GameCompositingInfo.params</code>, <code>AchievementsDatabase.params</code></td><td><a href="system-vehicles.html">Vehicles</a></td></tr>
+<tr><td><code>PostProcessDatabase/</code></td><td><code>PostProcessDatabase.params</code></td><td><a href="system-postprocess.html">Post-Processing DB</a></td></tr>
+</table>
+
+<div class="warn">
+<code>.params</code> is <em>not</em> the same as <a href="data-globalregs.html">default.global_regs</a>. The
+global registry is a compiled <em>binary</em> file (magic <code>FREG</code>) holding shader register defaults;
+<code>.params</code> is the editable text tuning layer used by gameplay systems. The two are unrelated formats
+despite both being "config".
+</div>
+
+<h2>Open questions</h2>
+<ul>
+<li>Whether the parser is whitespace-significant (tabs vs spaces) or tolerant &mdash; all shipped files use a
+single tab for indentation, so this could not be tested from data alone.</li>
+<li>The exact action-command grammar inside <code>@</code> entries (<code>:Label:action:'…'</code>) &mdash; the
+trailing payload appears to re-state the label, but other verbs besides <code>action</code> may exist.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+<li><a href="data-globalregs.html">Global Registry</a> &mdash; the binary shader-register defaults file</li>
+<li><a href="data-xml.html">XML Conventions</a> &mdash; the other text config format, often referencing <code>.params</code> leaves</li>
+<li><a href="data-catnip.html">Catnip Entity System</a> &mdash; entity/timeline data that <code>.params</code> tunes</li>
+<li><a href="system-ai.html">AI (SSAI)</a> &mdash; consumer of the LDC tables shown above</li>
+<li><a href="system-gamemodes.html">Game Modes</a> and <a href="system-difficulty.html">Difficulty &amp; Race Director</a> &mdash; assembled from <code>/RaceSetup</code> params</li>
+<li><a href="build-layout.html">Build &amp; File Layout</a> &mdash; why this build ships loose, editable data</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>

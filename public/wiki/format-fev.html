@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FMOD Events (.fev) — Split/Second RE Wiki</title>
+<meta name="description" content="FMOD Designer FEV1 event projects: project header, event-group/category tree, wavebank references, and how Split/Second binds events to .fsb samples.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-title="FMOD Events (.fev)" data-category="Formats · Audio & Video">
+<div id="topbar">
+  <button id="menu-toggle" aria-label="Menu">☰</button>
+  <a class="brand" href="index.html"><b>Split/Second</b> · RE Wiki</a>
+  <span class="spacer"></span>
+  <a href="index.html">Home</a>
+</div>
+<div id="layout">
+  <aside id="sidebar"><input id="search" type="search" placeholder="Search the wiki…" autocomplete="off"><nav id="nav"></nav></aside>
+  <main>
+    <div class="breadcrumb"></div>
+    <article>
+<!-- ===== BEGIN PAGE CONTENT (replace everything between BEGIN/END) ===== -->
+<h1>FMOD Events (.fev)</h1>
+<p>An <code>.fev</code> file is an <strong>FMOD Designer event project</strong> — the metadata side of the audio system that the in-house <a href="engine-audio.html">LLAudio2 EventManager</a> loads at runtime. It defines event groups, categories, mixer parameters and the wavebank references that point into the matching <a href="format-fsb.html">.fsb</a> sample bank. Every <code>.fev</code> in Split/Second is the <strong>FEV1</strong> revision emitted by FMOD&nbsp;Ex&nbsp;4.28's Designer tool.</p>
+
+<div class="infobox"><div class="ib-title">.fev</div><table>
+  <tr><th>Category</th><td>Audio event project</td></tr>
+  <tr><th>Middleware</th><td>FMOD Ex 4.28 (Designer)</td></tr>
+  <tr><th>Magic</th><td><code>46 45 56 31</code> ("FEV1")</td></tr>
+  <tr><th>Version</th><td><code>00 00 3a 00</code> (constant)</td></tr>
+  <tr><th>Strings</th><td>length-prefixed (uint32 LE + chars + NUL)</td></tr>
+  <tr><th>Twin</th><td><a href="format-fsb.html">.fsb</a> sample bank (same folder/name)</td></tr>
+  <tr><th>Count</th><td>73 projects under <code>Deferred/Audio/</code></td></tr>
+  <tr><th>Status</th><td><span class="badge partial">Partial</span></td></tr>
+</table></div>
+
+<h2>Role &amp; pairing</h2>
+<p>The <code>.fev</code> never contains audio samples; it only describes <em>events</em> (named, parameterised sounds) and the <em>categories</em> that mix them. At load the game opens the project, then opens the sibling <code>.fsb</code> it was compiled against. The FMOD error string baked into the eboot — <em>"FSB mismatches the FEV it was compiled with…"</em> — confirms the two files are version-locked. Gameplay then triggers events by name; the eboot exposes plenty of these (<code>fmod_event_name</code>, <code>trigger_fmod_event</code>, <code>Menu/Menu/hud_line_pass_lap_03</code>, <code>Surface/Landing/LandImpact</code>, <code>Tonic/Tonic/Engine</code>).</p>
+
+<div class="note">Some events resolve to a path like <code>Music/MusicLooped.fsb.fev</code> (a doubled extension visible in the eboot), i.e. the event name itself carries the bank reference. Reverb/group routing lives in the dedicated <code>Global/ReverbAndGroups.fev</code> project.</div>
+
+<h2>File header (FEV1)</h2>
+<p>The header is short and was decoded by diffing the tiny <code>ReverbAndGroups.fev</code> against <code>Menu.fev</code>. The 4-byte version tag is constant; the project name is the first length-prefixed string.</p>
+
+<table class="struct">
+<thead><tr><th>Offset</th><th>Length</th><th>Type</th><th>Name</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td>0x00</td><td>0x4</td><td>char[4]</td><td>magic</td><td>Always <code>"FEV1"</code> (<code>46 45 56 31</code>).</td></tr>
+<tr><td>0x04</td><td>0x4</td><td>uint32_t</td><td>version</td><td>FMOD Designer FEV version. Constant <code>00 00 3a 00</code> across all 73 projects (verified by dumping the first 8 bytes of every <code>.fev</code>; revision 0x3A, matching the 4.28 toolchain).</td></tr>
+<tr><td>0x08</td><td>0x4</td><td>uint32_t</td><td>bankHeaderSize / offset</td><td>Size word preceding the wavebank list (e.g. <code>0x04b0</code> in Menu, <code>0x24</code> in ReverbAndGroups).</td></tr>
+<tr><td>0x0C</td><td>0x4</td><td>uint32_t</td><td>field_0C</td><td>Second size/offset word (purpose not fully pinned; tracks header growth).</td></tr>
+<tr><td>0x10</td><td>0x4</td><td>uint32_t (LE)</td><td>nameLen</td><td>Length of the project name <em>including</em> the NUL terminator. <code>0x05</code> for "Menu", <code>0x10</code> for "ReverbAndGroups".</td></tr>
+<tr><td>0x14</td><td>nameLen</td><td>char[]</td><td>projectName</td><td>Project name, NUL-terminated. Matches the file's base name.</td></tr>
+<tr><td>…</td><td>var</td><td>—</td><td>wavebank list</td><td>Count + length-prefixed wavebank names (the FSBs this project references).</td></tr>
+<tr><td>…</td><td>var</td><td>—</td><td>category tree</td><td>Length-prefixed category names + per-category float volume (1.0 default) and routing.</td></tr>
+<tr><td>…</td><td>var</td><td>—</td><td>event groups / events</td><td>Nested event groups, each holding events with GUIDs, parameter ranges and layers.</td></tr>
+</tbody>
+</table>
+
+<h3>String encoding</h3>
+<p>Every string in an FEV is stored as a 32-bit little-endian length (counting the NUL) followed by the bytes and the terminator. This is why <code>"master"</code> appears as <code>07 00 00 00 6d 61 73 74 65 72 00</code> (len 7 = 6 chars + NUL). Recognising this pattern makes the whole tree walkable even before every field is typed.</p>
+
+<h2>Category / group tree</h2>
+<p>After the project name comes the category list — these are Split/Second's audio mixer buses, each carrying a default volume of <code>1.0f</code> (<code>00 00 80 3f</code>). The <strong>full</strong> bus list lives in <code>Global/ReverbAndGroups.fev</code>; individual project FEVs carry only the <em>subset</em> of buses they actually use (e.g. <code>Menu.fev</code> contains just <code>master</code>, <code>music</code>, <code>HUD</code> and <code>_Template</code>). The complete in-file order in <code>ReverbAndGroups.fev</code> is:</p>
+<table>
+<thead><tr><th>Category (bus)</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td>master</td><td>Root bus.</td></tr>
+<tr><td>music</td><td>Dynamic race music.</td></tr>
+<tr><td>PlayerEngine / CPUEngine</td><td>Player vs. opponent engine mix (fed by <a href="format-tonic.html">Tonic</a>).</td></tr>
+<tr><td>Swooshes</td><td>Whoosh / air movement SFX.</td></tr>
+<tr><td>Surfaces</td><td>Tyre / road surface SFX.</td></tr>
+<tr><td>Powerplays</td><td>Powerplay trigger audio.</td></tr>
+<tr><td>Collisions</td><td>Crash / impact audio.</td></tr>
+<tr><td>HUD</td><td>Frontend &amp; HUD cues (Menu events route here).</td></tr>
+<tr><td>Ambience</td><td>Environmental beds.</td></tr>
+<tr><td>Particles</td><td>Particle-emitter SFX.</td></tr>
+<tr><td>Spot_Ambience</td><td>Localised ambience spots.</td></tr>
+<tr><td>HyperReal</td><td>Stylised "hyper-real" pass (slow-mo / cinematic ducking).</td></tr>
+<tr><td>Speech</td><td>Announcer / co-driver lines.</td></tr>
+<tr><td>_Template</td><td>Template group carrying a GUID + default DSP settings, reused by Designer.</td></tr>
+</tbody>
+</table>
+<div class="note">Earlier drafts listed <code>Scrapes</code> and <code>Menu</code> as mixer buses — neither appears in the category list of <code>ReverbAndGroups.fev</code>. "Menu" is a project/event-group name whose events route to the <code>HUD</code> bus; surface-scrape sounds sit under <code>Surfaces</code>. The bus names above were extracted directly from the file's string table.</div>
+
+<h2>Hex excerpt — ReverbAndGroups.fev</h2>
+<p>The smallest project (3,752 bytes) shows the header and the start of the category tree cleanly. Note the project name is stored <em>twice</em>: once as the project name at 0x14, and again at 0x34 as the (single) wavebank name — the two length-prefixed copies are byte-for-byte identical here:</p>
+<pre class="hex">000000  46 45 56 31 00 00 3a 00 24 00 00 00 2c 00 00 00  FEV1..:.$...,...   magic | ver 0x3a | sizes 0x24 / 0x2c
+000010  10 00 00 00 52 65 76 65 72 62 41 6e 64 47 72 6f  ....ReverbAndGro   nameLen=0x10 | "ReverbAndGro
+000020  75 70 73 00 01 00 00 00 00 02 00 00 00 00 00 00  ups.............   ups\0" | wavebank count=1 …
+000030  10 00 00 00 52 65 76 65 72 62 41 6e 64 47 72 6f  ....ReverbAndGro   wavebank[0] name len=0x10 "ReverbAndGro
+000040  75 70 73 00 07 00 00 00 6d 61 73 74 65 72 00 00  ups.....master..   ups\0" | len7 "master\0"
+000050  00 80 3f 00 00 00 00 00 00 00 00 00 00 00 00 0d  ..?.............   vol=1.0f | …
+000060  00 00 00 06 00 00 00 6d 75 73 69 63 00 00 00 80  .......music....   len6 "music\0" | vol …
+000070  3f 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00  ?...............   …1.0f tail…
+000080  00 0d 00 00 00 50 6c 61 79 65 72 45 6e 67 69 6e  .....PlayerEngin   len13 "PlayerEngin
+000090  65 00 00 00 80 3f 00 00 00 00 00 00 00 00 00 00  e....?..........   e\0" | vol=1.0f</pre>
+<p>Reading the length prefixes (7, 6, 13 …) and seeing each followed by an ASCII bus name and a <code>1.0f</code> volume is what confirms both the string encoding and the category-volume layout.</p>
+
+<h2>What is still open</h2>
+<div class="warn">The header is well understood and the category/wavebank tree is readable, but the deeper <strong>event records</strong> (per-event parameter curves, layer/sound-def graphs, DSP chains) are only partially mapped. The <code>_Template</code> block is followed by a named 3D/reverb property schema — the string table exposes the field names directly: <code>LowPassMix</code>, <code>ReverbMix</code>, <code>InnerRadius</code>, <code>OuterRadius</code>, <code>VolumeFalloffResponse</code>, <code>VolumeAtInnerRadius</code>/<code>OuterRadius</code>, <code>LowPassFalloffResponse</code>, <code>ReverbFalloffResponse</code>, <code>ReverbWetMixAtInnerRadius</code>/<code>OuterRadius</code>, <code>OmniAtInnerRadius</code>/<code>OuterRadius</code>, the cone group (<code>ConeAngle</code>, <code>ConeInnerAngle</code>, <code>ConeOuterAngle</code>, <code>ConeInnerVolume</code>, <code>ConeOuterVolume</code>, <code>ConeInnerLowPass</code>, <code>ConeOuterLowPass</code>), <code>WorldHeadBlend</code>, <code>HeadPositionX</code>/<code>Y</code>, <code>DopplerShiftRange</code>, <code>ProjectionDistance</code>, and the flags <code>Force2dPanning</code>, <code>ForceOriginPanning</code>, <code>ForceHeadShot</code>, <code>AllowVirtual</code>. These are the per-event 3D positioning/rolloff parameters; their binary value layout (vs. just the name strings) is what is still to be pinned down, along with full event-graph decoding.</div>
+
+<h2>How we know</h2>
+<ul>
+  <li><b>Magic / version:</b> <code>FEV1</code> + <code>00 00 3a 00</code> are byte-identical across Menu, Music, Speech, Tonic, Collision, Hypercar_03 and ReverbAndGroups.</li>
+  <li><b>String format:</b> the (len, bytes, NUL) pattern reproduces exactly for "Menu" (len 5), "ReverbAndGroups" (len 16) and every category name.</li>
+  <li><b>Category meaning:</b> bus names like <code>PlayerEngine</code>, <code>HyperReal</code>, <code>Powerplays</code> match the game's audio subsystems and the eboot's <code>DynamicMixer.xml</code> / <code>PatchBay.xml</code> references.</li>
+  <li><b>Pairing:</b> the eboot's FMOD "FSB mismatches the FEV" error proves the version-locked FEV↔FSB relationship.</li>
+</ul>
+
+<h2>Related pages</h2>
+<ul>
+  <li><a href="format-fsb.html">FMOD Sound Banks (.fsb)</a> — the sample data this project references.</li>
+  <li><a href="format-tonic.html">Tonic (.tonic / .tonic2)</a> — granular engine model behind the PlayerEngine/CPUEngine buses.</li>
+  <li><a href="engine-audio.html">Audio Engine</a> — EventManager, DynamicMixer, reverb routing.</li>
+  <li><a href="data-xml.html">XML Conventions</a> — <code>DynamicMixer.xml</code>, <code>PatchBay.xml</code>, <code>Particles.xml</code> source data.</li>
+</ul>
+<!-- ===== END PAGE CONTENT ===== -->
+    </article>
+    <footer>Split/Second reverse-engineering wiki · built from a devkit/QA debug build (NPXX00575) · fan-made documentation.</footer>
+  </main>
+  <aside id="toc"></aside>
+</div>
+<script src="assets/nav.js"></script>
+<script src="assets/wiki.js"></script>
+</body>
+</html>
