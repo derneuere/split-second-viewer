@@ -1,21 +1,26 @@
 # Split/Second Steward
 
-A browser-based, **read-only MVP** editor for **Split/Second** (PS3, big-endian)
-game data. It opens game archives and loose files into a **Workspace**, browses a
-unified typed **Resource** tree, and decodes + visualizes members. It is the
-Split/Second equivalent of the Burnout `paradise-bundle-steward` editor, pruned
-and adapted to Split/Second's container and platform.
+A browser-based editor for **Split/Second** (PS3, big-endian) game data. It opens
+game archives and loose files into a **Workspace**, browses a unified typed
+**Resource** tree, decodes + visualizes members, and **writes 23 formats back
+byte-for-byte**. It is the Split/Second equivalent of the Burnout
+`paradise-bundle-steward` editor, pruned and adapted to Split/Second's container
+and platform.
 
-> Status: registry + viewport dispatcher + **real `.ark` archive extraction**
-> integrated. **31 resource handlers** are registered and CLI-validated against
-> real devkit data; the Workspace opens a `.ark` pair, routes every member to a
-> bespoke viewer (or the Hex fallback) by sniffed type, and supports per-member
-> **Download** + per-archive **Extract all**. The `.ark` extractor is validated
-> **byte-for-byte** against the authoritative Python tool (`_tools/ark_extract_full.py`)
-> — all 864 written members of `airport_test_03` match exactly. The four gates —
-> `tsc`, `build`, `test:run` (34 files / 208 tests), `lint` — are green. The one
-> remaining RE item is the full `nameHash` crack (members not in the Rosetta
-> corpus stay `<hash8>.<ext>` — see [Naming](#naming-the-ark-namehash)).
+> Status: registry + viewport dispatcher + **real `.ark` archive extraction** +
+> **byte-exact write-back** + an **embedded RE wiki**. **32 resource handlers** are
+> registered and CLI-validated against real devkit data; **23 of them round-trip
+> write-back byte-for-byte** (see [Supported formats](#supported-formats)). The
+> Workspace opens a `.ark` pair, routes every member to a bespoke viewer (or the
+> Hex fallback) by sniffed type, supports per-member **Download** + per-archive
+> **Extract all**, and ships the Split/Second reverse-engineering wiki inline at
+> **`/docs`** (see [Embedded docs](#embedded-docs)). The `.ark` extractor is
+> validated **byte-for-byte** against the authoritative Python tool
+> (`_tools/ark_extract_full.py`) — all 864 written members of `airport_test_03`
+> match exactly. The four gates — `tsc`, `build`, `test:run` (36 files / 280
+> tests), `lint` — are green. The one remaining RE item is the full `nameHash`
+> crack (members not in the Rosetta corpus stay `<hash8>.<ext>` — see
+> [Naming](#naming-the-ark-namehash)).
 
 ## Platform & formats
 
@@ -39,32 +44,37 @@ and adapted to Split/Second's container and platform.
 
 ## Supported formats
 
-31 `ResourceHandler`s are registered (`src/lib/core/registry/index.ts`). Each is
+32 `ResourceHandler`s are registered (`src/lib/core/registry/index.ts`). Each is
 routed by **extension** when loose, or **magic bytes** when it appears as an
-unresolved `.ark` member. `Caps` = `R` (read/parse) and `W` (write-back, i.e. a
-byte round-trip via the CLI `roundtrip`/`stress` commands); read-only handlers
-decode but do not yet re-emit.
+unresolved `.ark` member. `Caps` = `R` (read/parse) and `W` (write-back). A `W`
+handler is **byte-exact round-trip-capable**: `writeRaw(parseRaw(bytes)) === bytes`
+for every real devkit file (a registry contract test enforces that every `W`
+handler ships a `writeRaw`, and the per-format suites prove the byte equality
+against the devkit corpus). **23 of the 32 handlers are `R W`** — verified here
+against real files, e.g. `crcs` over 1703 files, `splitlength` and `linkorigins`
+over 18 files each, all 0 mismatches. Read-only handlers decode but do not yet
+re-emit.
 
 | Key | Format | Category | Extension(s) | Caps | Viewer |
 | --- | --- | --- | --- | --- | --- |
 | `crcs` | Texture CRC List | Data | `.crcs` | R W | Config |
-| `splitlength` | Route Split Lengths | World | `.splitlength` | R | World |
-| `linkorigins` | Route Link Origins | World | `.linkorigins` | R | World |
-| `sideways` | Route Sideways Links | World | `.sideways` | R | World |
-| `checkpoints` | Route Checkpoints | World | `.checkpoints` | R | World |
+| `splitlength` | Route Split Lengths | World | `.splitlength` | R W | World |
+| `linkorigins` | Route Link Origins | World | `.linkorigins` | R W | World |
+| `sideways` | Route Sideways Links | World | `.sideways` | R W | World |
+| `checkpoints` | Route Checkpoints | World | `.checkpoints` | R W | World |
 | `track` | TrackTivity Telemetry | World | `.track` | R W | World |
 | `nis` | TrackLogic Route Manifest | World | `.nis` | R W | World |
 | `gbx` | Light-Rig Overrides | World | `.gbx` | R W | World |
 | `entities` | Catnip Entities | World | `.entities` | R W | World |
 | `timelineInfo` | Timeline-Particle Index | World | `.timelineinfo` | R W | World |
 | `logicinfo` | Track Logic Info | World | `.logicinfo` | R W | World |
-| `sectorInfo` | Sector Partition | World | `.sectorinfo` | R | World |
+| `sectorInfo` | Sector Partition | World | `.sectorinfo` | R W | World |
 | `names` | Name Table | Data | `.names` | R W | Config |
 | `filenames` | File Name Table | Data | `.filenames` | R W | Config |
-| `parts` | Vehicle Part Hierarchy | Data | `.parts` | R | Config |
-| `dct` | Localisation Dictionary | Data | `.dct` | R | Config |
-| `global_regs` | Global Shader Registers | Data | `.global_regs` | R | Config |
-| `params` | Tuning Params | Data | `.params` | R | Config |
+| `parts` | Vehicle Part Hierarchy | Data | `.parts` | R W | Config |
+| `dct` | Localisation Dictionary | Data | `.dct` | R W | Config |
+| `global_regs` | Global Shader Registers | Data | `.global_regs` | R W | Config |
+| `params` | Tuning Params | Data | `.params` | R W | Config |
 | `xml` | XML Config | Data | `.xml` | R W | Config |
 | `powerplays` | Powerplays (XML) | Data | `.powerplays` | R W | Config |
 | `triggers` | Triggers (XML) | Data | `.triggers` | R W | Config |
@@ -72,7 +82,7 @@ decode but do not yet re-emit.
 | `streamtex` | Streamed Texture Payload | Graphics | `.streamtex` | R | Texture |
 | `model` | Model (Crayon2 mesh) | Graphics | `.model`, `.model.stream` | R | Mesh |
 | `skel` | Skeleton (ftsc rig) | Graphics | `.skel` | R | Mesh |
-| `deform` | Vehicle Deformation (DFM2) | Graphics | `.deform` | R | Mesh |
+| `deform` | Vehicle Deformation (DFM2) | Graphics | `.deform` | R W | Mesh |
 | `mcl` | Material Clip | Graphics | `.mcl` | R | Mesh |
 | `shaders` | Shader Set (SHDR) | Graphics | `.shaders` | R | Config |
 | `shaderinst` | Shader Instance (SDRI/INSS) | Graphics | `.shaderinst` | R | Config |
@@ -157,6 +167,30 @@ family always falls back to the generic Hex view, which never throws.
 | `WorldViewer` | `world` | every `World`-category handler (telemetry `.track`, routes, entities, sectors, NIS, light rigs, …) | `category === 'World'` |
 | `ConfigViewer` | `config` | `Data` + `Physics` handlers, plus the shader sets (`shaders`/`shaderinst`/`fxc`) and `crcs` — generic field table | `category` + shader key set |
 | `HexView` | `binary` | no handler, parse failure, or any unmapped family | fallback |
+
+## Embedded docs
+
+The Split/Second **reverse-engineering wiki** (the navigable HTML reference built
+from devkit NPXX00575 — engine, formats & systems) ships **inside the app**. It is
+copied verbatim into `public/wiki/` (64 pages + `assets/`) and served by Vite at
+`/wiki/`, so it is bundled into `dist/` on every `npm run build` (no external
+folder dependency at runtime).
+
+- **`/docs` route** (`src/pages/Docs.tsx`) renders the wiki in a full-pane
+  `<iframe>` whose base URL is `/wiki/`, so the wiki's own sidebar, search, and
+  internal links keep working untouched. `Home.tsx` and `AppHeader.tsx` link to it.
+- **Deep-linking:** `/docs?page=format-model.html` points the iframe straight at
+  that page. `safePage()` only serves bare same-origin `*.html` names (rejects
+  `..`, absolute, and protocol-relative URLs).
+- **Inspector "Format docs" link** (`src/components/Inspector.tsx`) resolves the
+  selected resource to its exact wiki page via the
+  `docLinks` map (`src/lib/core/registry/docLinks.ts`) — `docUrlForHandler()` tries
+  the handler key, then its extensions, then its category; `docUrlForName()`
+  handles loose files with no resolved handler (e.g. `car.model.stream →
+  format-model.html`). Every map target is a page that **exists** under
+  `public/wiki` — a headless contract test (`docLinks.test.ts`) asserts every
+  registered handler resolves to an on-disk page, so no broken "Format docs" link
+  can ship.
 
 ## How to run
 
@@ -258,8 +292,8 @@ Use `src/lib/core/registry/handlers/crcs.ts` as the template:
 
 ## Reference
 
-- Split/Second RE wiki: `../wiki/` (format pages: `format-ark.html`,
-  `format-model.html`, `format-textures.html`, `format-track.html`,
-  `engine-overview.html`).
+- Split/Second RE wiki: **bundled** at `public/wiki/` and viewable in-app at
+  `/docs` (format pages: `format-ark.html`, `format-model.html`,
+  `format-textures.html`, `format-track.html`, `engine-overview.html`).
 - Port brief: `../_reference/PORT-BRIEF.md`.
 - Domain language: `../_reference/paradise-bundle-steward/CONTEXT.md`.
