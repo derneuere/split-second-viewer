@@ -28,6 +28,35 @@ export type ArkHeader = {
 export type ArkSegment = 'static' | 'stream';
 
 /**
+ * Coarse content bucket a member's payload sniffs into (mirrors the histogram
+ * buckets in _tools/ark_extract_full.py). Drives viewport routing for members
+ * whose nameHash isn't yet resolved to a real filename.
+ */
+export type MemberCategory =
+	| 'model'    // serialized-object (.sobj) or framed geometry (.geo)
+	| 'texture'  // PS3 swizzled / DXT GPU texture (.gputex), or DDS/PNG
+	| 'havok'
+	| 'gfx'
+	| 'fsb'
+	| 'xml'
+	| 'audio'
+	| 'other';
+
+/**
+ * The result of sniffing one member's payload: a guessed extension + content
+ * category + human label. Computed by detectMemberType() in ArkArchive.ts and
+ * cached on the ArchiveMember.
+ */
+export type MemberType = {
+	/** Guessed extension WITHOUT a leading dot, e.g. 'sobj', 'geo', 'gputex'. */
+	ext: string;
+	/** Coarse content bucket for routing + histograms. */
+	category: MemberCategory;
+	/** One-line human label, e.g. 'serialized-object (02 00 00 08)'. */
+	label: string;
+};
+
+/**
  * One member parsed from an .ark TOC (all fields big-endian). `storedLen` is
  * NOT in the file — it is derived as the gap to the next-higher offset
  * (clamped to EOF for the last member), giving the on-disk byte span.
@@ -45,6 +74,17 @@ export type ArchiveMember = {
 	segment: ArkSegment;
 	/** Position within the TOC, as read. */
 	index: number;
+	/**
+	 * Whether the member's raw bytes carry the 12-byte Stream sub-frame
+	 * (00000000|innerSize|00000000). Set during parsing when segment bytes are
+	 * available; undefined when parsed TOC-only.
+	 */
+	framed?: boolean;
+	/**
+	 * Sniffed payload type (ext + category + label), computed from the member's
+	 * leading bytes during parsing. Undefined when parsed TOC-only.
+	 */
+	detectedType?: MemberType;
 };
 
 /**

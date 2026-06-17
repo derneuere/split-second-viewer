@@ -3,10 +3,12 @@
 // handler parses cleanly) its one-line describe() summary.
 
 import { useMemo } from 'react';
-import { FileQuestion } from 'lucide-react';
+import { FileQuestion, Download } from 'lucide-react';
 import { useWorkspace } from '@/context/WorkspaceContext';
 import { ssCtx } from '@/lib/core/registry';
 import { Separator } from '@/components/ui/separator';
+import { Button } from '@/components/ui/button';
+import { downloadBytes } from '@/lib/download';
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
 	return (
@@ -18,7 +20,7 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 export function Inspector() {
-	const { selection, getResourceRaw, getHandler } = useWorkspace();
+	const { selection, getResourceRaw, getHandler, getResourceFileName } = useWorkspace();
 
 	const raw = useMemo(
 		() => (selection ? getResourceRaw(selection.ref) : null),
@@ -27,6 +29,10 @@ export function Inspector() {
 	const handler = useMemo(
 		() => (selection ? getHandler(selection.ref) : undefined),
 		[selection, getHandler],
+	);
+	const fileName = useMemo(
+		() => (selection ? getResourceFileName(selection.ref) : ''),
+		[selection, getResourceFileName],
 	);
 
 	const summary = useMemo(() => {
@@ -78,6 +84,19 @@ export function Inspector() {
 				value={raw ? `${raw.byteLength.toLocaleString()} bytes` : '—'}
 			/>
 			<Row label="Handler" value={handler ? `${handler.name} (${handler.key})` : 'none'} />
+			<Row label="Filename" value={<span className="font-mono text-xs">{fileName}</span>} />
+
+			<Button
+				variant="outline"
+				size="sm"
+				className="mt-3 w-full"
+				disabled={!raw}
+				onClick={() => raw && downloadBytes(raw, fileName)}
+				title="Download this resource's extracted bytes"
+			>
+				<Download className="h-4 w-4" />
+				Download
+			</Button>
 
 			{handler && (
 				<>

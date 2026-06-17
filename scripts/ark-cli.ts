@@ -19,9 +19,16 @@ import * as path from 'node:path';
 import {
 	parseArk,
 	levelFromFilename,
+	extractMember,
 } from '../src/lib/core/ark/ArkArchive';
-import { describeMember } from '../src/lib/core/ark/nameHash';
+import {
+	describeMember,
+	memberFileName,
+	resolveName,
+	ROSETTA_COUNT,
+} from '../src/lib/core/ark/nameHash';
 import { ingestLoose } from '../src/lib/core/loose';
+import type { ArchiveMember } from '../src/lib/core/types';
 import {
 	getHandlerByExtension,
 	getHandlerByKey,
@@ -113,18 +120,149 @@ function cmdList(args: CliArgs) {
 	}
 	console.log(`  Members: ${archive.members.length}`);
 	console.log('');
-	console.log('  idx  segment  nameHash      size        storedLen   offset      type');
-	console.log('  ' + '-'.repeat(78));
+	console.log('  idx  segment  nameHash      storedLen   offset      type      label');
+	console.log('  ' + '-'.repeat(86));
 
+	const buckets: Record<string, number> = {};
+	let named = 0;
+	let framed = 0;
 	for (const m of archive.members) {
 		const segBytes = m.segment === 'static' ? staticBytes : streamBytes;
-		const leading = segBytes ? segBytes.subarray(m.offset, Math.min(m.offset + 16, segBytes.byteLength)) : undefined;
-		const label = describeMember(m.nameHash, leading);
+		const leading = segBytes
+			? segBytes.subarray(m.offset, Math.min(m.offset + 16, segBytes.byteLength))
+			: undefined;
+		const label = describeMember(m.nameHash, leading, m.detectedType);
+		const ext = m.detectedType?.ext ?? '?';
+		if (m.detectedType) buckets[m.detectedType.category] = (buckets[m.detectedType.category] ?? 0) + 1;
+		if (resolveName(m.nameHash)) named++;
+		if (m.framed) framed++;
 		console.log(
 			`  ${String(m.index).padStart(4)}  ${m.segment.padEnd(7)}  ${hex(m.nameHash)}  ` +
-				`${hex(m.size).padEnd(10)}  ${hex(m.storedLen).padEnd(10)}  ${hex(m.offset).padEnd(10)}  ${label}`,
+				`${hex(m.storedLen).padEnd(10)}  ${hex(m.offset).padEnd(10)}  ${ext.padEnd(8)}  ${label}`,
 		);
 	}
+
+	console.log('');
+	console.log(`  type histogram: ${Object.entries(buckets).map(([k, v]) => `${k}=${v}`).join('  ')}`);
+	console.log(`  named ${named}/${archive.members.length}  ·  framed ${framed}  ·  Rosetta entries ${ROSETTA_COUNT}`);
+}
+
+// ---------------------------------------------------------------------------
+// extract — mirror _tools/ark_extract_full.py: write a level pair to disk.
+// ---------------------------------------------------------------------------
+
+function cmdExtract(args: CliArgs) {
+	const [staticPath, streamPath] = args.positional;
+	if (!staticPath) {
+		throw new Error('extract: expected <Level.Static.ark> [Level.Stream.ark] [--out DIR]');
+	}
+	const staticBytes = readFile(staticPath);
+	const streamBytes = streamPath ? readFile(streamPath) : undefined;
+	const level = args.options.get('level') ?? levelFromFilename(path.basename(staticPath));
+	const outRoot = args.options.get('out') ?? path.join(process.cwd(), 'level_extract');
+	const limit = args.options.has('limit') ? Number(args.options.get('limit')) : undefined;
+	const archive = parseArk(staticBytes, streamBytes, level);
+
+	const outDir = path.join(outRoot, level);
+	fs.mkdirSync(outDir, { recursive: true });
+
+	console.log(`Level: ${level} -> ${outDir}`);
+	console.log(`Rosetta dictionary entries: ${ROSETTA_COUNT}`);
+
+	const grand = { total: 0, written: 0, named: 0, framed: 0, raw: 0 };
+	const grandBuckets: Record<string, number> = {};
+	const archivesManifest: Record<string, unknown> = {};
+
+	for (const [tag, segBytes] of [
+		['Static', staticBytes],
+		['Stream', streamBytes],
+	] as const) {
+		if (!segBytes) continue;
+		const seg = tag === 'Static' ? 'static' : 'stream';
+		const sub = path.join(outDir, tag);
+		fs.mkdirSync(sub, { recursive: true });
+		const segMembers = archive.members.filter((m) => m.segment === seg);
+		const counts = { total: 0, written: 0, named: 0, framed: 0, raw: 0 };
+		const buckets: Record<string, number> = {};
+		const used = new Set<string>();
+		const recs: unknown[] = [];
+		let n = 0;
+
+		for (const m of segMembers as ArchiveMember[]) {
+			counts.total++;
+			if (m.storedLen === 0) {
+				recs.push({ idx: m.index, nameHash: hex(m.nameHash), empty: true });
+				continue;
+			}
+			if (limit !== undefined && n >= limit) break;
+			const { payload, framed, type } = extractMember(segBytes, m);
+			if (framed) counts.framed++;
+			else counts.raw++;
+			buckets[type.category] = (buckets[type.category] ?? 0) + 1;
+
+			const real = resolveName(m.nameHash);
+			if (real) counts.named++;
+			let fn = memberFileName(m.nameHash, type.ext);
+			if (used.has(fn)) {
+				const base = fn.replace(/\.[^.]+$/, '');
+				const ext = fn.slice(base.length);
+				let k = 1;
+				do {
+					fn = `${base}_${k}${ext}`;
+					k++;
+				} while (used.has(fn));
+			}
+			used.add(fn);
+			fs.writeFileSync(path.join(sub, fn), payload);
+			counts.written++;
+			recs.push({
+				idx: m.index,
+				nameHash: hex(m.nameHash),
+				name: real,
+				offset: m.offset,
+				storedLen: m.storedLen,
+				payloadLen: payload.byteLength,
+				framed,
+				ext: type.ext,
+				category: type.category,
+				file: fn,
+			});
+			n++;
+		}
+
+		console.log(`\n[${tag}] ${path.basename(seg === 'static' ? staticPath : streamPath!)}`);
+		console.log(
+			`  count=${counts.total}  written=${counts.written}  named=${counts.named}  ` +
+				`framed=${counts.framed}  raw=${counts.raw}`,
+		);
+		console.log(
+			`  type histogram: ${Object.entries(buckets).map(([k, v]) => `${k}=${v}`).join('  ')}`,
+		);
+		archivesManifest[tag] = { counts, buckets, members: recs };
+		grand.total += counts.total;
+		grand.written += counts.written;
+		grand.named += counts.named;
+		grand.framed += counts.framed;
+		grand.raw += counts.raw;
+		for (const [k, v] of Object.entries(buckets)) grandBuckets[k] = (grandBuckets[k] ?? 0) + v;
+	}
+
+	const manifest = {
+		level,
+		outDir,
+		grandTotals: grand,
+		typeHistogram: grandBuckets,
+		archives: archivesManifest,
+	};
+	fs.writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 1));
+
+	console.log(`\n=== GRAND TOTALS (${level}) ===`);
+	console.log(
+		`  members=${grand.total}  written=${grand.written}  named=${grand.named}  ` +
+			`framed=${grand.framed}  raw=${grand.raw}`,
+	);
+	console.log(`  type histogram: ${Object.entries(grandBuckets).map(([k, v]) => `${k}=${v}`).join('  ')}`);
+	console.log(`\nmanifest -> ${path.join(outDir, 'manifest.json')}`);
 }
 
 function cmdParse(args: CliArgs) {
@@ -204,6 +342,9 @@ function main() {
 		case 'list':
 			cmdList(args);
 			break;
+		case 'extract':
+			cmdExtract(args);
+			break;
 		case 'parse':
 			cmdParse(args);
 			break;
@@ -218,6 +359,8 @@ function main() {
 			console.log('');
 			console.log('Commands:');
 			console.log('  list      <Level.Static.ark> [Level.Stream.ark]   print the .ark TOC');
+			console.log('  extract   <Level.Static.ark> [Level.Stream.ark] [--out DIR] [--limit N]');
+			console.log('            extract every member to disk + manifest.json (mirrors ark_extract_full.py)');
 			console.log('  parse     <file> [--type <key>]                   parse + describe()');
 			console.log('  roundtrip <file> [--type <key>]                   parse→write→compare');
 			console.log('  stress    <file> [--type <key>] [--scenario <n>]  run stress scenarios');

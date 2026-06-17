@@ -138,6 +138,39 @@ export function getHandlerByExtension(nameOrExt: string): ResourceHandler | unde
 }
 
 /**
+ * Map a sniffed member category (from ArkArchive.detectMemberType) to the
+ * handler that should decode/route it. Used for .ark members whose nameHash is
+ * not yet resolved to a real filename, so magic alone isn't enough (framed .geo
+ * and unframed .gputex carry no magic).
+ *
+ *   model   (.sobj serialized object, .geo framed geometry) -> model  -> MeshViewer
+ *   texture (.gputex / DDS / PNG)                            -> streamtex -> TextureViewer
+ *   havok                                                    -> havok  -> ConfigViewer
+ *   everything else                                          -> undefined (Hex)
+ *
+ * .geo (framed vertex/index stream) and .gputex (raw swizzled pixels) are NOT
+ * the self-describing .model.stream / .textures container formats, so the chosen
+ * handler may produce a partial/empty model — the viewers tolerate that and the
+ * Hex fallback always renders the de-framed bytes.
+ */
+export function getHandlerByCategory(category: string, ext?: string): ResourceHandler | undefined {
+	switch (category) {
+		case 'model':
+			return byKey.get('model');
+		case 'texture':
+			// 'gputex' is a headerless swizzled payload (like .streamtex); DDS/PNG
+			// are self-contained but we have no decoder, so the TextureViewer's
+			// graceful fallback + Hex cover them.
+			return byKey.get('streamtex');
+		case 'havok':
+			return byKey.get('havok');
+		default:
+			void ext;
+			return undefined;
+	}
+}
+
+/**
  * Sniff an .ark member whose nameHash isn't yet resolved to a filename: match
  * its leading bytes against every handler's declared `magic`. Returns the
  * first match, or undefined.

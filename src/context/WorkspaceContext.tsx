@@ -18,11 +18,12 @@ import {
 	parseArk,
 	levelFromFilename,
 	readMemberRaw,
-	inflateMember,
+	getMemberPayload,
 } from '@/lib/core/ark/ArkArchive';
-import { describeMember } from '@/lib/core/ark/nameHash';
+import { describeMember, memberFileName } from '@/lib/core/ark/nameHash';
 import { ingestLoose, type LooseFile } from '@/lib/core/loose';
 import {
+	getHandlerByCategory,
 	getHandlerByExtension,
 	getHandlerByMagic,
 	type ResourceHandler,
@@ -105,10 +106,14 @@ export type WorkspaceContextValue = {
 	closeArchive: (id: ArchiveId) => void;
 	closeLoose: (id: LooseId) => void;
 
-	/** Extract a Resource's raw bytes (inflating Stream members). */
+	/** Extract a Resource's usable bytes (de-framed Stream members). */
 	getResourceRaw: (ref: ResourceRef) => Uint8Array | null;
-	/** Resolve the handler for a Resource (by extension, or member magic-sniff). */
+	/** Resolve the handler for a Resource (by extension, category, or magic). */
 	getHandler: (ref: ResourceRef) => ResourceHandler | undefined;
+	/** Suggested download filename (real Rosetta name or "<hash8>.<ext>"). */
+	getResourceFileName: (ref: ResourceRef) => string;
+	/** All addressable Resource refs in an Archive (both segments). */
+	membersOf: (id: ArchiveId) => ResourceRef[];
 
 	// selection
 	selection: WorkspaceSelection;
@@ -159,10 +164,10 @@ function buildTree(
 				return {
 					id: `${arc.id}/${seg}/${m.nameHash >>> 0}`,
 					kind: 'resource',
-					label: describeMember(m.nameHash, leading),
+					label: describeMember(m.nameHash, leading, m.detectedType),
 					depth: 2,
 					ref: { kind: 'member', archiveId: arc.id, nameHash: m.nameHash },
-					handler: leading ? getHandlerByMagic(leading) : undefined,
+					handler: handlerForMember(m, leading),
 				};
 			});
 			segmentChildren.push({
@@ -205,6 +210,23 @@ function buildTree(
 function peekLeading(segBytes: Uint8Array, m: ArchiveMember): Uint8Array {
 	const end = Math.min(m.offset + 16, segBytes.byteLength);
 	return segBytes.subarray(m.offset, end);
+}
+
+/**
+ * Resolve the handler for an .ark member: prefer routing by the sniffed content
+ * category (so framed .geo -> model/MeshViewer and unframed .gputex ->
+ * streamtex/TextureViewer even though neither carries a magic), then fall back
+ * to a leading-bytes magic sniff.
+ */
+export function handlerForMember(
+	m: ArchiveMember,
+	leading?: Uint8Array,
+): ResourceHandler | undefined {
+	if (m.detectedType) {
+		const byCat = getHandlerByCategory(m.detectedType.category, m.detectedType.ext);
+		if (byCat) return byCat;
+	}
+	return leading ? getHandlerByMagic(leading) : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -278,9 +300,21 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			const segBytes = member.segment === 'static' ? arc.staticBytes : arc.streamBytes;
 			if (!segBytes) return null;
 			const raw = readMemberRaw(segBytes, member);
-			return member.segment === 'stream' ? inflateMember(raw) : raw;
+			// De-frame / (rarely) decompress every member uniformly. getMemberPayload
+			// is a no-op for raw Static objects and unframed textures, and strips the
+			// 12-byte sub-frame from framed Stream geometry.
+			return getMemberPayload(raw);
 		},
 		[findArchive, looseFiles],
+	);
+
+	const findMember = useCallback(
+		(ref: ResourceRef): ArchiveMember | undefined => {
+			if (ref.kind !== 'member') return undefined;
+			const arc = findArchive(ref.archiveId);
+			return arc?.parsed.members.find((m) => m.nameHash === ref.nameHash);
+		},
+		[findArchive],
 	);
 
 	const getHandler = useCallback(
@@ -288,10 +322,37 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			if (ref.kind === 'loose') {
 				return getHandlerByExtension(ref.looseId);
 			}
+			const member = findMember(ref);
+			if (member) {
+				const raw = getResourceRaw(ref);
+				return handlerForMember(member, raw ?? undefined);
+			}
 			const raw = getResourceRaw(ref);
 			return raw ? getHandlerByMagic(raw) : undefined;
 		},
-		[getResourceRaw],
+		[findMember, getResourceRaw],
+	);
+
+	/** Suggested download filename for a Resource (real name or "<hash8>.<ext>"). */
+	const getResourceFileName = useCallback(
+		(ref: ResourceRef): string => {
+			if (ref.kind === 'loose') return ref.looseId.replace(/[\\/]/g, '_');
+			const member = findMember(ref);
+			return memberFileName(ref.nameHash, member?.detectedType?.ext);
+		},
+		[findMember],
+	);
+
+	/** Every member of an Archive as an addressable ResourceRef (for Extract all). */
+	const membersOf = useCallback(
+		(id: ArchiveId): ResourceRef[] => {
+			const arc = findArchive(id);
+			if (!arc) return [];
+			return arc.parsed.members
+				.filter((m) => m.storedLen > 0)
+				.map((m) => ({ kind: 'member' as const, archiveId: id, nameHash: m.nameHash }));
+		},
+		[findArchive],
 	);
 
 	const select = useCallback((next: WorkspaceSelection) => setSelection(next), []);
@@ -332,6 +393,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			closeLoose,
 			getResourceRaw,
 			getHandler,
+			getResourceFileName,
+			membersOf,
 			selection,
 			select,
 			isVisible,
@@ -351,6 +414,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 			closeLoose,
 			getResourceRaw,
 			getHandler,
+			getResourceFileName,
+			membersOf,
 			selection,
 			select,
 			isVisible,
