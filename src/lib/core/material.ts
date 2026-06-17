@@ -65,6 +65,32 @@
 // *_texture, *Map, *_tex, *normalMap, *specularMap. We classify a few of these
 // (diffuse / normal / specular) by name suffix; everything else is recorded
 // generically under params.textures so nothing is silently dropped.
+//
+// =====================================================================
+// THE CAR BODY PAINT / LIVERY CASE (VehiclePaintFast & friends)
+// =====================================================================
+//
+// In-race vehicle bodies do NOT keep their albedo in the base "<base>.textures"
+// sibling. A car folder ships SEVERAL .textures files for one model:
+//   <base>.textures            detail maps (DirtMap/ScratchMap/MetalMap, paraboloids)
+//   <base>_bodyPaint.textures  the LIVERY: ONE 1024×2048 DXT1 named exactly <base>
+//   <base>_damageMap.textures  the damage overlay named <base>_DamageMap
+//   (plus *_low.textures stubs, which we deliberately ignore)
+// buildMaterials therefore accepts `extraTextures` (the suffixed siblings) and
+// merges every container's textures into ONE crc->texture lookup.
+//
+// The catch: a VehiclePaint* node's diffuse override (e.g.
+// "VehiclePaintFast_1_diffuseMap") carries a RUNTIME-SYMBOL CRC, not the on-disk
+// texture-name CRC — verified across all 39 devkit car bodies, that override CRC
+// resolves to NOTHING in any container, while the real paint is the single texture
+// in _bodyPaint.textures whose C2NM name is the model base (Musclecar_01,
+// Supercar_01, …; 39/39). So when a node's diffuse binding is a VehiclePaint paint
+// sampler whose CRC didn't resolve, we substitute the BODY-PAINT texture — the
+// merged texture named after the model base (`baseName`), or the largest texture
+// drawn from a _bodyPaint container as a name-independent fallback. This keeps the
+// generalized slot/kind/CRC diffuse logic for every self-contained model (heli,
+// skycrane, NemTruckBarrels, props) untouched; the livery substitution only fires
+// for the car-paint combo whose CRC is unresolvable.
 
 import { BinReader } from './binary/BinReader';
 import {
@@ -125,10 +151,19 @@ export type SubmeshMaterial = {
 export type BuiltMaterials = {
 	/** One entry per submesh (model node), in node order. */
 	submeshes: SubmeshMaterial[];
-	/** Every decoded texture in the .textures container, indexed by CRC. */
+	/**
+	 * Every decoded texture across the base AND merged sibling containers, indexed
+	 * by CRC (car bodies merge "<base>.textures" + "<base>_bodyPaint.textures" +
+	 * "<base>_damageMap.textures").
+	 */
 	textureByCrc: Map<number, DecodedTexture>;
 	/** Resolved name for each texture CRC (from the C2NM trailer). */
 	nameByCrc: Map<number, string>;
+	/**
+	 * The resolved body-paint / livery texture (from a "_bodyPaint" sibling), when
+	 * one was found — the car's diffuse. Undefined for self-contained models.
+	 */
+	bodyPaintTexture?: DecodedTexture;
 	/** True when nodeCount/submesh count matched the shaderinst node count. */
 	countsMatched: boolean;
 	/** Human-readable note about how the binding resolved. */
@@ -137,8 +172,17 @@ export type BuiltMaterials = {
 
 /** Raw bytes of the four sibling assets (any may be absent). */
 export type MaterialAssets = {
-	/** The .textures (TEXS) container bytes. */
+	/** The base "<base>.textures" (TEXS) container bytes. */
 	textures?: Uint8Array | null;
+	/**
+	 * Additional same-base ".textures" siblings whose textures are merged into the
+	 * one crc-keyed lookup (car bodies: "<base>_bodyPaint.textures" carries the
+	 * livery, "<base>_damageMap.textures" the damage overlay). Each entry that
+	 * parses contributes its textures + names. Stubs / nulls are skipped. The "_low"
+	 * variants must be excluded by the caller. Order is preserved so the FIRST
+	 * suffixed container is treated as the body-paint source for the livery fallback.
+	 */
+	extraTextures?: (Uint8Array | null | undefined)[];
 	/** The .shaderinst (SDRI) bytes. */
 	shaderinst?: Uint8Array | null;
 	/** The .shaders (SHDR) bytes. */
@@ -152,6 +196,12 @@ export type MaterialAssets = {
 	streamtex?: Uint8Array | null;
 	/** Number of submeshes the model decoded into (for the i<->node pairing). */
 	submeshCount?: number;
+	/**
+	 * The model's base file name without extension (e.g. "Musclecar_01"). Used to
+	 * find the body-paint/livery texture in the merged set (it is named after the
+	 * model base) when a VehiclePaint diffuse override's CRC doesn't resolve.
+	 */
+	baseName?: string;
 };
 
 // ---------------------------------------------------------------------------
@@ -361,33 +411,61 @@ function nodeOverrideRegions(b: Uint8Array, nodeCount: number): {
 // Texture decode + indexing
 // ---------------------------------------------------------------------------
 
-/** Decode every texture in the container and index it by CRC. */
-function decodeTextureSet(
+/**
+ * Decode every texture in ONE container and merge it into the supplied crc->
+ * texture + crc->name maps. Returns the list of textures that decoded with
+ * non-null pixels (so the caller can pick a body-paint texture from a specific
+ * container). Tolerant of parse/decode failure — leaves the maps as-is.
+ */
+function mergeTextureContainer(
 	rawTex: Uint8Array,
-	parsed: ParsedTextures,
+	byCrc: Map<number, DecodedTexture>,
+	nameByCrc: Map<number, string>,
 	streamtex?: Uint8Array | null,
-): { byCrc: Map<number, DecodedTexture>; nameByCrc: Map<number, string> } {
-	const byCrc = new Map<number, DecodedTexture>();
-	const nameByCrc = new Map<number, string>();
+): DecodedTexture[] {
+	let parsed: ParsedTextures;
+	try {
+		parsed = parseTextures(rawTex);
+	} catch {
+		return [];
+	}
 	for (const d of parsed.descriptors) {
 		if (d.name !== undefined) nameByCrc.set(d.crc >>> 0, d.name);
 	}
 
-	// Inline single-file containers (the heli) decode every texture directly.
+	const added: DecodedTexture[] = [];
+	// Inline single-file containers (the heli, the car _bodyPaint/_damageMap, the
+	// base detail maps) decode every texture directly.
 	const inline = decodeAllInline(rawTex, parsed);
 	for (const t of inline) {
-		if (t.rgba) byCrc.set(t.crc >>> 0, t);
+		if (t.rgba) {
+			byCrc.set(t.crc >>> 0, t);
+			added.push(t);
+		}
 	}
 
 	// Stub container whose pixels live in a .streamtex: decode the largest (the
 	// inline path returns nothing for stubs). We can only place the biggest
 	// texture reliably from the stream, so index just that one.
-	if (byCrc.size === 0 && parsed.isStub && streamtex && streamtex.byteLength > 0) {
+	if (added.length === 0 && parsed.isStub && streamtex && streamtex.byteLength > 0) {
 		const big = decodeLargestTexture(rawTex, parsed, streamtex);
-		if (big?.rgba) byCrc.set(big.crc >>> 0, big);
+		if (big?.rgba) {
+			byCrc.set(big.crc >>> 0, big);
+			added.push(big);
+		}
 	}
 
-	return { byCrc, nameByCrc };
+	return added;
+}
+
+/** Pick the largest (by area) decoded texture with pixels from a list. */
+function largestWithPixels(textures: DecodedTexture[]): DecodedTexture | undefined {
+	let best: DecodedTexture | undefined;
+	for (const t of textures) {
+		if (!t.rgba) continue;
+		if (!best || t.width * t.height > best.width * best.height) best = t;
+	}
+	return best;
 }
 
 /**
@@ -422,6 +500,17 @@ function pickDiffuse(textures: TextureBinding[]): TextureBinding | undefined {
 	return [...textures].sort(bySlot)[0];
 }
 
+/**
+ * True when a texture binding is a car-paint LIVERY sampler — a "VehiclePaint*"
+ * combo's diffuse override (e.g. "VehiclePaintFast_1_diffuseMap",
+ * "VehiclePaint01_1_..."). Such an override's CRC is a runtime symbol that never
+ * matches an on-disk texture; the real paint is the body-paint texture instead.
+ * Matched by name so it works without the .shaders file present.
+ */
+function isVehiclePaintSampler(name: string): boolean {
+	return /vehiclepaint/i.test(name) && /(diffuse|paint)/i.test(name);
+}
+
 /** Extract a base colour from a *paintColour / *colour float3 constant, if present. */
 function pickBaseColor(constants: ConstBinding[]): [number, number, number] | undefined {
 	const c =
@@ -450,19 +539,48 @@ function pickBaseColor(constants: ConstBinding[]): [number, number, number] | un
  * texture set, so a viewer can at least show the maps).
  */
 export function buildMaterials(assets: MaterialAssets): BuiltMaterials {
-	let textureByCrc = new Map<number, DecodedTexture>();
-	let nameByCrc = new Map<number, string>();
+	const textureByCrc = new Map<number, DecodedTexture>();
+	const nameByCrc = new Map<number, string>();
 	let parsedTex: ParsedTextures | null = null;
+	// Textures contributed by the suffixed siblings (car _bodyPaint/_damageMap),
+	// kept apart so the livery can be chosen from the body-paint container.
+	const extraTextureLists: DecodedTexture[][] = [];
 
+	// Base "<base>.textures" — the detail maps + (self-contained models) the albedo.
 	if (assets.textures && assets.textures.byteLength >= 0x2c) {
 		try {
 			parsedTex = parseTextures(assets.textures);
-			const decoded = decodeTextureSet(assets.textures, parsedTex, assets.streamtex);
-			textureByCrc = decoded.byCrc;
-			nameByCrc = decoded.nameByCrc;
 		} catch {
-			/* leave maps empty — diffuse simply won't resolve */
+			parsedTex = null;
 		}
+		mergeTextureContainer(assets.textures, textureByCrc, nameByCrc, assets.streamtex);
+	}
+
+	// Suffixed same-base siblings (car bodies: _bodyPaint = livery, _damageMap =
+	// damage overlay). Each is merged into the one crc->texture lookup; *_low
+	// variants are excluded by the caller.
+	for (const extra of assets.extraTextures ?? []) {
+		if (!extra || extra.byteLength < 0x2c) continue;
+		const added = mergeTextureContainer(extra, textureByCrc, nameByCrc);
+		if (added.length > 0) extraTextureLists.push(added);
+	}
+
+	// Resolve the body-paint / livery texture. It is the merged texture whose C2NM
+	// name is the model base (verified across all 39 devkit car bodies); if no
+	// baseName was supplied (or it didn't match), fall back to the largest texture
+	// drawn from the FIRST suffixed (_bodyPaint) container.
+	let bodyPaintTexture: DecodedTexture | undefined;
+	if (assets.baseName) {
+		const want = assets.baseName.toLowerCase();
+		for (const t of textureByCrc.values()) {
+			if (t.rgba && (t.name ?? nameByCrc.get(t.crc >>> 0))?.toLowerCase() === want) {
+				bodyPaintTexture = t;
+				break;
+			}
+		}
+	}
+	if (!bodyPaintTexture && extraTextureLists.length > 0) {
+		bodyPaintTexture = largestWithPixels(extraTextureLists[0]);
 	}
 
 	// Shader combo symbol map (combo CRC string -> its symbol list), for params.
@@ -512,6 +630,7 @@ export function buildMaterials(assets: MaterialAssets): BuiltMaterials {
 			submeshes: [],
 			textureByCrc,
 			nameByCrc,
+			bodyPaintTexture,
 			countsMatched: false,
 			note:
 				textureByCrc.size > 0
@@ -527,9 +646,17 @@ export function buildMaterials(assets: MaterialAssets): BuiltMaterials {
 		const reg = regions[i];
 		const { textures, constants } = readNodeOverrides(assets.shaderinst!, reg.start, reg.end);
 		const diffuseBinding = pickDiffuse(textures);
-		const diffuseTexture = diffuseBinding
+		let diffuseTexture = diffuseBinding
 			? textureByCrc.get(diffuseBinding.crc >>> 0)
 			: undefined;
+		// Car-paint LIVERY: a VehiclePaint* node's diffuse override carries a runtime
+		// symbol CRC that never resolves on disk. When the chosen diffuse is such a
+		// paint sampler and its CRC didn't resolve, substitute the body-paint texture
+		// (the livery, merged in from "<base>_bodyPaint.textures"). The standard CRC
+		// path (heli, skycrane, props) is untouched — it already resolved above.
+		if (!diffuseTexture && bodyPaintTexture && diffuseBinding && isVehiclePaintSampler(diffuseBinding.name)) {
+			diffuseTexture = bodyPaintTexture;
+		}
 		const comboSymbols = symbolsByCombo.get(reg.comboCrc);
 		submeshes.push({
 			index: i,
@@ -556,10 +683,12 @@ export function buildMaterials(assets: MaterialAssets): BuiltMaterials {
 		submeshes,
 		textureByCrc,
 		nameByCrc,
+		bodyPaintTexture,
 		countsMatched,
 		note:
 			`Resolved ${submeshes.length}/${shaderInst.nodeCount} node material(s); ` +
 			`${withDiffuse} have a diffuse texture. ` +
+			(bodyPaintTexture ? `Body-paint livery bound (${bodyPaintTexture.width}×${bodyPaintTexture.height}). ` : '') +
 			(countsMatched
 				? `Submesh count (${submeshCount}) matches node count — submesh[i] uses node[i].`
 				: `Submesh count (${submeshCount}) != node count (${shaderInst.nodeCount}); ` +

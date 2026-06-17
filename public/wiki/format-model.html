@@ -215,6 +215,40 @@ present in the EBOOT name table are:</p>
 The presence of the <code>W4I4</code> (skinned) variants is consistent with the
 <a href="format-skel.html">.skel</a> skeletons used by animated powerplay props.</p>
 
+<h3 id="uv-decode">Per-vertex UV (texcoord) decode <span class="badge partial">Partial</span></h3>
+<p>Because the per-buffer <code>hkxVertexFormat</code> declaration is not yet decoded (the node-tree
+tag&rarr;class mapping above is unresolved), the viewer recovers the texcoord <em>statistically</em> from
+a float32 vertex buffer. It samples every non-position column and keeps the two NON-CONSTANT columns whose
+values cluster in the <code>[0,1]</code> tiling band (a texcoord sits near mean&nbsp;0.5; a unit normal is
+symmetric about&nbsp;0, &asymp;&nbsp;50&nbsp;% negative; a handedness lane is constant). The pair is emitted
+as <code>[U, V] = [higher byte offset, lower byte offset]</code> — the order <strong>verified against
+rendered output</strong> (the <code>Helicopter_Bell206B_01</code> body livery, <code>skycrane_military</code>
+camo, and the float props all map correctly; the naive lower&nbsp;=&nbsp;U order rendered them rotated). The
+helicopter body in particular SPLITS its UV across the leading lane (<code>U&nbsp;@0</code>) and the trailing
+lane (<code>V&nbsp;@28</code>) around the unit normal at bytes&nbsp;16&ndash;27, so the older
+"UV&nbsp;==&nbsp;posOffset+12" rule read the NORMAL as the UV.</p>
+
+<div class="tip"><p><strong>Open — multi-UV-set disambiguation.</strong> Meshes that bake MORE than one
+texcoord set (a diffuse <code>UV0</code> plus a lightmap/secondary set) expose three or more candidate
+columns, and the statistical pick can grab the wrong one. Confirmed on
+<code>Generic/Models/NemTruckBarrels_*</code>: the barrel's chevron band smears because the true
+"around-the-cylinder" diffuse coordinate (<code>@40</code>, the column that varies with circumferential
+angle) loses to the uniform lightmap-style pair (<code>@28/@32</code>). The pure parser cannot see the
+texture, so it has no way to score which set aligns with the diffuse atlas (band&rarr;cylinder side,
+caps&rarr;circles). Two resolution paths: <strong>(a)</strong> decode the <code>hkxVertexFormat</code>
+declaration so <code>UV0</code> is identified explicitly (the robust fix — blocked on the tag&rarr;class
+mapping); or <strong>(b)</strong> texture-aware UV selection at the material/render layer (choose the set
+whose side/cap regions best match the diffuse's band/cap layout).</p>
+<p style="margin:.6em 0 0">Verification harness:
+<code>split-second-viewer/scripts/render-model.ts</code> — a headless software rasteriser that renders a
+<code>.model</code> with its decoded diffuse to a multi-angle PNG contact sheet (modes
+<code>texture</code>&nbsp;/&nbsp;<code>uv</code>&nbsp;/&nbsp;<code>checker</code>, and a <code>--uvcols U,V</code>
+override to A/B raw texcoord columns without touching the decoder).</p>
+<p style="margin:.6em 0 0"><strong>Deferred.</strong> Nailing the diffuse-vs-lightmap pick is a
+visual-iteration task — it hinges on judging rendered output, which the current pass could not resolve
+reliably enough. Parked until a future pass with stronger render-reading (vision) capability (i.e.
+revisit on Fable&nbsp;5).</p></div>
+
 <h2>Index buffers</h2>
 <p>Every <code>.model</code> ends in one or more <b>16-bit triangle-strip</b> index buffers. The
 sentinel <code>0xFFFF</code> is the RSX primitive-restart marker that breaks one strip and starts the

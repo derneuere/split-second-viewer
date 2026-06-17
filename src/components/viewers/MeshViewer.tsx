@@ -22,7 +22,7 @@ import type { ParsedModel, ModelMesh } from '@/lib/core/model';
 import type { ResourceHandler } from '@/lib/core/registry/handler';
 import { buildMaterials, type BuiltMaterials, type SubmeshMaterial } from '@/lib/core/material';
 import type { DecodedTexture } from '@/lib/core/textures';
-import { useWorkspace } from '@/context/WorkspaceContext';
+import { useWorkspace, type TreeNode } from '@/context/WorkspaceContext';
 import type { ResourceRef } from '@/lib/core/types';
 import { Button } from '@/components/ui/button';
 
@@ -334,6 +334,66 @@ function swapExt(looseId: string, newExt: string): string {
 	return base + newExt;
 }
 
+/** The base name (no directory, no extension) of a loose path: ".../Musclecar_01.model" -> "Musclecar_01". */
+function baseNameOf(looseId: string): string {
+	const slash = Math.max(looseId.lastIndexOf('/'), looseId.lastIndexOf('\\'));
+	const file = slash >= 0 ? looseId.slice(slash + 1) : looseId;
+	const dot = file.lastIndexOf('.');
+	return dot >= 0 ? file.slice(0, dot) : file;
+}
+
+/**
+ * Discover same-directory, same-base ".textures" siblings of a model from the
+ * workspace tree (directory-backed). A car body keeps its livery + damage maps in
+ * SUFFIXED siblings ("<base>_bodyPaint.textures", "<base>_damageMap.textures")
+ * rather than the plain "<base>.textures". We return every loose path matching
+ * "<base>_<suffix>.textures" in the model's directory, EXCLUDING:
+ *   - the plain "<base>.textures" (loaded separately as the base container)
+ *   - any "*_low.textures" / "*.low.textures" low-res variant
+ *
+ * Walks the unified `tree` (the enumerated directory structure); returns [] for a
+ * drag-drop / in-memory selection that isn't directory-backed (no harm — the base
+ * "<base>.textures" still loads via the standard path).
+ */
+function findTextureSiblings(tree: TreeNode[], modelPath: string): string[] {
+	const slash = Math.max(modelPath.lastIndexOf('/'), modelPath.lastIndexOf('\\'));
+	const dir = slash >= 0 ? modelPath.slice(0, slash) : '';
+	const base = baseNameOf(modelPath);
+	// Match "<dir>/<base>_<suffix>.textures" (suffix non-empty), not low-res.
+	const lowerBase = base.toLowerCase();
+	const lowerDir = dir.toLowerCase();
+
+	const out: string[] = [];
+	const seen = new Set<string>();
+	const visit = (node: TreeNode) => {
+		if (node.ref?.kind === 'loose') {
+			const id = node.ref.looseId;
+			const idLower = id.toLowerCase();
+			const sl = Math.max(id.lastIndexOf('/'), id.lastIndexOf('\\'));
+			const nodeDir = (sl >= 0 ? id.slice(0, sl) : '').toLowerCase();
+			if (
+				nodeDir === lowerDir &&
+				idLower.endsWith('.textures') &&
+				!idLower.endsWith('.low.textures') &&
+				!idLower.endsWith('_low.textures')
+			) {
+				const fileBase = baseNameOf(id).toLowerCase();
+				// "<base>_<something>" but not the plain "<base>".
+				if (fileBase.startsWith(lowerBase + '_') && fileBase !== lowerBase && !seen.has(id)) {
+					seen.add(id);
+					out.push(id);
+				}
+			}
+		}
+		for (const c of node.children ?? []) visit(c);
+	};
+	for (const n of tree) visit(n);
+	// Stable order with the body-paint container first so the livery fallback in
+	// buildMaterials draws from it (it sorts before _damageMap alphabetically).
+	out.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+	return out;
+}
+
 /**
  * Load the current .model's sibling material assets (.textures / .shaderinst /
  * .shaders / .tex.crcs / .streamtex) from the workspace and resolve per-submesh
@@ -346,7 +406,7 @@ function swapExt(looseId: string, newExt: string): string {
  * the submesh count matched the shaderinst node count.
  */
 function useSiblingMaterials(submeshCount: number): BuiltMaterials | null {
-	const { selection, getResourceBytes } = useWorkspace();
+	const { selection, getResourceBytes, tree } = useWorkspace();
 	const [built, setBuilt] = useState<BuiltMaterials | null>(null);
 
 	// The loose path of the selected .model. Materials resolve for any loose,
@@ -356,39 +416,54 @@ function useSiblingMaterials(submeshCount: number): BuiltMaterials | null {
 			? selection.ref.looseId
 			: null;
 
+	// Same-directory, same-base suffixed ".textures" siblings (car bodies:
+	// _bodyPaint = livery, _damageMap = damage overlay). Discovered from the
+	// directory-backed tree; joined as a stable string so the effect re-runs only
+	// when the discovered set actually changes (not on every tree identity).
+	const siblingKey = useMemo(
+		() => (modelPath ? findTextureSiblings(tree, modelPath).join('\n') : ''),
+		[tree, modelPath],
+	);
+
 	useEffect(() => {
 		let cancelled = false;
 		setBuilt(null);
 		if (!modelPath) return;
 
 		const looseRef = (looseId: string): ResourceRef => ({ kind: 'loose', looseId });
-		const load = async (ext: string): Promise<Uint8Array | null> => {
+		const load = async (looseId: string): Promise<Uint8Array | null> => {
 			try {
-				return await getResourceBytes(looseRef(swapExt(modelPath, ext)));
+				return await getResourceBytes(looseRef(looseId));
 			} catch {
 				return null;
 			}
 		};
+		const loadExt = (ext: string) => load(swapExt(modelPath, ext));
 
 		void (async () => {
+			const siblingPaths = siblingKey ? siblingKey.split('\n') : [];
 			const [textures, shaderinst, shaders, texCrcs, streamtex] = await Promise.all([
-				load('.textures'),
-				load('.shaderinst'),
-				load('.shaders'),
-				load('.tex.crcs'),
-				load('.streamtex'),
+				loadExt('.textures'),
+				loadExt('.shaderinst'),
+				loadExt('.shaders'),
+				loadExt('.tex.crcs'),
+				loadExt('.streamtex'),
 			]);
+			// Load the discovered suffixed siblings (car livery + damage maps).
+			const extraTextures = await Promise.all(siblingPaths.map((p) => load(p)));
 			if (cancelled) return;
 			// Nothing material-bearing alongside this model — leave null (flat render).
-			if (!shaderinst && !textures) return;
+			if (!shaderinst && !textures && extraTextures.every((b) => !b)) return;
 			try {
 				const result = buildMaterials({
 					textures,
+					extraTextures,
 					shaderinst,
 					shaders,
 					texCrcs,
 					streamtex,
 					submeshCount,
+					baseName: baseNameOf(modelPath),
 				});
 				if (!cancelled) setBuilt(result);
 			} catch {
@@ -399,7 +474,7 @@ function useSiblingMaterials(submeshCount: number): BuiltMaterials | null {
 		return () => {
 			cancelled = true;
 		};
-	}, [modelPath, submeshCount, getResourceBytes]);
+	}, [modelPath, siblingKey, submeshCount, getResourceBytes]);
 
 	return built;
 }

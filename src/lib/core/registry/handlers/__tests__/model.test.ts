@@ -150,9 +150,94 @@ function buildInlineSkinnedModel(): Uint8Array {
 	return buf;
 }
 
+/**
+ * Build a SINGLE-SECTION skinned .model (magic 02 01 00 08) that additionally
+ * carries one per-section MESH DESCRIPTOR frame in the node tree, so
+ * `readSkinnedDescriptors` — and hence the `note` produced by
+ * `parseModelSkinned` — is exercised INLINE, with no devkit sample present.
+ *
+ * Same 0x48 VB record as buildInlineSkinnedModel (4 verts: a stride-12 float32
+ * P3 position stream + a stride-8 aux stream), with a descriptor frame appended
+ * just past the vertex data. The frame mirrors the real single-section layout
+ * (AA_HelicopterShockwave): a 0x00010000 count word followed by the section
+ * frame anchored on the 0x81xx0000 signature —
+ *   sig-0x04: 0x00010000   (single-section count word)
+ *   sig+0x00: 0x81000000   (section signature; low bytes may vary)
+ *   sig+0x04: 0x42ff2000   (constant)
+ *   sig+0x08: packed = (vcount<<16) | icount
+ *   sig+0x0c: 0xffffffff   (terminator)
+ * It DECLARES icount=36 triangle indices (=> 12 triangles) for a section whose
+ * index data is absent from the file — exactly the stripped-topology case the
+ * skinned `note` reports.
+ */
+function buildInlineSkinnedModelWithDescriptor(): Uint8Array {
+	const aabbAt = 0x10;
+	const tableAt = 0x40;
+	const vcount = 4;
+	const posStride = 12;
+	const posSize = vcount * posStride; // 0x30
+	const auxStride = 8;
+	const auxSize = vcount * auxStride; // 0x20
+	const dataAt = (tableAt + 0x48 + 15) & ~15; // 0x90, 16-aligned past the record
+	// Descriptor frame placed past the vertex data. `sig` (0x81000000) sits at
+	// descAt+0x0c so the count word (sig-0x04) and dataOffset field (sig-0x0c)
+	// both stay in bounds, matching readSkinnedDescriptors' frame geometry.
+	const descAt = dataAt + posSize + auxSize; // 0xE0
+	const icount = 36; // => floor(36/3) = 12 triangles
+	const packed = ((vcount << 16) | icount) >>> 0; // 0x00040024
+	const total = descAt + 0x1c + 0x10; // 7-word frame + trailing slack for the scan
+	const verts: [number, number, number][] = [
+		[-1, -2, -3],
+		[1, 0, 0],
+		[0, 2, 0],
+		[1.5, 0, 3],
+	];
+	const buf = new Uint8Array(total);
+	const dv = new DataView(buf.buffer);
+	dv.setUint32(0, MODEL_MAGIC_SKINNED, false); // 02 01 00 08
+	dv.setUint32(4, 1, false); // node_count
+	dv.setUint32(8, 0x10, false); // tree_offset
+	// AABB min/max rows (w = 1) — must enclose the verts above.
+	const mn = [-1, -2, -3];
+	const mx = [1.5, 2, 3];
+	for (let i = 0; i < 3; i++) dv.setFloat32(aabbAt + i * 4, mn[i], false);
+	dv.setFloat32(aabbAt + 12, 1, false);
+	for (let i = 0; i < 3; i++) dv.setFloat32(aabbAt + 16 + i * 4, mx[i], false);
+	dv.setFloat32(aabbAt + 28, 1, false);
+	// 0x48 VB record = sub-record A (position) + sub-record B (aux).
+	dv.setUint32(tableAt + 0x00, posSize, false);
+	dv.setUint32(tableAt + 0x04, posStride, false);
+	dv.setUint32(tableAt + 0x08, vcount, false);
+	dv.setUint32(tableAt + 0x24, auxSize, false);
+	dv.setUint32(tableAt + 0x28, auxStride, false);
+	dv.setUint32(tableAt + 0x2c, vcount, false);
+	// Position data (float32 P3).
+	let p = dataAt;
+	for (const v of verts) {
+		dv.setFloat32(p, v[0], false);
+		dv.setFloat32(p + 4, v[1], false);
+		dv.setFloat32(p + 8, v[2], false);
+		p += posStride;
+	}
+	// Descriptor frame (sig = descAt + 0x0c):
+	//   descAt+0x00 dataOffset (unused)      == sig-0x0c
+	//   descAt+0x08 0x00010000 count word    == sig-0x04
+	//   descAt+0x0c 0x81000000 signature     == sig
+	//   descAt+0x10 0x42ff2000 constant      == sig+0x04
+	//   descAt+0x14 packed = (vc<<16)|ic     == sig+0x08
+	//   descAt+0x18 0xffffffff terminator    == sig+0x0c
+	dv.setUint32(descAt + 0x08, 0x00010000, false);
+	dv.setUint32(descAt + 0x0c, 0x81000000, false);
+	dv.setUint32(descAt + 0x10, 0x42ff2000, false);
+	dv.setUint32(descAt + 0x14, packed, false);
+	dv.setUint32(descAt + 0x18, 0xffffffff, false);
+	return buf;
+}
+
 const INLINE_STREAM = buildInlineStream();
 const INLINE_BASE = buildInlineBaseModel();
 const INLINE_SKINNED = buildInlineSkinnedModel();
+const INLINE_SKINNED_DESC = buildInlineSkinnedModelWithDescriptor();
 
 const REAL_STREAM =
 	'Vehicles/Frontend/Bodies/Musclecar_01/Musclecar_01.model.stream';
@@ -298,6 +383,35 @@ describe('skinned .model parser', () => {
 		// parseModelBase delegates to the skinned path when it sees 02 01 00 08.
 		expect(parseModelBase(INLINE_SKINNED).meshes).toHaveLength(1);
 	});
+
+	// Inline coverage for readSkinnedDescriptors -> the descriptor-declared
+	// triangle count in the `note`. Mirrors the real AA_HelicopterShockwave
+	// (skipIf) test below — a SINGLE-SECTION skinned .model whose descriptor uses
+	// the 0x00010000 count word + 0x81000000 signature — but runs with NO devkit
+	// present. The section declares icount=36 (=> 12 triangles) while no index
+	// buffer exists in the file, so the decode stays positions-only/partial and
+	// the note must surface the stripped-but-expected triangle total.
+	it('recovers the single-section descriptor and reports its triangle count in the note (inline)', () => {
+		const m = parseModelSkinned(INLINE_SKINNED_DESC);
+		expect(m.kind).toBe('model');
+		expect(m.magic).toBe(MODEL_MAGIC_SKINNED);
+		// One section: 4 verts, float32-P3 positions only (topology not recoverable).
+		expect(m.meshes).toHaveLength(1);
+		const mesh = m.meshes[0];
+		expect(mesh.format).toBe('float');
+		expect(mesh.stride).toBe(12);
+		expect(mesh.vertexCount).toBe(4);
+		// No index data anywhere in the container -> empty indices, partial decode.
+		expect(mesh.indices).toEqual([]);
+		expect(m.partial).toBe(true);
+		expect(triangleCount(m)).toBe(0);
+		// The descriptor (0x00010000 prefix + 0x81000000 signature) is recovered and
+		// the note reports the EXPECTED, stripped triangle count (icount 36 -> 12).
+		expect(m.note).toBeDefined();
+		expect(m.note).toMatch(/1 mesh section/);
+		expect(m.note).toMatch(/12 triangle/);
+		expect(m.note).toMatch(/index buffer is absent/);
+	});
 });
 
 describe('model parser — REAL devkit samples', () => {
@@ -382,6 +496,82 @@ describe('model parser — REAL devkit samples', () => {
 			// Car-body extent: a few metres in each axis, not astronomically large.
 			expect(m.bounds!.max[2] - m.bounds!.min[2]).toBeGreaterThan(1);
 			expect(m.bounds!.max[2] - m.bounds!.min[2]).toBeLessThan(50);
+		},
+	);
+
+	// Brief's GEOMETRY acceptance for the flagship in-race body (the broken-render
+	// bug). Pins the cracked node-tree vertex-format facts: the in-race
+	// Musclecar_01.model carries its full geometry across MANY half4 vertex buffers
+	// (not 0/1), position is half-float x,y,z @0 with w==1.0 @6 for EVERY buffer
+	// (no per-buffer offset variation, no int16 quant), and every submesh decodes
+	// to finite, metric-scale, in-range geometry with no half-float spike. This is
+	// the faithful decode the daggers-bug screenshot was missing; the few auxiliary
+	// flat-fan strips that overshoot the header box are kept (reported, not dropped
+	// — see submeshOvershoot) and bounded well under the |1e4| half-spike limit.
+	it.skipIf(!hasSample(REAL_BASE_CAR))(
+		'Musclecar_01: many half4 submeshes, all finite/in-range, no spike, no degenerate (geom WP)',
+		() => {
+			const raw = readSample(REAL_BASE_CAR);
+			const m = modelHandler.parseRaw(raw, ssCtx());
+			expect(m.kind).toBe('model');
+			expect(m.magic).toBe(MODEL_MAGIC);
+
+			// (1) MANY submeshes carrying geometry — the full body, not a stub. The
+			//     in-race car has four half4 vertex buffers (34843 verts total).
+			const withGeom = m.meshes.filter((mesh) => mesh.positions.length > 0);
+			expect(withGeom.length).toBeGreaterThanOrEqual(3);
+			let totalVerts = 0;
+			let totalTris = 0;
+
+			for (const mesh of withGeom) {
+				// (2) Cooked car format: half4 position @0, w@6 — NOT float32, NOT quant.
+				expect(mesh.format).toBe('half');
+				expect(mesh.positions.length).toBe(mesh.vertexCount * 3);
+
+				// (3) No half-float spike (the ±65504 garbage fingerprint) and all finite.
+				const mn = [Infinity, Infinity, Infinity];
+				const mx = [-Infinity, -Infinity, -Infinity];
+				for (let i = 0; i + 2 < mesh.positions.length; i += 3) {
+					for (let a = 0; a < 3; a++) {
+						const c = mesh.positions[i + a];
+						expect(Number.isFinite(c)).toBe(true);
+						expect(Math.abs(c)).toBeLessThan(1e4); // never the half-spike magnitude
+						if (c < mn[a]) mn[a] = c;
+						if (c > mx[a]) mx[a] = c;
+					}
+				}
+
+				// (4) No DEGENERATE (zero-extent / collapsed-to-a-plane) submesh — the
+				//     "collapsed delta-wing" failure mode. Every buffer spans real 3-D.
+				const ext = [mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]].sort((a, b) => a - b);
+				expect(ext[0]).toBeGreaterThan(0.05); // thinnest axis still non-degenerate
+				expect(ext[2]).toBeLessThan(20); // largest axis stays metric-scale
+
+				// (5) Every triangle index in range for its OWN buffer (exact binding).
+				expect(mesh.indices.every((i) => i >= 0 && i < mesh.vertexCount)).toBe(true);
+
+				totalVerts += mesh.vertexCount;
+				totalTris += mesh.indices.length / 3;
+			}
+
+			// Full-body scale: ~34.8k verts / ~32.6k tris on the in-race body.
+			expect(totalVerts).toBeGreaterThan(30000);
+			expect(totalTris).toBeGreaterThan(20000);
+
+			// Combined bounds finite and car-scale (largest axis a handful of metres).
+			expect(m.bounds).not.toBeNull();
+			for (const v of [...m.bounds!.min, ...m.bounds!.max]) {
+				expect(Number.isFinite(v)).toBe(true);
+			}
+			const cext = [
+				m.bounds!.max[0] - m.bounds!.min[0],
+				m.bounds!.max[1] - m.bounds!.min[1],
+				m.bounds!.max[2] - m.bounds!.min[2],
+			];
+			for (const e of cext) {
+				expect(e).toBeGreaterThan(1);
+				expect(e).toBeLessThan(20);
+			}
 		},
 	);
 

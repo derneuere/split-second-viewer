@@ -75,11 +75,14 @@ describe('model UV decode — split-lane texcoord (synthetic)', () => {
 		expect(mesh.vertexCount).toBe(6);
 		// Positions come from @4/@8/@12 (unchanged by the UV fix).
 		expect(mesh.positions).toEqual([-2, -3, -4, 5, -3, -4, 5, 6, -4, -2, 6, 7, 5, 6, 7, -2, -3, 7]);
-		// THE fix: UVs are the (U @0, V @28) lanes, exactly as written — not the
-		// unit-normal columns at @16/@20 (which would give 1,0 / 0,1 / 0,0 / -1,0 …).
+		// THE fix: UVs come from the two split texcoord lanes (@0 and @28) around the
+		// unit normal — NOT the normal columns at @16/@20 (which would give
+		// 1,0 / 0,1 / 0,0 / -1,0 …). Per the engine's U/V convention the decoder emits
+		// [U, V] = [higher offset @28, lower offset @0] (see detectUVOffsets), i.e. each
+		// vertex's pair is (@28-lane, @0-lane).
 		expect(mesh.uv).toBeDefined();
 		expect(mesh.uv!.length).toBe(6 * 2);
-		const expected = [0.0, 0.0, 0.25, 0.1, 0.5, 0.5, 0.75, 0.9, 1.0, 1.0, 0.4, 0.7];
+		const expected = [0.0, 0.0, 0.1, 0.25, 0.5, 0.5, 0.9, 0.75, 1.0, 1.0, 0.7, 0.4];
 		mesh.uv!.forEach((v, i) => expect(v).toBeCloseTo(expected[i], 5));
 	});
 

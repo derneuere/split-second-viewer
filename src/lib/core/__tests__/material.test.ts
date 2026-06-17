@@ -392,6 +392,175 @@ describe('buildMaterials — slot-based diffuse pick (synthetic)', () => {
 	});
 });
 
+// ---------------------------------------------------------------------------
+// REAL devkit suite — CAR BODY PAINT (multi-.textures + VehiclePaintFast).
+//
+// In-race car bodies keep their albedo in a SUFFIXED sibling, not the base
+// "<base>.textures": "<base>_bodyPaint.textures" holds the 1024×2048 livery named
+// exactly <base>. The VehiclePaint* node's diffuse override CRC is a runtime
+// symbol that resolves to nothing on disk, so buildMaterials must merge the
+// suffixed siblings and substitute the body-paint (livery) texture, keyed by the
+// model base name. Verified on Musclecar_01 (base .textures = detail maps) and a
+// Supercar (base .textures is a 76-byte STUB — the livery lives ONLY in the
+// _bodyPaint sibling, the exact case the old single-.textures path missed).
+// ---------------------------------------------------------------------------
+const CAR_DIR = 'Vehicles/Bodies';
+const muscle = `${CAR_DIR}/Musclecar_01/Musclecar_01`;
+const supercar = `${CAR_DIR}/Supercar_01/Supercar_01`;
+const musclePresent =
+	hasSample(`${muscle}_bodyPaint.textures`) && hasSample(`${muscle}.shaderinst`);
+const supercarPresent =
+	hasSample(`${supercar}_bodyPaint.textures`) && hasSample(`${supercar}.shaderinst`);
+
+/** Load a car's material assets the way MeshViewer does (base + suffixed siblings). */
+function buildCar(carBase: string) {
+	const model = parseModel(readSample(`${carBase}.model`));
+	return buildMaterials({
+		textures: hasSample(`${carBase}.textures`) ? readSample(`${carBase}.textures`) : null,
+		extraTextures: [
+			hasSample(`${carBase}_bodyPaint.textures`) ? readSample(`${carBase}_bodyPaint.textures`) : null,
+			hasSample(`${carBase}_damageMap.textures`) ? readSample(`${carBase}_damageMap.textures`) : null,
+		],
+		shaderinst: readSample(`${carBase}.shaderinst`),
+		shaders: hasSample(`${carBase}.shaders`) ? readSample(`${carBase}.shaders`) : null,
+		submeshCount: model.meshes.length,
+		baseName: carBase.slice(carBase.lastIndexOf('/') + 1),
+	});
+}
+
+describe('buildMaterials — REAL devkit car body paint (Musclecar_01, multi-.textures)', () => {
+	it.skipIf(!musclePresent)(
+		'resolves the body livery diffuse from the merged (base + _bodyPaint) set',
+		() => {
+			const built = buildCar(muscle);
+
+			// The merged set contains the base detail maps AND the _bodyPaint livery.
+			expect(built.textureByCrc.size).toBeGreaterThanOrEqual(6);
+
+			// The body-paint/livery texture is found and named after the model base.
+			expect(built.bodyPaintTexture).toBeDefined();
+			expect(built.bodyPaintTexture!.rgba).not.toBeNull();
+			expect(built.bodyPaintTexture!.name).toBe('Musclecar_01');
+			expect(built.bodyPaintTexture!.width).toBe(1024);
+			expect(built.bodyPaintTexture!.height).toBe(2048);
+
+			// At least one VehiclePaint node binds the livery as its diffuse RGBA.
+			const painted = built.submeshes.filter(
+				(s) => s.diffuseTexture && s.diffuseTexture.name === 'Musclecar_01',
+			);
+			expect(painted.length).toBeGreaterThanOrEqual(1);
+			expect(painted[0].diffuseTexture!.rgba).not.toBeNull();
+			// That node's chosen diffuse override is the VehiclePaint paint sampler.
+			expect(
+				painted[0].textures.some((t) => /vehiclepaint/i.test(t.name) && /diffuse/i.test(t.name)),
+			).toBe(true);
+		},
+	);
+
+	it.skipIf(!musclePresent)('binds a renderable body diffuse for at least one submesh', () => {
+		const built = buildCar(muscle);
+		const withDiffuse = built.submeshes.filter((s) => s.diffuseTexture);
+		expect(withDiffuse.length).toBeGreaterThanOrEqual(1);
+		for (const s of withDiffuse) expect(s.diffuseTexture!.rgba).not.toBeNull();
+	});
+});
+
+describe('buildMaterials — REAL devkit Supercar_01 (livery only in _bodyPaint)', () => {
+	it.skipIf(!supercarPresent)(
+		'resolves the body diffuse even when base .textures is a stub',
+		() => {
+			const built = buildCar(supercar);
+			// Supercar_01.textures is a 76-byte stub — the livery comes ONLY from
+			// _bodyPaint, exactly the case the old standard path missed.
+			expect(built.bodyPaintTexture).toBeDefined();
+			expect(built.bodyPaintTexture!.rgba).not.toBeNull();
+			expect(built.bodyPaintTexture!.name).toBe('Supercar_01');
+
+			const painted = built.submeshes.filter(
+				(s) => s.diffuseTexture && s.diffuseTexture.name === 'Supercar_01',
+			);
+			expect(painted.length).toBeGreaterThanOrEqual(1);
+			expect(painted[0].diffuseTexture!.rgba).not.toBeNull();
+		},
+	);
+});
+
+// ---------------------------------------------------------------------------
+// Synthetic VehiclePaint livery guard — proves the bodyPaint-name substitution
+// without the devkit: a node binds "VehiclePaintFast_0_diffuseMap" whose CRC does
+// NOT exist in any container; the livery comes from an extraTextures sibling whose
+// texture is named after the model base. Runs everywhere.
+// ---------------------------------------------------------------------------
+describe('buildMaterials — VehiclePaint livery from merged sibling (synthetic)', () => {
+	const PAINT_CRC = 0xb7b2a83b; // the on-disk livery CRC (≠ the override symbol CRC)
+	const OVERRIDE_CRC = 0xd41a09fe; // the unresolvable runtime symbol CRC
+
+	function bodyPaintTextures(): Uint8Array {
+		const b: number[] = [];
+		const be32x = (v: number) => [(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff];
+		const be16x = (v: number): number[] => [(v >> 8) & 0xff, v & 0xff];
+		b.push(0x54, 0x45, 0x58, 0x53, ...be32x(12), ...be32x(1), ...be32x(0x68), ...be32x(1), ...be32x(0x18));
+		b.push(...[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0x3c, 0, 0, 0, 0]);
+		// one 4×4 DXT1 named "TestCar_01"
+		b.push(...be32x(PAINT_CRC), ...be16x(0xffff), ...be16x(0), 0x86, 1, ...be16x(0x0200), ...be32x(0xaae4),
+			...be16x(4), ...be16x(4), ...be16x(1), ...be16x(0), ...be32x(8), ...be32x(0), ...be32x(8));
+		b.push(0xe0, 0x07, 0xe0, 0x07, 0, 0, 0, 0); // green block
+		b.push(0x43, 0x32, 0x4e, 0x4d, ...be32x(PAINT_CRC), ...be32x('TestCar_01'.length + 1),
+			...[...'TestCar_01'].map((c) => c.charCodeAt(0)), 0);
+		return new Uint8Array(b);
+	}
+	function paintShaderInst(): Uint8Array {
+		const b: number[] = [];
+		const be32x = (v: number) => [(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff];
+		b.push(0x53, 0x44, 0x52, 0x49, ...be32x(8), 0x49, 0x4e, 0x53, 0x53, ...be32x(1));
+		b.push(...be32x(0x44444444), ...lenStr('unnamed'), ...lenStr('0x0882fbc1'));
+		// VehiclePaintFast diffuse override with the UNRESOLVABLE symbol CRC.
+		b.push(...lenStr('VehiclePaintFast_1_diffuseMap'), ...be32(0), 0x03, 0x00, 0x00, 0x00, 0x01, ...be32(OVERRIDE_CRC), ...be32(9));
+		b.push(0x49, 0x4e, 0x53, 0x45);
+		return new Uint8Array(b);
+	}
+
+	it('substitutes the base-named livery when the paint override CRC is unresolvable', () => {
+		const built = buildMaterials({
+			textures: null,
+			extraTextures: [bodyPaintTextures()],
+			shaderinst: paintShaderInst(),
+			submeshCount: 1,
+			baseName: 'TestCar_01',
+		});
+		// The override CRC never resolved on its own…
+		expect(built.textureByCrc.has(OVERRIDE_CRC)).toBe(false);
+		// …but the livery (named after the base) was merged in and substituted.
+		expect(built.bodyPaintTexture).toBeDefined();
+		expect(built.bodyPaintTexture!.name).toBe('TestCar_01');
+		const s0 = built.submeshes[0];
+		expect(s0.diffuseTexture).toBeDefined();
+		expect(s0.diffuseTexture!.crc >>> 0).toBe(PAINT_CRC);
+		expect(s0.diffuseTexture!.rgba).not.toBeNull();
+	});
+
+	it('does NOT substitute a livery for a non-paint sampler (self-contained models unaffected)', () => {
+		// A plainly-named sampler whose CRC is unresolvable must NOT grab the livery.
+		const be32x = (v: number) => [(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff];
+		const b: number[] = [];
+		b.push(0x53, 0x44, 0x52, 0x49, ...be32x(8), 0x49, 0x4e, 0x53, 0x53, ...be32x(1));
+		b.push(...be32x(0x55555555), ...lenStr('unnamed'), ...lenStr('0xdeadbeef'));
+		b.push(...lenStr('Diffuse_IPR_0_diffuse'), ...be32(0), 0x03, 0x00, 0x00, 0x00, 0x01, ...be32(0x12345678), ...be32(9));
+		b.push(0x49, 0x4e, 0x53, 0x45);
+		const built = buildMaterials({
+			textures: null,
+			extraTextures: [bodyPaintTextures()],
+			shaderinst: new Uint8Array(b),
+			submeshCount: 1,
+			baseName: 'TestCar_01',
+		});
+		// bodyPaintTexture is still resolved (it's in the merged set)…
+		expect(built.bodyPaintTexture).toBeDefined();
+		// …but a non-VehiclePaint sampler does not get it substituted.
+		expect(built.submeshes[0].diffuseTexture).toBeUndefined();
+	});
+});
+
 // A guard so a missing devkit doesn't silently pass everything (informational).
 describe('material test data root', () => {
 	it('notes whether the devkit helicopter is present', () => {

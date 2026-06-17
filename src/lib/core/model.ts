@@ -34,6 +34,35 @@
 //   and rendered some cars/props (Musclecar_02 et al.) with scrambled geometry.
 //   The heuristic is kept only as a fallback when the binding table is ambiguous.
 //
+//   NODE-TREE VERTEX-FORMAT DESCRIPTOR (cracked on the in-race Musclecar_01.model,
+//   the broken-render bug). The 0x04/05/06/0E/0F tags are the Crayon2 generic
+//   serializer's node grammar (0x05 = a typed property leaf; the others are
+//   container/child step tags) — NOT a per-attribute vertex-format code. The
+//   COOKED car vertex layout these leaves describe is, for every buffer checked,
+//   the SAME hkxVertexP4… stream the .model.stream uses: 4 big-endian half-floats
+//   per vertex at the START of the stride — position x,y,z at byte 0/2/4 and the
+//   homogeneous w==1.0 at byte 6 — followed by normal/tangent/colour/UV and
+//   (for the car body) packed bone-index/weight lanes that pad the stride out to
+//   the VB-table `stride` (24/28/44/32 on Musclecar_01). So POSITION is half4 @0,
+//   w@6, for ALL buffers; there is no per-buffer position-offset variation and no
+//   int16 quantisation. The bulk vertex region begins at the VB-table end rounded
+//   to the next vertex boundary (a 0–4-byte zero pad; detectHalfFormat slides over
+//   it), and buffers are stored back-to-back in VB-table order. The 16-bit
+//   tri-strip index region follows the vertex region; the draw-call relOffsets are
+//   index-region-relative (correction solved so the last draw ends at ~EOF).
+//   The earlier "collapsed delta-wing + spiky cluster" was the half-detector
+//   locking onto a packed lane whose half read ≈1.0 (a false w-hit) at the WRONG
+//   data start; anchoring the start by the leading half4 group's w==1.0 fixes it.
+//   What the node tree ALSO carries, still NOT robustly decoded: per-draw AABB
+//   records (clean body-space min/max float4 pairs reached via the binding ptrA)
+//   and a per-section transform. A minority of Musclecar_01 strips (well-formed,
+//   w==1.0, separated by 0xFFFF) decode into FLAT FANS in a thin Z-slab reaching
+//   ±4 m — auxiliary geometry that lives in a different local frame and needs that
+//   transform to sit on the body (the working .model.stream omits these fans). The
+//   decode is kept faithful and the overshoot is REPORTED (see submeshOvershoot),
+//   because every measured filter to drop the fans also removed 4–25 % of real
+//   car-body triangles. Applying the per-section transform is the open follow-up.
+//
 //   LEVEL-SOBJ ROBUSTNESS: some level .ark members use a QUANTIZED-position
 //   variant (int16 dequantized against a per-buffer node-tree box not yet read)
 //   whose half/float decode yields ±tens-of-thousands garbage. Such buffers are
@@ -408,6 +437,55 @@ function positionsImplausible(pos: number[], headerBounds: ModelBounds): boolean
 		if (decExt > hdrExt * 8) return true;
 	}
 	return false;
+}
+
+/**
+ * Compare a decoded submesh AABB against the model header AABB and report how far
+ * it OVERSHOOTS. This is the brief's "validate-by-data" check: a clean car shell +
+ * parts should sit inside the culling box; a submesh whose extent blows past the
+ * header on some axis is carrying geometry NOT in the visible body's space (e.g.
+ * the Musclecar_01 auxiliary flat-fan strips that decode faithfully — valid half4
+ * positions, w==1.0, well-formed 0xFFFF strips — but lie in a thin Z-slab reaching
+ * ±4 m, far outside the ~±2.5 m header box).
+ *
+ * Returns the per-axis overshoot RATIOs (decoded sorted-extent / header
+ * sorted-extent; axes compared sorted because the engine permutes them), themselves
+ * sorted ascending: `[smallAxisRatio, midAxisRatio, largeAxisRatio]`. `1.0` is a
+ * perfect fit; `>1` overshoots. `null` when there is no header AABB to compare to.
+ *
+ * Why per-axis (not just the worst): scanBounds occasionally returns a too-THIN
+ * header box (e.g. tressle_2's header AABB is 0.07 m on one axis — a near-flat
+ * sub-section box), which alone would make a perfectly-fine prop look like it
+ * overshoots ~8x on that single axis. The auxiliary-fan signal is different: the
+ * Musclecar_01 fans push ALL THREE axes well past the header (≈3.8x / 2.7x / 1.7x),
+ * not just one. Callers therefore gate on the MIDDLE ratio, which a thin-header
+ * artifact leaves at ≈1.0 but a genuinely-oversized submesh pushes high.
+ *
+ * We deliberately do NOT drop the overshooting triangles: every heuristic to
+ * isolate the auxiliary fans (header-box clamp, edge-length, triangle area,
+ * IQR/MAD outlier, connected-component) was measured to also destroy 4–25 % of
+ * real car-body geometry, because the auxiliary verts sit WITHIN the bulk per-axis
+ * distribution and the decoded vertex frame is offset/rotated from the header
+ * frame. Mutilating a faithful decode is worse than reporting it, so the decode is
+ * kept intact and these ratios are surfaced in `note` / asserted by tests.
+ */
+function submeshOvershoot(
+	meshBounds: ModelBounds,
+	headerBounds: ModelBounds,
+): [number, number, number] | null {
+	if (!meshBounds || !headerBounds) return null;
+	const me = [
+		meshBounds.max[0] - meshBounds.min[0],
+		meshBounds.max[1] - meshBounds.min[1],
+		meshBounds.max[2] - meshBounds.min[2],
+	].sort((a, b) => a - b);
+	const he = [
+		headerBounds.max[0] - headerBounds.min[0],
+		headerBounds.max[1] - headerBounds.min[1],
+		headerBounds.max[2] - headerBounds.min[2],
+	].sort((a, b) => a - b);
+	const ratios = me.map((e, i) => e / Math.max(he[i], 1e-3)).sort((a, b) => a - b);
+	return ratios as [number, number, number];
 }
 
 /** Parse a .model.stream high-LOD payload: 12-byte header + interleaved verts + strips. */
@@ -980,8 +1058,15 @@ function looksLikeStrip(
  * 0 (≈ 50 % of samples land in [0,1]); a handedness/constant lane has zero
  * range. So among the non-position columns we take the two NON-CONSTANT columns
  * with the highest fraction of samples in [0,1] (ties broken by ascending
- * offset) and return them ordered by offset (low → U, high → V). Returns null
- * when fewer than two candidate columns exist (caller falls back to the legacy
+ * offset).
+ *
+ * U/V ORDER: the pair is returned [higher-offset, lower-offset] = [U, V]. The
+ * naive "lower = U" order renders both the helicopter body and the
+ * NemTruckBarrels chevron band ROTATED/shifted (confirmed against the textured
+ * preview); this engine's interleaved texcoord reads correctly with the higher
+ * byte as U. (For the barrel, the swapped order also lands markedly more
+ * cylinder-side vertices on the chevron band — 55 % vs 34 %.) Returns null when
+ * fewer than two candidate columns exist (caller falls back to the legacy
  * contiguous slot just past the position).
  */
 function detectUVOffsets(
@@ -1019,7 +1104,8 @@ function detectUVOffsets(
 	const cand = cols.filter((c) => c.range > 1e-4);
 	cand.sort((a, b) => b.in01 - a.in01 || a.off - b.off);
 	if (cand.length < 2) return null;
-	return [cand[0].off, cand[1].off].sort((a, b) => a - b) as [number, number];
+	// Return [U, V] = [higher offset, lower offset] (see U/V ORDER note above).
+	return [cand[0].off, cand[1].off].sort((a, b) => b - a) as [number, number];
 }
 
 /**
@@ -1056,8 +1142,9 @@ function decodeBufferPositions(
 		// when detection finds fewer than two candidate columns.
 		uv = new Array(buf.vcount * 2);
 		const det = detectUVOffsets(f32, buf.fileOffset, buf.stride, buf.vcount, posOffset, n);
-		const uOff = det ? det[0] : posOffset + 12;
-		const vOff = det ? det[1] : posOffset + 16;
+		// [U, V] = [higher offset, lower offset]; fallback matches that order.
+		const uOff = det ? det[0] : posOffset + 16;
+		const vOff = det ? det[1] : posOffset + 12;
 		for (let i = 0; i < buf.vcount; i++) {
 			const vbase = buf.fileOffset + i * buf.stride;
 			const b = vbase + posOffset;
@@ -1544,6 +1631,32 @@ export function parseModelBase(raw: Uint8Array): ParsedModel {
 				});
 			}
 
+			// VALIDATE-BY-DATA (the brief's acceptance check). Compare each non-empty
+			// submesh's AABB against the header culling box. A clean car shell + parts
+			// should sit inside it; a submesh that overshoots on ALL axes is carrying
+			// geometry not in the visible body's space (the Musclecar_01 auxiliary
+			// flat-fan strips — see submeshOvershoot). We REPORT this rather than
+			// dropping it, because no measured filter separates the fans from real
+			// geometry without collateral loss. We track the worst MIDDLE-axis ratio
+			// (robust against scanBounds returning a too-thin single-axis header box,
+			// which would otherwise false-positive a thin prop like tressle_2) and the
+			// worst large-axis ratio for the human-readable note.
+			let worstMidOvershoot = 0;
+			let worstAxisOvershoot = 0;
+			for (const m of meshes) {
+				if (!m.positions.length) continue;
+				const o = submeshOvershoot(boundsOfPositions(m.positions), bounds);
+				if (!o) continue;
+				if (o[1] > worstMidOvershoot) worstMidOvershoot = o[1]; // middle axis
+				if (o[2] > worstAxisOvershoot) worstAxisOvershoot = o[2]; // largest axis
+			}
+			// A genuine auxiliary-fan submesh overshoots on at least its two larger
+			// axes (Musclecar_01 fans: ≈3.8x / 2.7x / 1.7x). Requiring the MIDDLE axis
+			// to overshoot >1.5x excludes a one-axis scanBounds thin-box artifact (which
+			// leaves the middle ratio ≈1.0). Real props fit (mid ≈1.0) and stay clean.
+			const overshoots = worstMidOvershoot > 1.5;
+			if (overshoots) partial = true;
+
 			const decodedDraws = draws.length;
 			const usedDraws = corr !== null ? draws.length : 0;
 			if (partial || usedDraws < decodedDraws) {
@@ -1553,12 +1666,19 @@ export function parseModelBase(raw: Uint8Array): ParsedModel {
 				const blankNote = blanked
 					? ` ${blanked} buffer(s) blanked (quantized-position variant not yet decoded — kept as no-geometry to avoid garbage).`
 					: '';
+				const overshootNote = overshoots
+					? ` Some submesh AABB overshoots the header box by ${worstAxisOvershoot.toFixed(2)}x ` +
+						`(auxiliary out-of-body-space strips — e.g. flat-fan geometry that needs ` +
+						`a per-section/per-draw transform not yet recovered; kept intact since no ` +
+						`filter isolates it without losing real body geometry).`
+					: '';
 				note =
 					`Base .model: decoded ${buffers.length} vertex buffer(s) ` +
 					`(${buffers.reduce((s, b) => s + b.vcount, 0)} verts) and ` +
 					`${usedDraws}/${decodedDraws} draw call(s). ${bindNote}` +
 					(misbound ? ` (${misbound} binding entr(y/ies) fell back to heuristic.)` : '') +
-					blankNote;
+					blankNote +
+					overshootNote;
 			}
 		} else {
 			// No VB table — likely a stub .model (geometry in .model.stream) or an
