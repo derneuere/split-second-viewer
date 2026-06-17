@@ -53,6 +53,42 @@ describe('handler registry', () => {
 		expect(getHandlerByExtension('.unknown')).toBeUndefined();
 	});
 
+	it('prefers the longest compound extension over its tail', () => {
+		// `model` declares BOTH '.model' and '.model.stream'. A loose
+		// '<x>.model.stream' member must resolve to model via the compound suffix,
+		// not fall through to a bare '.stream' (which no handler claims). This pins
+		// the longest-suffix-first walk in getHandlerByExtension.
+		expect(getHandlerByExtension('Downtown.model.stream')?.key).toBe('model');
+		expect(getHandlerByExtension('Downtown.model')?.key).toBe('model');
+		// A windows-style path is reduced to its basename before matching.
+		expect(getHandlerByExtension('C:\\Levels\\Downtown\\car.model')?.key).toBe('model');
+	});
+
+	it('getHandlerByMagic matches a SHIPPED handler by its declared magic bytes', () => {
+		// Drive the real registry (not a fake): the textures handler declares the
+		// "TEXS" magic, so a blob with those leading bytes must sniff to it.
+		const texs = getHandlerByKey('textures');
+		expect(texs?.magic).toBeDefined();
+		const blob = new Uint8Array([0x54, 0x45, 0x53, 0x53, 0xaa, 0xbb]); // wrong 4th byte
+		blob.set(texs!.magic!, 0); // overwrite leading bytes with the real magic
+		expect(getHandlerByMagic(blob)?.key).toBe('textures');
+
+		// Every magic-declaring handler round-trips through its own magic: feeding
+		// its declared magic back in must resolve to that handler (or an earlier
+		// handler that shares a magic prefix — none do today, asserted here).
+		for (const h of registry) {
+			if (!h.magic) continue;
+			const sniff = getHandlerByMagic(h.magic);
+			expect(sniff, `magic for '${h.key}' must resolve`).toBeDefined();
+			expect(sniff!.magic, `'${h.key}' must not be shadowed by a prefix collision`).toEqual(
+				h.magic,
+			);
+		}
+
+		// A blob shorter than the magic never matches (no out-of-bounds read).
+		expect(getHandlerByMagic(new Uint8Array([0x54]))).toBeUndefined();
+	});
+
 	it('getHandlerByMagic returns undefined for handlers with no magic, and matches when declared', () => {
 		// crcs declares no magic, so a random blob resolves to nothing today.
 		expect(getHandlerByMagic(new Uint8Array([0, 1, 2, 3]))).toBeUndefined();

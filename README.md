@@ -6,9 +6,12 @@ unified typed **Resource** tree, and decodes + visualizes members. It is the
 Split/Second equivalent of the Burnout `paradise-bundle-steward` editor, pruned
 and adapted to Split/Second's container and platform.
 
-> Status: scaffold (WP-0). The registry/Workspace/.ark seams are in place and
-> CLI-validated. Feature work packages (textures, model, telemetry, XML/params,
-> the full handler set) build on top of this foundation.
+> Status: registry + viewport dispatcher integrated. **31 resource handlers**
+> are registered and CLI-validated against real devkit data, the Workspace routes
+> every selection to a bespoke viewer (or the Hex fallback), and the four gates —
+> `tsc`, `build`, `test:run` (33 files / 186 tests), `lint` — are green. The
+> remaining work package is full `.ark` member round-trip + `nameHash` ->
+> filename resolution (see [Supported formats](#supported-formats)).
 
 ## Platform & formats
 
@@ -22,6 +25,66 @@ and adapted to Split/Second's container and platform.
 - **Loose files** are first-class too: most devkit data ships as individual
   `.model / .textures / .track / .params / .crcs / ...` files. Both an `.ark`
   member and a loose file become a **Resource** in the same tree.
+
+## Supported formats
+
+31 `ResourceHandler`s are registered (`src/lib/core/registry/index.ts`). Each is
+routed by **extension** when loose, or **magic bytes** when it appears as an
+unresolved `.ark` member. `Caps` = `R` (read/parse) and `W` (write-back, i.e. a
+byte round-trip via the CLI `roundtrip`/`stress` commands); read-only handlers
+decode but do not yet re-emit.
+
+| Key | Format | Category | Extension(s) | Caps | Viewer |
+| --- | --- | --- | --- | --- | --- |
+| `crcs` | Texture CRC List | Data | `.crcs` | R W | Config |
+| `splitlength` | Route Split Lengths | World | `.splitlength` | R | World |
+| `linkorigins` | Route Link Origins | World | `.linkorigins` | R | World |
+| `sideways` | Route Sideways Links | World | `.sideways` | R | World |
+| `checkpoints` | Route Checkpoints | World | `.checkpoints` | R | World |
+| `track` | TrackTivity Telemetry | World | `.track` | R W | World |
+| `nis` | TrackLogic Route Manifest | World | `.nis` | R W | World |
+| `gbx` | Light-Rig Overrides | World | `.gbx` | R W | World |
+| `entities` | Catnip Entities | World | `.entities` | R W | World |
+| `timelineInfo` | Timeline-Particle Index | World | `.timelineinfo` | R W | World |
+| `logicinfo` | Track Logic Info | World | `.logicinfo` | R W | World |
+| `sectorInfo` | Sector Partition | World | `.sectorinfo` | R | World |
+| `names` | Name Table | Data | `.names` | R W | Config |
+| `filenames` | File Name Table | Data | `.filenames` | R W | Config |
+| `parts` | Vehicle Part Hierarchy | Data | `.parts` | R | Config |
+| `dct` | Localisation Dictionary | Data | `.dct` | R | Config |
+| `global_regs` | Global Shader Registers | Data | `.global_regs` | R | Config |
+| `params` | Tuning Params | Data | `.params` | R | Config |
+| `xml` | XML Config | Data | `.xml` | R W | Config |
+| `powerplays` | Powerplays (XML) | Data | `.powerplays` | R W | Config |
+| `triggers` | Triggers (XML) | Data | `.triggers` | R W | Config |
+| `textures` | Texture Set (TEXS) | Graphics | `.textures` | R | Texture |
+| `streamtex` | Streamed Texture Payload | Graphics | `.streamtex` | R | Texture |
+| `model` | Model (Crayon2 mesh) | Graphics | `.model`, `.model.stream` | R | Mesh |
+| `skel` | Skeleton (ftsc rig) | Graphics | `.skel` | R | Mesh |
+| `deform` | Vehicle Deformation (DFM2) | Graphics | `.deform` | R | Mesh |
+| `mcl` | Material Clip | Graphics | `.mcl` | R | Mesh |
+| `shaders` | Shader Set (SHDR) | Graphics | `.shaders` | R | Config |
+| `shaderinst` | Shader Instance (SDRI/INSS) | Graphics | `.shaderinst` | R | Config |
+| `fxc` | FX Compiled | Graphics | `.fxc` | R | Config |
+| `havok` | Havok Packfile | Physics | `.phys`, `.maincoll`, `.hkcoll`, `.hkpps`, `.hkrbs` | R | Config |
+
+## Viewers
+
+`ViewportRouter` (`src/components/viewers/ViewportRouter.tsx`) guard-parses the
+selected resource and dispatches to one bespoke viewer per **viewport family**.
+The mapping is a pure function — `viewportFor(handler)` in
+`src/components/viewers/viewportFamily.ts` — derived from the handler's
+`category` enum plus a small set of keys, so it is unit-tested headlessly
+(`viewportFamily.test.ts`). A missing handler, a parse failure, or an unmapped
+family always falls back to the generic Hex view, which never throws.
+
+| Viewer | Family | Handles | Routed by |
+| --- | --- | --- | --- |
+| `TextureViewer` | `texture` | `textures`, `streamtex` | key set |
+| `MeshViewer` | `mesh` | `model`, `skel`, `deform`, `mcl` | key set |
+| `WorldViewer` | `world` | every `World`-category handler (telemetry `.track`, routes, entities, sectors, NIS, light rigs, …) | `category === 'World'` |
+| `ConfigViewer` | `config` | `Data` + `Physics` handlers, plus the shader sets (`shaders`/`shaderinst`/`fxc`) and `crcs` — generic field table | `category` + shader key set |
+| `HexView` | `binary` | no handler, parse failure, or any unmapped family | fallback |
 
 ## How to run
 
