@@ -25,6 +25,11 @@ and adapted to Split/Second's container and platform.
 
 ## How to run
 
+> **Node 18+ required** (Vite 5 / Vitest 2 / tsx). `package.json` pins
+> `engines.node >= 20`. If your default shell Node is older (e.g. v16), use an
+> fnm/nvm-managed Node 20+ — a `.node-version` is committed so `fnm`/`nvm` pick
+> it up automatically in this directory.
+
 ```bash
 npm install
 
